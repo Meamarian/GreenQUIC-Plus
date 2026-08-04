@@ -1112,6 +1112,10 @@ GreenQuicParsePartitionDpdkMap(
     _In_z_ const char* Value
     )
 {
+    /* GREENQUIC-STRICT-OFF-V1 */
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_PLUS) {
+        return;
+    }
     const char* P = Value;
     uint32_t Count = 0;
     while (*P != '\0') {
@@ -1151,7 +1155,9 @@ GreenQuicInstallDefaultPartitionDpdkMap(
     _Inout_ DPDK_DATAPATH* Dpdk
     )
 {
-    if (!Dpdk->GreenQuicEnableMultiCore || Dpdk->GreenQuicPartitionDpdkMapConfigured) {
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_PLUS ||
+        !Dpdk->GreenQuicEnableMultiCore ||
+        Dpdk->GreenQuicPartitionDpdkMapConfigured) {
         return;
     }
 
@@ -2167,6 +2173,10 @@ GreenQuicSignalLcoreWork(
     _In_ uint16_t Core
     )
 {
+    /* GREENQUIC-STRICT-OFF-V1 */
+    if (Dpdk->GreenQuicMode == GREENQUIC_MODE_OFF) {
+        return;
+    }
     if (Core >= RTE_MAX_LCORE) return;
     GREENQUIC_LCORE_STATE* S = &Dpdk->GreenQuicLcore[Core];
     __atomic_add_fetch(&S->WakeSequence, 1U, __ATOMIC_RELEASE);
@@ -3532,6 +3542,9 @@ GreenQuicApplyDpdkIniValue(
             strcmp(Value, "2") == 0) {
             Dpdk->GreenQuicMode = GREENQUIC_MODE_PLUS;
         }
+        /* GREENQUIC-STRICT-OFF-V1: hint hooks are live only in PLUS mode. */
+        CxPlatGreenQuicPlusSetRuntimeEnabled(
+            Dpdk->GreenQuicMode == GREENQUIC_MODE_PLUS ? 1 : 0);
     } else if (strcmp(Key, "GreenQuicProfile") == 0) {
         if (strcasecmp(Value, "server_download") == 0) {
             Dpdk->GreenQuicProfile = GREENQUIC_PROFILE_SERVER_DOWNLOAD;
@@ -3678,6 +3691,8 @@ GreenQuicConfigureRoles(
     // DPDK requires dev_conf.intr_conf.rxq before rte_eth_dev_configure().
     // Merely calling rte_eth_dev_rx_intr_enable() later is not sufficient.
     const BOOLEAN NeedRxQueueInterrupts =
+        /* GREENQUIC-STRICT-OFF-V1: OFF keeps the original polling NIC configuration. */
+        Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF &&
         Dpdk->GreenQuicEnableRx &&
         (Dpdk->GreenQuicIdleMode == GREENQUIC_IDLE_EPOLL ||
          Dpdk->GreenQuicIdleMode == GREENQUIC_IDLE_AUTO);
@@ -3731,8 +3746,8 @@ CxPlatDpdkReadConfig(
 
     FILE *File = fopen("dpdk.ini", "r");
     if (File == NULL) {
-        GreenQuicReadPowerConfig(Dpdk);
-        GreenQuicInitCStateSupport(Dpdk);
+        /* GREENQUIC-STRICT-OFF-V1: default mode is OFF; do not initialize GreenQUIC. */
+        CxPlatGreenQuicPlusSetRuntimeEnabled(0);
         return;
     }
     printf("using configuration file dpdk.ini!\n");
@@ -3822,8 +3837,13 @@ CxPlatDpdkReadConfig(
     }
 
     fclose(File);
-    GreenQuicReadPowerConfig(Dpdk);
-    GreenQuicInitCStateSupport(Dpdk);
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        GreenQuicReadPowerConfig(Dpdk);
+        GreenQuicInitCStateSupport(Dpdk);
+    } else {
+        /* GREENQUIC-STRICT-OFF-V1: OFF ignores powermng.ini completely. */
+        CxPlatGreenQuicPlusSetRuntimeEnabled(0);
+    }
 }
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
@@ -4476,13 +4496,23 @@ CxPlatDpdkRx(
         State->Rx.QueueSampleCountdown--;
     }
 
-    const uint16_t BuffersCount =
-        GreenQuicTrackedRxBurst(
+    uint16_t BuffersCount;
+    if (Dpdk->GreenQuicMode == GREENQUIC_MODE_OFF) {
+        /* GREENQUIC-STRICT-OFF-V1: original DPDK RX hot path. */
+        BuffersCount = rte_eth_rx_burst(
             Interface->Port,
             QueueId,
             (struct rte_mbuf**)Buffers,
             Dpdk->RxBurstSize);
-    GreenQuicOnRxPoll(Dpdk, Core, BuffersCount, RxQueueCountBefore);
+    } else {
+        BuffersCount = GreenQuicTrackedRxBurst(
+            Interface->Port,
+            QueueId,
+            (struct rte_mbuf**)Buffers,
+            Dpdk->RxBurstSize);
+        GreenQuicOnRxPoll(
+            Dpdk, Core, BuffersCount, RxQueueCountBefore);
+    }
     if (unlikely(BuffersCount == 0)) {
         return;
     }
@@ -4647,7 +4677,10 @@ CxPlatDpRawTxEnqueue(
                 Packet->Mbuf->data_len,
                 rte_ring_count(Interface->TxRingBuffer));
     }
-    GreenQuicSignalTxWork(Dpdk);
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        /* GREENQUIC-STRICT-OFF-V1 */
+        GreenQuicSignalTxWork(Dpdk);
+    }
     Dpdk->TxEnqueueCounter++; // increase in any case, even if packet was dropped
 
     CxPlatPoolFree(&Dpdk->AdditionalInfoPool, Packet);
@@ -4666,7 +4699,9 @@ CxPlatDpdkTx(
     if (
         Dpdk->GreenQuicEnableMultiCore &&
         Core != Dpdk->GreenQuicTxOwnerLcore) {
-        GreenQuicOnTxPoll(Dpdk, Core, 0, 0, 0);
+        if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+            GreenQuicOnTxPoll(Dpdk, Core, 0, 0, 0);
+        }
         return;
     }
 
@@ -4678,7 +4713,9 @@ CxPlatDpdkTx(
             Dpdk->TxBurstSize,
             NULL);
     if (unlikely(BufferCount == 0)) {
-        GreenQuicOnTxPoll(Dpdk, Core, RingBefore, 0, 0);
+        if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+            GreenQuicOnTxPoll(Dpdk, Core, RingBefore, 0, 0);
+        }
         return;
     }
 
@@ -4692,13 +4729,20 @@ CxPlatDpdkTx(
         CxPlatLockAcquire(&Interface->TxLock);
     }
     const uint16_t TxCount =
-        GreenQuicTrackedTxBurst(Interface->Port, 0, Buffers, BufferCount);
+        Dpdk->GreenQuicMode == GREENQUIC_MODE_OFF ?
+            /* GREENQUIC-STRICT-OFF-V1: original DPDK TX hot path. */
+            rte_eth_tx_burst(Interface->Port, 0, Buffers, BufferCount) :
+            GreenQuicTrackedTxBurst(
+                Interface->Port, 0, Buffers, BufferCount);
     if (!Dpdk->Interface.OffloadStatus.Transmit.Lockfree) {
         CxPlatLockRelease(&Interface->TxLock);
     }
 
     Dpdk->TxCounter += TxCount;
-    GreenQuicOnTxPoll(Dpdk, Core, RingBefore, BufferCount, TxCount);
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        GreenQuicOnTxPoll(
+            Dpdk, Core, RingBefore, BufferCount, TxCount);
+    }
     if (unlikely(TxCount < BufferCount)) {
         for (uint16_t Index = TxCount; Index < BufferCount; ++Index) {
             rte_pktmbuf_free(Buffers[Index]);
@@ -4706,7 +4750,7 @@ CxPlatDpdkTx(
         QuicTraceEvent(
             LibraryError,
             "[ lib] ERROR, %s.",
-            "DPDK: GreenQuicTrackedTxBurst() failed to send all packets");
+            "DPDK TX burst failed to send all packets");
     }
 }
 
@@ -4725,9 +4769,14 @@ CxPlatDpdkRxWorkerThread(
         Dpdk->GreenQuicRxQueueByLcore[Core] = 0;
     }
     CxPlatRefIncrement(&Dpdk->RefCount);
-    GreenQuicPowerInit(Dpdk, Core);
-    CxPlatGreenQuicPlusSetThreadLcore(Core);
-    printf("Core %u RX worker running...\n", Core);
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        /* GREENQUIC-STRICT-OFF-V1 */
+        GreenQuicPowerInit(Dpdk, Core);
+        CxPlatGreenQuicPlusSetThreadLcore(Core);
+    }
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        printf("Core %u RX worker running...\n", Core);
+    }
 
     while (likely(Dpdk->Running)) {
         for (
@@ -4737,13 +4786,22 @@ CxPlatDpdkRxWorkerThread(
             DPDK_INTERFACE* Interface =
                 CXPLAT_CONTAINING_RECORD(Entry, DPDK_INTERFACE, Link);
             CxPlatDpdkRx(Dpdk, Core, 0, Interface);
-            GreenQuicApplyPolicy(Dpdk, Interface, Core);
+            if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+                /* GREENQUIC-STRICT-OFF-V1 */
+                if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+                /* GREENQUIC-STRICT-OFF-V1 */
+                GreenQuicApplyPolicy(Dpdk, Interface, Core);
+            }
+            }
         }
     }
 
-    CxPlatGreenQuicPlusClearThreadLcore();
-    GreenQuicPowerCleanup(Dpdk, Core);
-    GreenQuicIdleCleanupLcore(GreenQuicGetLcoreState(Dpdk, Core));
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        /* GREENQUIC-STRICT-OFF-V1 */
+        CxPlatGreenQuicPlusClearThreadLcore();
+        GreenQuicPowerCleanup(Dpdk, Core);
+        GreenQuicIdleCleanupLcore(GreenQuicGetLcoreState(Dpdk, Core));
+    }
     CxPlatRefDecrement(&Dpdk->RefCount);
     return 0;
 }
@@ -4763,9 +4821,14 @@ CxPlatDpdkTxWorkerThread(
         Dpdk->GreenQuicTxOwnerLcore = Core;
     }
     CxPlatRefIncrement(&Dpdk->RefCount);
-    GreenQuicPowerInit(Dpdk, Core);
-    CxPlatGreenQuicPlusSetThreadLcore(Core);
-    printf("Core %u TX worker running...\n", Core);
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        /* GREENQUIC-STRICT-OFF-V1 */
+        GreenQuicPowerInit(Dpdk, Core);
+        CxPlatGreenQuicPlusSetThreadLcore(Core);
+    }
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        printf("Core %u TX worker running...\n", Core);
+    }
 
     while (likely(Dpdk->Running)) {
         for (
@@ -4775,13 +4838,22 @@ CxPlatDpdkTxWorkerThread(
             DPDK_INTERFACE* Interface =
                 CXPLAT_CONTAINING_RECORD(Entry, DPDK_INTERFACE, Link);
             CxPlatDpdkTx(Dpdk, Core, Interface);
-            GreenQuicApplyPolicy(Dpdk, Interface, Core);
+            if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+                /* GREENQUIC-STRICT-OFF-V1 */
+                if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+                /* GREENQUIC-STRICT-OFF-V1 */
+                GreenQuicApplyPolicy(Dpdk, Interface, Core);
+            }
+            }
         }
     }
 
-    CxPlatGreenQuicPlusClearThreadLcore();
-    GreenQuicPowerCleanup(Dpdk, Core);
-    GreenQuicIdleCleanupLcore(GreenQuicGetLcoreState(Dpdk, Core));
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        /* GREENQUIC-STRICT-OFF-V1 */
+        CxPlatGreenQuicPlusClearThreadLcore();
+        GreenQuicPowerCleanup(Dpdk, Core);
+        GreenQuicIdleCleanupLcore(GreenQuicGetLcoreState(Dpdk, Core));
+    }
     CxPlatRefDecrement(&Dpdk->RefCount);
     return 0;
 }
@@ -4804,10 +4876,15 @@ CxPlatDpdkRxTxWorkerThread(
         Dpdk->GreenQuicTxOwnerLcore = Core;
     }
     CxPlatRefIncrement(&Dpdk->RefCount);
-    GreenQuicPowerInit(Dpdk, Core);
-    CxPlatGreenQuicPlusSetThreadLcore(Core);
-    printf("[CPU %u] GreenQUIC WORKER role=rx_tx state=running\n\n", Core);
-    fflush(stdout);
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        /* GREENQUIC-STRICT-OFF-V1 */
+        GreenQuicPowerInit(Dpdk, Core);
+        CxPlatGreenQuicPlusSetThreadLcore(Core);
+    }
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        printf("[CPU %u] GreenQUIC WORKER role=rx_tx state=running\n\n", Core);
+        fflush(stdout);
+    }
 
     while (likely(Dpdk->Running)) {
         for (
@@ -4818,13 +4895,22 @@ CxPlatDpdkRxTxWorkerThread(
                 CXPLAT_CONTAINING_RECORD(Entry, DPDK_INTERFACE, Link);
             CxPlatDpdkRx(Dpdk, Core, 0, Interface);
             CxPlatDpdkTx(Dpdk, Core, Interface);
-            GreenQuicApplyPolicy(Dpdk, Interface, Core);
+            if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+                /* GREENQUIC-STRICT-OFF-V1 */
+                if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+                /* GREENQUIC-STRICT-OFF-V1 */
+                GreenQuicApplyPolicy(Dpdk, Interface, Core);
+            }
+            }
         }
     }
 
-    CxPlatGreenQuicPlusClearThreadLcore();
-    GreenQuicPowerCleanup(Dpdk, Core);
-    GreenQuicIdleCleanupLcore(GreenQuicGetLcoreState(Dpdk, Core));
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        /* GREENQUIC-STRICT-OFF-V1 */
+        CxPlatGreenQuicPlusClearThreadLcore();
+        GreenQuicPowerCleanup(Dpdk, Core);
+        GreenQuicIdleCleanupLcore(GreenQuicGetLcoreState(Dpdk, Core));
+    }
     CxPlatRefDecrement(&Dpdk->RefCount);
     return 0;
 }
@@ -4841,14 +4927,19 @@ CxPlatDpdkGreenQuicWorkerThread(
     CXPLAT_LIST_ENTRY* Entry;
 
     CxPlatRefIncrement(&Dpdk->RefCount);
-    GreenQuicPowerInit(Dpdk, Core);
-    CxPlatGreenQuicPlusSetThreadLcore(Core);
-    printf(
-        "Core %u GreenQUIC worker running: rx=%u tx=%u rxq=%hu\n",
-        Core,
-        GreenQuicLcoreOwnsRx(Dpdk, Core) ? 1U : 0U,
-        GreenQuicLcoreOwnsTx(Dpdk, Core) ? 1U : 0U,
-        GreenQuicGetQueueId(Dpdk, Core));
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        /* GREENQUIC-STRICT-OFF-V1 */
+        GreenQuicPowerInit(Dpdk, Core);
+        CxPlatGreenQuicPlusSetThreadLcore(Core);
+    }
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        printf(
+            "Core %u GreenQUIC worker running: rx=%u tx=%u rxq=%hu\n",
+            Core,
+            GreenQuicLcoreOwnsRx(Dpdk, Core) ? 1U : 0U,
+            GreenQuicLcoreOwnsTx(Dpdk, Core) ? 1U : 0U,
+            GreenQuicGetQueueId(Dpdk, Core));
+    }
 
     while (likely(Dpdk->Running)) {
         for (
@@ -4869,16 +4960,25 @@ CxPlatDpdkGreenQuicWorkerThread(
             if (OwnsTx) {
                 CxPlatDpdkTx(Dpdk, Core, Interface);
             }
-            GreenQuicApplyPolicy(Dpdk, Interface, Core);
+            if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+                /* GREENQUIC-STRICT-OFF-V1 */
+                if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+                /* GREENQUIC-STRICT-OFF-V1 */
+                GreenQuicApplyPolicy(Dpdk, Interface, Core);
+            }
+            }
             if (!OwnsRx && !OwnsTx) {
                 rte_pause();
             }
         }
     }
 
-    CxPlatGreenQuicPlusClearThreadLcore();
-    GreenQuicPowerCleanup(Dpdk, Core);
-    GreenQuicIdleCleanupLcore(GreenQuicGetLcoreState(Dpdk, Core));
+    if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {
+        /* GREENQUIC-STRICT-OFF-V1 */
+        CxPlatGreenQuicPlusClearThreadLcore();
+        GreenQuicPowerCleanup(Dpdk, Core);
+        GreenQuicIdleCleanupLcore(GreenQuicGetLcoreState(Dpdk, Core));
+    }
     CxPlatRefDecrement(&Dpdk->RefCount);
     return 0;
 }
@@ -4929,7 +5029,11 @@ CxPlatDpRawSendArpReply(
         Reply->SenderProtocolAddr = Interface->LocalIp.Ipv4.sin_addr.s_addr;
         Reply->TargetProtocolAddr = Request->SenderProtocolAddr;
 
-        const uint16_t TxCount = GreenQuicTrackedTxBurst(Interface->Port, 0, &Buffer, 1);
+        const uint16_t TxCount =
+            Dpdk->GreenQuicMode == GREENQUIC_MODE_OFF ?
+                /* GREENQUIC-STRICT-OFF-V1: original ARP TX path. */
+                rte_eth_tx_burst(Interface->Port, 0, &Buffer, 1) :
+                GreenQuicTrackedTxBurst(Interface->Port, 0, &Buffer, 1);
         if (TxCount != 1) {
             QuicTraceEvent(
                     DatapathErrorStatus,

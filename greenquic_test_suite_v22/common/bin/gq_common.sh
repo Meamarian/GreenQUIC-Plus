@@ -463,15 +463,25 @@ write_powermng_ini() {
     local idle_mode="$EFFECTIVE_IDLE_MODE"
     local idle_fallback="$EFFECTIVE_IDLE_FALLBACK"
     local enable_cstate_idle="${ENABLE_CSTATE_IDLE:-0}"
+    local effective_enable_freq="$ENABLE_FREQ"
+    local effective_enable_sleep="$ENABLE_SLEEP"
     [[ "$idle_mode" == pause ]] && enable_cstate_idle=1
+    if [[ "$mode" == off ]]; then
+        # GREENQUIC-STRICT-OFF-V1: OFF config records no GreenQUIC power/idle policy.
+        idle_mode=off
+        idle_fallback=off
+        enable_cstate_idle=0
+        effective_enable_freq=0
+        effective_enable_sleep=0
+    fi
     mkdir -p "$runtime"
     cat > "$role_config" <<EOF
 # GreenQUIC V22 separated-signal and selectable-idle power policy.
 # Materialized for $TEST_ID ($role), mode=$mode.
 # QUIC semantic floors are active only in PLUS mode.
 
-GreenQuicEnableFreq=$ENABLE_FREQ
-GreenQuicEnableSleep=$ENABLE_SLEEP
+GreenQuicEnableFreq=$effective_enable_freq
+GreenQuicEnableSleep=$effective_enable_sleep
 GreenQuicNoSleepIfTxRingNotEmpty=$NO_SLEEP_IF_TX_RING_NOT_EMPTY
 GreenQuicTxRingProtectUp=$TX_RING_PROTECT_UP
 
@@ -565,6 +575,15 @@ validate_runtime_config() {
 
 validate_runtime_log() {
     local role="$1" logf="$2" mode="$3" stamp="$4"
+    if [[ "$mode" == off ]]; then
+        if grep -Eq \
+            'GreenQUIC lcore=|policy_action=(freq_max_control|freq_max_hard|freq_up|freq_down|freq_min|sleep|pause|monitor|epoll|keep_pause|short_idle_pause|txring_protect_up)' \
+            "$logf" 2>/dev/null; then
+            printf '\n[GreenQUIC-Test:ERROR] %s\n' \
+                "Strict OFF validation failed: GreenQUIC policy activity appeared in $logf" >&2
+            return 2
+        fi
+    fi
     if [[ "${ENABLE_FREQ:-0}" == 1 ]] && grep -qi 'rte_power_init failed' "$logf" 2>/dev/null; then
         printf '\n[GreenQUIC-Test:ERROR] %s\n' "DVFS was enabled, but rte_power_init failed. This run cannot support a GreenQUIC frequency/energy claim." >&2
         return 2
@@ -1112,9 +1131,14 @@ run_server() {
     local msr_csv="$TEST_DIR/results/server_msr_${mode}_${stamp}.csv"
     local transfer_window="$TEST_DIR/results/server_transfer_${mode}_${stamp}.json"
     local cstate_prefix="$TEST_DIR/results/server_cstate_${mode}_${stamp}"
-    GQ_TRANSFER_WINDOW_FILE="$transfer_window"
-    GQ_TRANSFER_ROLE=server
-    export GQ_TRANSFER_WINDOW_FILE GQ_TRANSFER_ROLE
+    if [[ "$mode" == off ]]; then
+        # GREENQUIC-STRICT-OFF-V1: no per-burst clock/atomic instrumentation in strict OFF.
+        unset GQ_TRANSFER_WINDOW_FILE GQ_TRANSFER_ROLE || true
+    else
+        GQ_TRANSFER_WINDOW_FILE="$transfer_window"
+        GQ_TRANSFER_ROLE=server
+        export GQ_TRANSFER_WINDOW_FILE GQ_TRANSFER_ROLE
+    fi
 
     log "Starting $TEST_ID server mode=$mode from $runtime"
     log "Binary: $INTEROP_SERVER_BIN"
@@ -1473,9 +1497,14 @@ run_client() {
     local msr_csv="$TEST_DIR/results/client_msr_${mode}_${stamp}.csv"
     local transfer_window="$TEST_DIR/results/client_transfer_${mode}_${stamp}.json"
     local cstate_prefix="$TEST_DIR/results/client_cstate_${mode}_${stamp}"
-    GQ_TRANSFER_WINDOW_FILE="$transfer_window"
-    GQ_TRANSFER_ROLE=client
-    export GQ_TRANSFER_WINDOW_FILE GQ_TRANSFER_ROLE
+    if [[ "$mode" == off ]]; then
+        # GREENQUIC-STRICT-OFF-V1: no per-burst clock/atomic instrumentation in strict OFF.
+        unset GQ_TRANSFER_WINDOW_FILE GQ_TRANSFER_ROLE || true
+    else
+        GQ_TRANSFER_WINDOW_FILE="$transfer_window"
+        GQ_TRANSFER_ROLE=client
+        export GQ_TRANSFER_WINDOW_FILE GQ_TRANSFER_ROLE
+    fi
     local download_manifest="$TEST_DIR/results/client_download_manifest_${mode}_${stamp}.json"
     local download_start_wall_ns
     download_start_wall_ns="$(date +%s%N)"

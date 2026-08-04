@@ -237,13 +237,24 @@ DPDK_PC="$(find "$DPDK_INSTALL" -type f -name libdpdk.pc -print -quit)"
 [[ -n "$DPDK_PC" ]] || { echo "ERROR: DPDK installation did not produce libdpdk.pc" >&2; exit 1; }
 DPDK_PC_DIR="$(dirname "$DPDK_PC")"
 
-DPDK_LIB_DIR="$(find "$DPDK_INSTALL" -type f \( -name 'libdpdk.a' -o -name 'libdpdk.so' -o -name 'libdpdk.so.*' \) -printf '%h\n' | head -n 1)"
+# GREENQUIC-DPDK-STATIC-LIBDIR-V1
+# A static DPDK install is a directory of librte_*.a archives and may not
+# contain an aggregate libdpdk.a archive.
+DPDK_LIB_DIR="$(find "$DPDK_INSTALL" -type f -name 'librte_eal.a' -printf '%h\n' | head -n 1)"
+if [[ -z "$DPDK_LIB_DIR" ]]; then
+    DPDK_LIB_DIR="$(find "$DPDK_INSTALL" -type f \( -name 'libdpdk.a' -o -name 'libdpdk.so' -o -name 'libdpdk.so.*' \) -printf '%h\n' | head -n 1)"
+fi
 [[ -n "$DPDK_LIB_DIR" ]] || DPDK_LIB_DIR="$DPDK_INSTALL/lib"
+[[ -f "$DPDK_LIB_DIR/librte_eal.a" ]] || {
+    echo "ERROR: static DPDK libraries were not found under $DPDK_INSTALL" >&2
+    exit 1
+}
 
 export PKG_CONFIG_PATH="$DPDK_PC_DIR${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export LD_LIBRARY_PATH="$DPDK_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export LIBRARY_PATH="$DPDK_LIB_DIR${LIBRARY_PATH:+:$LIBRARY_PATH}"
 export CMAKE_PREFIX_PATH="$DPDK_INSTALL${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+export CMAKE_LIBRARY_PATH="$DPDK_LIB_DIR${CMAKE_LIBRARY_PATH:+:$CMAKE_LIBRARY_PATH}"
 export PATH="$DPDK_INSTALL/bin:$DPDK_SRC/usertools:$PATH"
 
 pkg-config --exists libdpdk || { echo "ERROR: pkg-config cannot find the locally built libdpdk" >&2; exit 1; }

@@ -27,6 +27,10 @@ extern "C" {
 #define GQPLUS_HINT_SERVER_FILE_TX_ACTIVE  (1ull << 16)
 #define GQPLUS_HINT_CLIENT_FILE_RX_ACTIVE  (1ull << 17)
 
+/* GREENQUIC-STRICT-OFF-V1: process-wide runtime gate; enabled only in PLUS mode. */
+void CxPlatGreenQuicPlusSetRuntimeEnabled(int Enabled);
+int CxPlatGreenQuicPlusRuntimeEnabled(void);
+
 void CxPlatGreenQuicPlusSetThreadLcore(uint16_t Lcore);
 void CxPlatGreenQuicPlusClearThreadLcore(void);
 void CxPlatGreenQuicPlusSetPartitionDpdkLcore(uint16_t Partition, uint16_t Lcore);

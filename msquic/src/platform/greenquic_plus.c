@@ -38,6 +38,29 @@ __declspec(thread) static uint16_t ThreadLcore = GQPLUS_LCORE_UNKNOWN;
 static _Thread_local uint16_t ThreadLcore = GQPLUS_LCORE_UNKNOWN;
 #endif
 
+/* GREENQUIC-STRICT-OFF-V1: OFF and BASIC do not execute hint bookkeeping. */
+static atomic_int GreenQuicPlusRuntimeGate = ATOMIC_VAR_INIT(0);
+
+void
+CxPlatGreenQuicPlusSetRuntimeEnabled(int Enabled)
+{
+    atomic_store_explicit(
+        &GreenQuicPlusRuntimeGate,
+        Enabled != 0 ? 1 : 0,
+        memory_order_release);
+    if (Enabled == 0) {
+        ThreadLcore = GQPLUS_LCORE_UNKNOWN;
+    }
+}
+
+int
+CxPlatGreenQuicPlusRuntimeEnabled(void)
+{
+    return atomic_load_explicit(
+        &GreenQuicPlusRuntimeGate,
+        memory_order_acquire) != 0;
+}
+
 static atomic_uint_fast64_t GlobalPersistentHints;
 static atomic_uint_fast64_t UnknownPersistentHints;
 static atomic_uint_fast64_t LcorePersistentHints[GQPLUS_MAX_LCORES];
@@ -115,6 +138,10 @@ CxPlatGreenQuicPlusExtendUntil(
 void
 CxPlatGreenQuicPlusSetThreadLcore(uint16_t Lcore)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        ThreadLcore = GQPLUS_LCORE_UNKNOWN; return;
+    }
     ThreadLcore = Lcore;
 }
 
@@ -130,6 +157,10 @@ CxPlatGreenQuicPlusSetPartitionDpdkLcore(
     uint16_t Lcore
     )
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return;
+    }
     if (!CxPlatGreenQuicPlusValidPartition(Partition)) {
         return;
     }
@@ -144,6 +175,10 @@ CxPlatGreenQuicPlusSetPartitionDpdkLcore(
 uint16_t
 CxPlatGreenQuicPlusGetPartitionDpdkLcore(uint16_t Partition)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return GQPLUS_LCORE_UNKNOWN;
+    }
     if (!CxPlatGreenQuicPlusValidPartition(Partition)) {
         return GQPLUS_LCORE_UNKNOWN;
     }
@@ -274,6 +309,10 @@ CxPlatGreenQuicPlusEndRecoveryForLcore(uint16_t Lcore)
 void
 CxPlatGreenQuicPlusBeginTransfer(uint64_t Hints)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return;
+    }
     if ((Hints & GQPLUS_HINT_SERVER_FILE_TX_ACTIVE) != 0) {
         CxPlatGreenQuicPlusIncrementGlobal(
             &ServerFileTxActiveCount,
@@ -289,6 +328,10 @@ CxPlatGreenQuicPlusBeginTransfer(uint64_t Hints)
 void
 CxPlatGreenQuicPlusEndTransfer(uint64_t Hints)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return;
+    }
     if ((Hints & GQPLUS_HINT_SERVER_FILE_TX_ACTIVE) != 0) {
         CxPlatGreenQuicPlusDecrementGlobal(
             &ServerFileTxActiveCount,
@@ -304,6 +347,10 @@ CxPlatGreenQuicPlusEndTransfer(uint64_t Hints)
 void
 CxPlatGreenQuicPlusBeginRecoveryForPartition(uint16_t Partition)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return;
+    }
     uint16_t Lcore =
         CxPlatGreenQuicPlusGetPartitionDpdkLcore(Partition);
     if (!CxPlatGreenQuicPlusValidLcore(Lcore)) {
@@ -315,6 +362,10 @@ CxPlatGreenQuicPlusBeginRecoveryForPartition(uint16_t Partition)
 void
 CxPlatGreenQuicPlusEndRecoveryForPartition(uint16_t Partition)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return;
+    }
     uint16_t Lcore =
         CxPlatGreenQuicPlusGetPartitionDpdkLcore(Partition);
     if (!CxPlatGreenQuicPlusValidLcore(Lcore)) {
@@ -326,18 +377,30 @@ CxPlatGreenQuicPlusEndRecoveryForPartition(uint16_t Partition)
 void
 CxPlatGreenQuicPlusBeginRecovery(void)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return;
+    }
     CxPlatGreenQuicPlusBeginRecoveryForLcore(ThreadLcore);
 }
 
 void
 CxPlatGreenQuicPlusEndRecovery(void)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return;
+    }
     CxPlatGreenQuicPlusEndRecoveryForLcore(ThreadLcore);
 }
 
 void
 CxPlatGreenQuicPlusSetHints(uint64_t Hints)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return;
+    }
     const uint64_t Plain =
         Hints & ~(GQPLUS_TRANSFER_HINTS | GQPLUS_HINT_CUBIC_RECOVERY);
     atomic_fetch_or_explicit(
@@ -353,6 +416,10 @@ CxPlatGreenQuicPlusSetHints(uint64_t Hints)
 void
 CxPlatGreenQuicPlusClearHints(uint64_t Hints)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return;
+    }
     const uint64_t Plain =
         Hints & ~(GQPLUS_TRANSFER_HINTS | GQPLUS_HINT_CUBIC_RECOVERY);
     atomic_fetch_and_explicit(
@@ -451,6 +518,10 @@ CxPlatGreenQuicPlusPulseHintsForLcore(
     uint64_t Hints
     )
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return;
+    }
     CxPlatGreenQuicPlusPulseToBucket(
         Lcore,
         Hints,
@@ -463,6 +534,10 @@ CxPlatGreenQuicPlusPulseHintsForPartition(
     uint64_t Hints
     )
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return;
+    }
     uint16_t Lcore =
         CxPlatGreenQuicPlusGetPartitionDpdkLcore(Partition);
     if (!CxPlatGreenQuicPlusValidLcore(Lcore)) {
@@ -474,6 +549,10 @@ CxPlatGreenQuicPlusPulseHintsForPartition(
 void
 CxPlatGreenQuicPlusPulseHints(uint64_t Hints)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return;
+    }
     CxPlatGreenQuicPlusPulseHintsForLcore(ThreadLcore, Hints);
 }
 
@@ -533,6 +612,10 @@ CxPlatGreenQuicPlusGetHintsForLcore(
     int IncludeUnknownGlobalHints
     )
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return 0;
+    }
     const uint64_t Now = CxPlatGreenQuicPlusNowNs();
     uint64_t Hints = 0;
 
@@ -562,6 +645,10 @@ CxPlatGreenQuicPlusGetHintsForLcore(
 uint64_t
 CxPlatGreenQuicPlusGetTxHints(void)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return 0;
+    }
     const uint64_t Now = CxPlatGreenQuicPlusNowNs();
     uint64_t Hints = atomic_load_explicit(
         &GlobalPersistentHints,
@@ -591,6 +678,10 @@ CxPlatGreenQuicPlusGetTxHints(void)
 uint64_t
 CxPlatGreenQuicPlusGetHints(void)
 {
+    /* GREENQUIC-STRICT-OFF-V1: no hint work outside PLUS mode. */
+    if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
+        return 0;
+    }
     const uint64_t Now = CxPlatGreenQuicPlusNowNs();
     uint64_t Hints =
         atomic_load_explicit(
