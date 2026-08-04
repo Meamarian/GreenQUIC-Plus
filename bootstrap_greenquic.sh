@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 trap 'printf "\nERROR: bootstrap failed at line %s.\n" "$LINENO" >&2' ERR
 
-INSTALL_DEPS=0
+INSTALL_DEPS=1
 REBUILD=0
 JOBS="$(nproc 2>/dev/null || echo 1)"
 DPDK_PCI=""
@@ -17,7 +17,8 @@ Usage:
   ./bootstrap_greenquic.sh [options]
 
 Options:
-  --install-deps       Install missing Debian build packages without upgrading/removing packages
+  --install-deps       Install missing Debian build packages (default; kept for compatibility)
+  --skip-deps          Skip apt dependency installation/check only when intentionally requested
   --rebuild            Delete only generated build/install directories and rebuild them
   --jobs N             Parallel build jobs (default: nproc)
   --pci BDF            DPDK PCI device, for example 0000:18:00.0
@@ -35,6 +36,10 @@ while (($#)); do
     case "$1" in
         --install-deps)
             INSTALL_DEPS=1
+            shift
+            ;;
+        --skip-deps)
+            INSTALL_DEPS=0
             shift
             ;;
         --rebuild)
@@ -108,16 +113,35 @@ if [[ ! -f "$MSQUIC_SRC/submodules/openssl/Configure" ]]; then
 fi
 
 DEBIAN_PACKAGES=(
+    ca-certificates
+    openssh-client
     git
+    curl
+    wget
+    file
+    unzip
+    xz-utils
     build-essential
+    gcc
+    g++
+    make
     cmake
     meson
     ninja-build
     pkg-config
     python3
+    python3-dev
     python3-pyelftools
+    python3-setuptools
+    python3-wheel
     perl
     m4
+    nasm
+    autoconf
+    automake
+    libtool
+    flex
+    bison
     libnuma-dev
     libssl-dev
     libelf-dev
@@ -152,6 +176,7 @@ fi
 if ((${#missing_packages[@]})); then
     printf 'Missing packages: %s\n' "${missing_packages[*]}"
     if ((INSTALL_DEPS)); then
+        echo "Installing required build dependencies before starting the build..."
         if ((EUID == 0)); then
             APT=(apt-get)
         elif command -v sudo >/dev/null 2>&1; then
@@ -161,12 +186,14 @@ if ((${#missing_packages[@]})); then
             exit 1
         fi
 
+        export DEBIAN_FRONTEND=noninteractive
+        export APT_LISTCHANGES_FRONTEND=none
         "${APT[@]}" update
         "${APT[@]}" -y --no-install-recommends --no-remove --no-upgrade \
             install "${missing_packages[@]}"
     else
-        echo "No system packages were changed."
-        echo "Rerun with --install-deps to install only the missing packages."
+        echo "Dependency installation was skipped by --skip-deps."
+        echo "The build cannot continue while required packages are missing."
         exit 3
     fi
 else
@@ -442,6 +469,7 @@ fi
 cat <<EOF
 
 Build completed successfully.
+All required Debian/Ubuntu build dependencies were checked and installed automatically.
 
 Environment file:
   $ENV_FILE
