@@ -24,3 +24,6 @@ msquic/powermng.ini
 
 # Generated 10 GiB test payload
 greenquic_test_suite_v22/common/files/payloads/file_10G.bin
+
+# Generated 8 GiB test payload
+greenquic_test_suite_v22/common/files/payloads/file_8G.bin

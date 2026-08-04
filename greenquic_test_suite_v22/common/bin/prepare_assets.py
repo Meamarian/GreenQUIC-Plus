@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 PAYLOADS = {
+    "file_8G.bin": 8 * 1024**3,
     "file_10G.bin": 10 * 1024**3,
     "chunk_1M.bin": 1 * 1024**2,
     "chunk_64M.bin": 64 * 1024**2,
@@ -68,6 +69,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--common", required=True)
     ap.add_argument("--materialize", action="store_true", help="Write real zero-filled files instead of sparse files.")
+    ap.add_argument("--create-8g", action="store_true", help="Create the 8 GiB source payload now.")
     ap.add_argument("--create-10g", action="store_true", help="Create the 10 GiB source payload now.")
     args = ap.parse_args()
 
@@ -79,8 +81,13 @@ def main():
     server_root.mkdir(parents=True, exist_ok=True)
     downloads.mkdir(parents=True, exist_ok=True)
 
+    large_payloads = {
+        "file_8G.bin": args.create_8g,
+        "file_10G.bin": args.create_10g,
+    }
+
     for name, size in PAYLOADS.items():
-        if not args.create_10g and name == "file_10G.bin":
+        if name in large_payloads and not large_payloads[name]:
             continue
         path = payload_dir / name
         if not path.exists() or path.stat().st_size != size:
@@ -88,13 +95,14 @@ def main():
             (materialize_zero if args.materialize else sparse)(path, size)
 
     links = {
+        server_root / "file_8G.bin": Path("../payloads/file_8G.bin"),
         server_root / "file_10G.bin": Path("../payloads/file_10G.bin"),
         server_root / "small" / "file_4K.bin": Path("../../payloads/file_4K.bin"),
         server_root / "small" / "file_64K.bin": Path("../../payloads/file_64K.bin"),
         server_root / "small" / "file_1M.bin": Path("../../payloads/file_1M.bin"),
     }
     for link, target in links.items():
-        if target.name == "file_10G.bin" and not args.create_10g:
+        if target.name in large_payloads and not large_payloads[target.name]:
             continue
         force_symlink(target, link)
 
@@ -103,7 +111,7 @@ def main():
 
     # The interop client opens <download-dir>/<basename> with fopen("wb").
     # Symlinks to /dev/null avoid storing duplicate 10 GB/chunk downloads.
-    sink_names = ["file_10G.bin", "file_4K.bin", "file_64K.bin", "file_1M.bin"]
+    sink_names = ["file_8G.bin", "file_10G.bin", "file_4K.bin", "file_64K.bin", "file_1M.bin"]
     sink_names.extend(f"chunk_{i:03d}.bin" for i in range(1, 65))
     if os.name == "posix" and Path("/dev/null").exists():
         for name in sink_names:
