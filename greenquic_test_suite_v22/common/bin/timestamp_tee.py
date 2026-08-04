@@ -15,6 +15,10 @@ def main() -> int:
     parser.add_argument("--timeline", type=Path, required=True)
     args = parser.parse_args()
 
+    # Native MsQuic/DPDK output may contain non-UTF-8 bytes.
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     args.raw_log.parent.mkdir(parents=True, exist_ok=True)
     args.timeline.parent.mkdir(parents=True, exist_ok=True)
     start_wall_ns = time.time_ns()

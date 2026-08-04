@@ -1,3 +1,4 @@
+file_8G.bin	8589934592
 file_10G.bin	10737418240
 chunk_1M.bin	1048576
 chunk_64M.bin	67108864
