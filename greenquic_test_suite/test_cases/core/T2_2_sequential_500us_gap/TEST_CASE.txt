@@ -1,0 +1,170 @@
+T2_2 — Sequential connections with 500us gap
+============================================
+
+Category:
+    core
+
+Purpose:
+    Measure the pause/frequency/sleep transition for a 500 microsecond inter-connection gap.
+
+EXACT TEST TOPOLOGY AND COUNTS
+------------------------------
+Unique source files used:             1
+Total file requests:                  200
+Total QUIC connections:               200
+Maximum concurrent QUIC connections:  1
+Total QUIC streams:                   200
+Maximum concurrent QUIC streams:      1
+Total UDP 5-tuple flows:              200
+Maximum concurrent UDP flows:         1
+
+SERVER:
+    MsQuic worker CPUs/lcores:        16,17,18,19
+    Configured MsQuic workers:        4
+    Configured MsQuic partitions:     4
+    Distinct active owner partitions: 1
+    Configured DPDK lcores:           8 (1 lcore)
+    Active DPDK lcores during traffic: 1
+    Dedicated TX owner lcore:         8
+
+CLIENT:
+    MsQuic worker CPUs/lcores:        20,21,22,23
+    Configured MsQuic workers:        4
+    Configured MsQuic partitions:     4
+    Distinct active owner partitions: 1
+    Configured DPDK lcores:           12 (1 lcore)
+    Active DPDK lcores during traffic: 1
+    Dedicated TX owner lcore:         12
+
+Important:
+    "Active owner partitions" is exact for zero/single-concurrent-connection
+    tests. With parallel connections, each connection has one owner, but two
+    connections may hash to the same partition; therefore the distinct active
+    partition count is a bounded range and must be verified from logs.
+
+Workload configuration:
+    workload kind:            sequential_connections
+    default GreenQUIC mode:   plus
+    multicore RSS:            disabled
+    gap:                      500 us
+    repetitions/batches:      200
+    connections per batch:    1
+    streams per connection:   1
+    maximum configured sleep: 0 us
+
+Requested server paths:
+    /chunks/chunk_001.bin
+
+Object relationships:
+Connection:
+    Many connections over time; exactly one active connection at a time.
+
+Stream:
+    One stream per connection.
+
+UDP/RSS flow:
+    One active UDP flow at a time; each new connection may hash differently.
+
+DPDK lcore:
+    One active lcore at a time; lcore identity can change across repetitions.
+
+MsQuic partition:
+    One active partition at a time; partition identity can change across repetitions.
+
+Important ownership correction:
+    MsQuic decides which partition owns a connection.
+    RSS/NIC decides which RX queue/lcore receives a UDP flow.
+    GreenQUIC configuration maps partition -> DPDK lcore only for hints.
+    This mapping does not force RSS to select the same lcore.
+
+Mapping used by the generated default configuration:
+Single-queue configuration used by this testcase:
+    SERVER: DPDK lcore 8; P0/P1/P2/P3 hints all map to lcore 8.
+    CLIENT: DPDK lcore 12; P0/P1/P2/P3 hints all map to lcore 12.
+    MsQuic still has four configured worker CPUs/partitions on each endpoint.
+
+Diagram:
+                              CLIENT                                      SERVER
+                              |                                             |
+                              |--- Conn A, Stream A0: GET /chunks/chunk_001.bin--> |
+                              |<---------------- chunk data -----------------|
+                              |--- ACKs ------------------------------------>|
+                              |                                             |
+                              |=============== configured gap ==============|
+                              | no active connection / stream                |
+                              | empty RX/TX polls accumulate                 |
+                              | pressure falls; DVFS/idle policy may act     |
+                              |=============================================|
+                              |                                             |
+                              |--- Conn B, Stream B0: GET /chunks/chunk_001.bin--> |
+                              |<---------------- chunk data -----------------|
+                              |--- ACKs ------------------------------------>|
+
+Signals expected:
+    Active: transfer hints, bursts, ACK and CUBIC events. Gap: zero bursts, TX ring empty, transient hints expire and consecutive empty-pull counters increase.
+
+Energy management during ACTIVE periods:
+    At connection/chunk start, frequency is retained or increased. Hard max is reserved for real queue/backlog or recovery pressure.
+
+Energy management during IDLE periods:
+    Pause/keep and perhaps a light freq_down; no scheduler sleep.
+
+Expected energy result:
+    Low
+
+What to measure:
+    * total package joules and average package power on both endpoints;
+    * elapsed time, throughput and joules per GB/request;
+    * per-lcore frequency residency and C-state residency;
+    * RX/TX bursts, empty pulls, queue/ring pressure and EWMA pressure;
+    * selected GreenQUIC action, total sleep requests and hint timeline;
+    * QUIC RTT, ACK delay, retransmissions, recovery interval and completion time.
+
+Per-role files in this testcase:
+    server/dpdk.ini
+    server/msquic_config.txt
+    server/run.sh
+    server/run_preflight.sh
+    client/dpdk.ini
+    client/msquic_config.txt
+    client/run.sh
+    client/run_preflight.sh
+    TOPOLOGY.env
+
+Run — server machine:
+    ./server/run_preflight.sh
+    ./server/run.sh plus
+
+Run — client machine:
+    SERVER_HOST=<server-ip> ./client/run_preflight.sh
+    SERVER_HOST=<server-ip> ./client/run.sh plus
+
+Compare modes:
+    Use ./run_matrix.sh, or run the same workload with:
+        ./server/run.sh off|basic|plus
+        ./client/run.sh off|basic|plus
+
+Outputs:
+    logs/       complete server/client stdout and timestamps
+    results/    generated dpdk.ini snapshots and RAPL/timing JSON
+    runtime/    exact role-specific dpdk.ini used by the current run
+
+Limitations and interpretation:
+    Exact sub-millisecond gaps cannot be guaranteed by launching a new quicinterop process per connection. For T2_1/T2_2, use an in-process client through INPROCESS_CLIENT_BIN, or run ./run_client.sh --approximate and label the result as orchestration-approximate.
+
+IN-PROCESS CLIENT REQUIREMENT:
+    A valid two-sided GreenQUIC energy run requires INPROCESS_CLIENT_BIN.
+    It keeps one MsQuic/DPDK process alive across all connections/batches.
+    --approximate launches stock client processes and is not a valid client-side
+    empty-poll/DVFS measurement. For sequential tests it can still exercise the
+    persistent server; for parallel tests it is only a server-load approximation.
+
+Do not change useful work between OFF, BASIC and PLUS. Keep payload size, repetitions,
+source-port strategy, CPU pinning, server temperature and network conditions constant.
+
+Final V18 policy expectations
+-----------------------------
+* Burst EWMAs react quickly at each chunk/connection.
+* Queue/ring EWMAs retain backlog evidence through short gaps but decay across real idle.
+* Semantic floors expire independently and never enter the four physical EWMAs.
+* Save and compare both dpdk.ini and powermng.ini hashes for every run.
