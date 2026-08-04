@@ -15,8 +15,8 @@ msquic/deps/dpdk-install/
 # Archives and crash dumps
 *.zip
 *.tar.gz
-core
-core.*
+/core
+/core.*
 
 # Machine-specific runtime files
 msquic/dpdk.ini
