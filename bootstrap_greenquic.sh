@@ -263,8 +263,15 @@ cmake -S "$MSQUIC_SRC" -B "$MSQUIC_BUILD" -G Ninja \
     -DQUIC_BUILD_TOOLS=ON \
     -DQUIC_BUILD_PERF=ON \
     -DQUIC_BUILD_TEST=OFF \
-    -DQUIC_ENABLE_LOGGING=ON \
-    -DQUIC_LOGGING_TYPE=stdout
+    -DQUIC_ENABLE_LOGGING=OFF
+
+if ! grep -qx 'QUIC_ENABLE_LOGGING:BOOL=OFF' "$MSQUIC_BUILD/CMakeCache.txt"; then
+    echo "ERROR: MsQuic logging was not disabled by CMake." >&2
+    grep '^QUIC_ENABLE_LOGGING:' "$MSQUIC_BUILD/CMakeCache.txt" >&2 || true
+    exit 1
+fi
+
+echo "MsQuic packet tracing: disabled"
 
 cmake --build "$MSQUIC_BUILD" \
     --target secnetperf quicinteropserver quicinterop \
