@@ -1,0 +1,31 @@
+MsQuic execution configuration for T20 (client)
+===============================================
+
+Test title:
+    V21 recovery guard against work-triggered wait
+
+Native configuration mechanism in the V21 patched repository:
+    The patched quicinterop/quicinteropserver reads the role-local dpdk.ini
+    before RegistrationOpen and builds QUIC_EXECUTION_CONFIG.
+
+Configured keys:
+    GreenQuicQuicWorkerCpus=20,21,22,23
+    GreenQuicQuicProfile=max_throughput
+    GreenQuicProfile=client_download
+
+Configured worker CPUs: 20,21,22,23
+Configured worker count: 4
+Configured partition count: 4
+DPDK multicore enabled: 0
+
+Connection ownership:
+    Every connection has one MsQuic owner partition. Streams remain under that
+    connection owner. RSS independently selects an RX queue; the partition map
+    routes QUIC hints and does not force the NIC's RSS decision.
+
+Final V21 configuration split
+-----------------------------
+dpdk.ini controls mode, endpoint profile, lcores, RX/TX ownership, workers and
+partition mapping. powermng.ini controls separated physical signals, QUIC
+floors, DVFS, bounded short sleep, optimized pause, monitor/epoll selection,
+watchdog, fallback and logging. Both files are read at process startup.

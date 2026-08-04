@@ -1,0 +1,1615 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+GQ_COMMON_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+SUITE_ROOT="$(cd -- "$GQ_COMMON_DIR/.." && pwd)"
+
+
+# GREENQUIC-V22-SUITE-WIDE-DEFAULTS-V1
+# Defaults requested for normal GreenQUIC executions. Any value supplied in the
+# command environment takes precedence over these assignments.
+: "${WORK_WAIT_MIN_LEVEL:=1}"
+: "${GQ_IDLE_MODE_OVERRIDE:=epoll}"
+: "${GQ_LOG_LEVEL:=1}"
+: "${GQ_STATS_PERIOD_US:=100000}"
+: "${GQ_PLOT_X_TICK_MS:=1000}"
+: "${GQ_PLOT_X_LABEL_MS:=1000}"
+: "${GQ_POWER_SAMPLE_INTERVAL_MS:=1000}"
+: "${GQ_ENABLE_MSR_TRACE:=1}"
+: "${GQ_REQUIRE_MSR_TRACE:=0}"
+: "${GQ_MSR_SAMPLE_INTERVAL_MS:=6}"
+: "${GQ_MSR_SMOOTH_SAMPLES:=3}"
+: "${ENABLE_CSTATE_RECORD:=0}"
+: "${GQ_REQUIRE_CSTATE_RECORD:=0}"
+: "${GQ_CSTATE_CPUS:=}"
+: "${GQ_CSTATE_READER_CPU:=auto}"
+: "${GQ_CSTATE_PLOT_X_TICK_MS:=10}"
+: "${GQ_CSTATE_PLOT_X_LABEL_MS:=100}"
+export ENABLE_CSTATE_RECORD GQ_REQUIRE_CSTATE_RECORD GQ_CSTATE_CPUS GQ_CSTATE_READER_CPU
+export GQ_CSTATE_PLOT_X_TICK_MS GQ_CSTATE_PLOT_X_LABEL_MS
+: "${GQ_POST_TRANSFER_WAIT_S:=4}"
+: "${FREQ_PERIOD_US:=10000}"
+: "${GQ_PLOT_HEIGHT_PX:=3500}"
+: "${GQ_PLOT_Y_TICKS:=21}"
+: "${GQ_POWER_PLOT_X_TICK_MS:=1000}"
+: "${GQ_POWER_PLOT_X_LABEL_MS:=1000}"
+: "${GQ_MSR_PLOT_X_TICK_MS:=10}"
+: "${GQ_MSR_PLOT_X_LABEL_MS:=100}"
+: "${GQ_MSR_PLOT_Y_TICKS:=21}"
+: "${GQ_FREQ_PLOT_X_TICK_MS:=10}"
+: "${GQ_FREQ_PLOT_X_LABEL_MS:=100}"
+: "${GQ_FREQ_PLOT_Y_TICKS:=21}"
+export WORK_WAIT_MIN_LEVEL GQ_IDLE_MODE_OVERRIDE
+export GQ_LOG_LEVEL GQ_STATS_PERIOD_US
+export GQ_PLOT_X_TICK_MS GQ_PLOT_X_LABEL_MS GQ_POWER_SAMPLE_INTERVAL_MS
+export GQ_ENABLE_MSR_TRACE GQ_REQUIRE_MSR_TRACE
+export GQ_MSR_SAMPLE_INTERVAL_MS GQ_MSR_SMOOTH_SAMPLES
+export GQ_POST_TRANSFER_WAIT_S FREQ_PERIOD_US
+export GQ_PLOT_HEIGHT_PX GQ_PLOT_Y_TICKS
+export GQ_POWER_PLOT_X_TICK_MS GQ_POWER_PLOT_X_LABEL_MS
+export GQ_MSR_PLOT_X_TICK_MS GQ_MSR_PLOT_X_LABEL_MS GQ_MSR_PLOT_Y_TICKS
+export GQ_FREQ_PLOT_X_TICK_MS GQ_FREQ_PLOT_X_LABEL_MS GQ_FREQ_PLOT_Y_TICKS
+
+# shellcheck source=/dev/null
+source "$SUITE_ROOT/suite.env"
+
+log() { printf '\n[GreenQUIC-Test] %s\n' "$*" >&2; }
+warn() { printf '\n[GreenQUIC-Test:WARN] %s\n' "$*" >&2; }
+die() { printf '\n[GreenQUIC-Test:ERROR] %s\n' "$*" >&2; exit 1; }
+
+
+validate_test_specific_requirements() {
+    local role="$1" phase="$2"
+    if [[ ( "${TEST_ID:-}" == T8 || "${TEST_ID:-}" == T20 ) && "$role" == client && "${GQ_LOSS_INJECTION_CONFIRMED:-0}" != 1 ]]; then
+        die "$TEST_ID requires externally configured and verified packet loss. Set GQ_LOSS_INJECTION_CONFIRMED=1 only after tc/netem or equivalent impairment is active."
+    fi
+    if [[ ( "${TEST_ID:-}" == T7 || "${TEST_ID:-}" == T9 || "${VALIDATE_IDLE_EVIDENCE:-0}" == 1 ) && "${EFFECTIVE_GQ_LOG_LEVEL:-0}" == 0 ]]; then
+        warn "$TEST_ID $phase has decision logging disabled. This is suitable for energy measurement, but it cannot validate ACK hints/wakeup actions; perform a separate GQ_LOG_LEVEL=1 diagnostic run."
+    fi
+}
+
+validate_mode() {
+    case "$1" in
+        off|basic|plus) return 0 ;;
+        *) die "Invalid GreenQUIC mode '$1'. Expected off, basic, or plus." ;;
+    esac
+}
+
+linked_msquic_for_binary() {
+    local bin="$1"
+    command -v ldd >/dev/null 2>&1 || return 1
+    ldd "$bin" 2>/dev/null | awk '
+        $1 ~ /^libmsquic\.so/ && $2 == "=>" && $3 ~ /^\// { print $3; exit }
+        $1 ~ /^\// && $1 ~ /libmsquic\.so/ { print $1; exit }
+    '
+}
+
+runtime_binary_for_role() {
+    local role="$1"
+    if [[ "$role" == server ]]; then
+        printf '%s\n' "$INTEROP_SERVER_BIN"
+    elif [[ "${WORKLOAD_KIND:-}" == idle_no_client ]]; then
+        printf '%s\n' "$INTEROP_SERVER_BIN"
+    elif [[ "${REQUIRES_INPROCESS_CLIENT:-0}" == 1 ]]; then
+        printf '%s\n' "${INPROCESS_CLIENT_BIN:-}"
+    else
+        printf '%s\n' "$INTEROP_CLIENT_BIN"
+    fi
+}
+
+require_inprocess_client_if_needed() {
+    if [[ "${REQUIRES_INPROCESS_CLIENT:-0}" == 1 ]]; then
+        [[ -n "${INPROCESS_CLIENT_BIN:-}" && -x "$INPROCESS_CLIENT_BIN" ]] ||
+            die "$TEST_ID requires INPROCESS_CLIENT_BIN, but no executable helper was found. Configure it in suite.env before preflight or execution."
+    fi
+}
+
+resolve_path() {
+    local p="$1"
+    if [[ "$p" = /* ]]; then printf '%s\n' "$p"; else printf '%s\n' "$SUITE_ROOT/$p"; fi
+}
+
+load_test() {
+    TEST_DIR="$(cd -- "$1" && pwd)"
+    # shellcheck source=/dev/null
+    source "$TEST_DIR/config.env"
+    EFFECTIVE_GQ_LOG_LEVEL="${TEST_GQ_LOG_LEVEL:-$GQ_LOG_LEVEL}"
+    EFFECTIVE_GQ_STATS_PERIOD_US="${TEST_GQ_STATS_PERIOD_US:-$GQ_STATS_PERIOD_US}"
+    GQ_REQUIRE_RAPL="${TEST_GQ_REQUIRE_RAPL:-$GQ_REQUIRE_RAPL}"
+    CLIENT_TIMEOUT_MS="${TEST_CLIENT_TIMEOUT_MS:-$CLIENT_TIMEOUT_MS}"
+    EFFECTIVE_IDLE_MODE="${GQ_IDLE_MODE_OVERRIDE:-${IDLE_MODE:-short}}"
+    if [[ -z "${GQ_IDLE_MODE_OVERRIDE:-}" && -z "${IDLE_MODE+x}" && "${ENABLE_SLEEP:-0}" == 0 ]]; then
+        EFFECTIVE_IDLE_MODE=off
+    fi
+    EFFECTIVE_IDLE_FALLBACK="${GQ_IDLE_FALLBACK_OVERRIDE:-${IDLE_FALLBACK:-short}}"
+    EFFECTIVE_DOWNLOAD_DIR="${DOWNLOAD_DIR:-$GQ_COMMON_DIR/downloads}"
+    if [[ "$EFFECTIVE_DOWNLOAD_DIR" != /* ]]; then
+        EFFECTIVE_DOWNLOAD_DIR="$TEST_DIR/$EFFECTIVE_DOWNLOAD_DIR"
+    fi
+    mkdir -p "$TEST_DIR/logs" "$TEST_DIR/results" "$TEST_DIR/runtime/server" "$TEST_DIR/runtime/client" "$EFFECTIVE_DOWNLOAD_DIR"
+}
+
+detect_runtime() {
+    local role="${1:-both}" msquic dpdk
+    msquic="$(resolve_path "$MSQUIC_DIR")"
+    dpdk="$(resolve_path "$DPDK_DIR")"
+    [[ -d "$msquic" ]] || die "MsQuic directory not found: $msquic"
+    [[ -d "$dpdk" ]] || die "DPDK directory not found: $dpdk"
+
+    eval "$(python3 "$GQ_COMMON_DIR/bin/detect_runtime.py" \
+        --msquic "$msquic" --dpdk "$dpdk" \
+        --server-bin "$GQ_INTEROP_SERVER_BIN" \
+        --client-bin "$GQ_INTEROP_CLIENT_BIN" \
+        --secnetperf-bin "$GQ_SECNETPERF_BIN" \
+        --inprocess-client-bin "$INPROCESS_CLIENT_BIN")"
+
+    INTEROP_SERVER_BIN="${GQ_INTEROP_SERVER_BIN:-$DETECTED_INTEROP_SERVER}"
+    INTEROP_CLIENT_BIN="${GQ_INTEROP_CLIENT_BIN:-$DETECTED_INTEROP_CLIENT}"
+    SECNETPERF_BIN="${GQ_SECNETPERF_BIN:-$DETECTED_SECNETPERF}"
+    if [[ -z "$INPROCESS_CLIENT_BIN" && -n "$DETECTED_INPROCESS_CLIENT" ]]; then
+        INPROCESS_CLIENT_BIN="$DETECTED_INPROCESS_CLIENT"
+    fi
+
+    local extra_ld="$DETECTED_LD_LIBRARY_PATH"
+
+    # Replace inherited DPDK paths rather than appending another DPDK tree.
+    if [[ -n "$extra_ld" ]]; then
+        export LD_LIBRARY_PATH="$extra_ld"
+    else
+        unset LD_LIBRARY_PATH || true
+    fi
+
+    if [[ -n "$DETECTED_PKG_CONFIG_PATH" ]]; then
+        export PKG_CONFIG_PATH="$DETECTED_PKG_CONFIG_PATH"
+    fi
+
+    if [[ -n "$DETECTED_DPDK_DRIVER_PATH" ]]; then
+        export GREENQUIC_DPDK_DRIVER_PATH="$DETECTED_DPDK_DRIVER_PATH"
+    else
+        unset GREENQUIC_DPDK_DRIVER_PATH || true
+    fi
+
+    case "$role" in
+        server)
+            [[ -x "$INTEROP_SERVER_BIN" ]] || die "quicinteropserver was not found. Set GQ_INTEROP_SERVER_BIN in suite.env."
+            ;;
+        client)
+            if [[ "${WORKLOAD_KIND:-}" == idle_no_client ]]; then
+                [[ -x "$INTEROP_SERVER_BIN" ]] || die "idle_no_client requires quicinteropserver on the client host."
+            elif [[ "${REQUIRES_INPROCESS_CLIENT:-0}" == 1 ]]; then
+                [[ -n "$INPROCESS_CLIENT_BIN" && -x "$INPROCESS_CLIENT_BIN" ]] || true
+            else
+                [[ -x "$INTEROP_CLIENT_BIN" ]] || die "quicinterop was not found. Set GQ_INTEROP_CLIENT_BIN in suite.env."
+            fi
+            ;;
+        both)
+            [[ -x "$INTEROP_SERVER_BIN" ]] || die "quicinteropserver was not found. Set GQ_INTEROP_SERVER_BIN in suite.env."
+            if [[ "${REQUIRES_INPROCESS_CLIENT:-0}" == 1 ]]; then
+                [[ -n "$INPROCESS_CLIENT_BIN" && -x "$INPROCESS_CLIENT_BIN" ]] || true
+            else
+                [[ -x "$INTEROP_CLIENT_BIN" ]] || die "quicinterop was not found. Set GQ_INTEROP_CLIENT_BIN in suite.env."
+            fi
+            ;;
+        *) die "detect_runtime role must be server, client, or both" ;;
+    esac
+}
+
+
+check_ldd() {
+    local bin="$1"
+    command -v ldd >/dev/null 2>&1 || return 0
+    local missing
+    missing="$(ldd "$bin" 2>/dev/null | awk '/not found/{print}' || true)"
+    [[ -z "$missing" ]] || die "Missing libraries for $bin:\n$missing\nLD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+}
+
+verify_exact_v22_install() {
+    local msquic dpdk json_out
+    msquic="$(resolve_path "$MSQUIC_DIR")"
+    dpdk="$(resolve_path "$DPDK_DIR")"
+    json_out="${TEST_DIR:-$SUITE_ROOT}/results/v22_install_validation_$(hostname -s).json"
+    python3 "$GQ_COMMON_DIR/bin/verify_v22_install.py" \
+        --msquic "$msquic" --dpdk "$dpdk" \
+        --server-bin "$INTEROP_SERVER_BIN" --client-bin "$INTEROP_CLIENT_BIN" \
+        --json-out "$json_out"
+}
+
+verify_msquic_greenquic_config() {
+    local role="$1" requested_mode="${2:-${DEFAULT_MODE:-plus}}" bin source_root linked_lib=""
+    validate_mode "$requested_mode"
+
+    bin="$(runtime_binary_for_role "$role")"
+    [[ -n "$bin" && -x "$bin" ]] ||
+        die "No executable runtime binary resolved for role=$role"
+
+    source_root="$(resolve_path "$MSQUIC_DIR")"
+    linked_lib="$(linked_msquic_for_binary "$bin" || true)"
+
+    local binary_config_ok=0
+    local multicore_ok=0
+    local plus_ok=0
+    local v18_policy_ok=0
+    local v22_policy_ok=0
+
+    #
+    # Scan the ELF/archive directly.
+    #
+    # Do not use:
+    #     strings FILE | grep -q MARKER
+    #
+    # Under pipefail, grep may exit after finding the marker and strings may
+    # receive SIGPIPE, causing a false failure.
+    #
+
+    if grep -aFq -- 'GreenQuicQuicWorkerCpus' "$bin" 2>/dev/null &&
+       grep -aFq -- 'GreenQuicQuicProfile' "$bin" 2>/dev/null; then
+        binary_config_ok=1
+    fi
+
+    local artifact
+    for artifact in "$bin" "$linked_lib"; do
+        [[ -n "$artifact" && -r "$artifact" ]] || continue
+
+        if grep -aFq -- 'GreenQuicEnableMultiCore' "$artifact" 2>/dev/null &&
+           grep -aFq -- 'GreenQuicPartitionDpdkMap' "$artifact" 2>/dev/null; then
+            multicore_ok=1
+        fi
+
+        if grep -aFq -- 'CxPlatGreenQuicPlus' "$artifact" 2>/dev/null &&
+           grep -aEq -- \
+               'GQPLUS_HINT_ACK_PENDING|GreenQuicAckClientFloor' \
+               "$artifact" 2>/dev/null; then
+            plus_ok=1
+        fi
+
+        if grep -aFq -- \
+               'GreenQuicRxBurstRiseAlphaPermille' \
+               "$artifact" 2>/dev/null &&
+           grep -aFq -- \
+               'GreenQuicTxRingRiseAlphaPermille' \
+               "$artifact" 2>/dev/null &&
+           grep -aFq -- \
+               'GREENQUIC_POWER_CONFIG' \
+               "$artifact" 2>/dev/null; then
+            v18_policy_ok=1
+        fi
+
+        if grep -aFq -- 'GreenQuicIdleMode' "$artifact" 2>/dev/null &&
+           grep -aFq -- 'GreenQuicIdleWatchdogUs' "$artifact" 2>/dev/null &&
+           grep -aFq -- 'epoll_work_wait' "$artifact" 2>/dev/null; then
+            v22_policy_ok=1
+        fi
+    done
+
+    if [[ "$binary_config_ok" == 0 ]]; then
+        if [[ "$ALLOW_UNVERIFIED_MSQUIC_CONFIG" == 1 ]]; then
+            warn \
+                "The runtime binary does not expose the GreenQUIC execution-config markers. Continuing only because ALLOW_UNVERIFIED_MSQUIC_CONFIG=1."
+        else
+            die \
+                "The runtime binary $bin lacks GreenQuicQuicWorkerCpus/GreenQuicQuicProfile markers."
+        fi
+    fi
+
+    if [[ "${ENABLE_MULTICORE:-0}" == 1 &&
+          "$multicore_ok" == 0 &&
+          "$ALLOW_UNVERIFIED_MSQUIC_CONFIG" != 1 ]]; then
+        die \
+            "The runtime binary/linked libmsquic lacks multicore GreenQUIC markers."
+    fi
+
+    if [[ "$requested_mode" == plus &&
+          "$plus_ok" == 0 &&
+          "$ALLOW_UNVERIFIED_MSQUIC_CONFIG" != 1 ]]; then
+        die \
+            "The runtime binary/linked libmsquic lacks GreenQUIC+ ACK/CUBIC markers."
+    fi
+
+    if [[ "$v18_policy_ok" == 0 &&
+          "$ALLOW_UNVERIFIED_MSQUIC_CONFIG" != 1 ]]; then
+        die \
+            "The runtime binary/linked libmsquic lacks the V18 separated-signal policy markers."
+    fi
+
+    if [[ "$v22_policy_ok" == 0 &&
+          "$ALLOW_UNVERIFIED_MSQUIC_CONFIG" != 1 ]]; then
+        die \
+            "The runtime binary/linked libmsquic lacks the V22 selectable-idle policy markers."
+    fi
+
+    [[ -n "$linked_lib" ]] && log "Runtime libmsquic: $linked_lib"
+    return 0
+}
+
+validate_host_prereqs() {
+    local role="$1"
+    local device lcores cpus local_ip local_mac peer_mac expected_host
+    if [[ "$role" == server ]]; then
+        device="$SERVER_DPDK_DEVICE"; lcores="$SERVER_DPDK_LCORES"; cpus="$SERVER_QUIC_CPUS"
+        local_ip="$SERVER_LOCAL_IP"; local_mac="$SERVER_LOCAL_MAC"
+        peer_mac="$SERVER_PEER_MAC"; expected_host="$SERVER_NAME"
+    else
+        device="$CLIENT_DPDK_DEVICE"; lcores="$CLIENT_DPDK_LCORES"; cpus="$CLIENT_QUIC_CPUS"
+        local_ip="$CLIENT_LOCAL_IP"; local_mac="$CLIENT_LOCAL_MAC"
+        peer_mac="$CLIENT_PEER_MAC"; expected_host="$CLIENT_NAME"
+    fi
+    [[ "$device" != "<SET_"* ]] || die "Set ${role^^}_DPDK_DEVICE in suite.env."
+    [[ -n "$local_ip" && "$local_ip" != "<SET_"* ]] || die "Set ${role^^}_LOCAL_IP in suite.env."
+    [[ -n "$local_mac" && "$local_mac" != "<SET_"* ]] || die "Set ${role^^}_LOCAL_MAC in suite.env."
+    [[ -n "$peer_mac" && "$peer_mac" != "<SET_"* ]] || die "Set ${role^^}_PEER_MAC in suite.env."
+    [[ "$local_mac" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || die "Invalid ${role^^}_LOCAL_MAC=$local_mac"
+    [[ "$peer_mac" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || die "Invalid ${role^^}_PEER_MAC=$peer_mac"
+    python3 -c 'import ipaddress,sys; ipaddress.IPv4Address(sys.argv[1])' "$local_ip" || die "Invalid ${role^^}_LOCAL_IP=$local_ip"
+    if [[ "$role" == client ]]; then
+        [[ "$SERVER_HOST" == "$SERVER_LOCAL_IP" ]] || die "SERVER_HOST must equal SERVER_LOCAL_IP."
+        [[ "$CLIENT_PEER_MAC" == "$SERVER_LOCAL_MAC" ]] || die "CLIENT_PEER_MAC must equal SERVER_LOCAL_MAC."
+    else
+        [[ "$SERVER_PEER_MAC" == "$CLIENT_LOCAL_MAC" ]] || die "SERVER_PEER_MAC must equal CLIENT_LOCAL_MAC."
+    fi
+    local actual_host
+    actual_host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+    if [[ -n "$expected_host" && -n "$actual_host" && "$actual_host" != "$expected_host" ]]; then
+        if [[ "${GQ_ALLOW_HOST_ROLE_MISMATCH:-0}" == 1 ]]; then
+            warn "Expected $role hostname '$expected_host', but this host reports '$actual_host'. Continuing only because GQ_ALLOW_HOST_ROLE_MISMATCH=1."
+        else
+            die "Wrong host role: expected $role on '$expected_host', but this host is '$actual_host'."
+        fi
+    fi
+    log "Raw-DPDK $role addressing: LocalIp=$local_ip local-MAC=$local_mac PeerMac=$peer_mac target=$SERVER_HOST device=$device"
+
+    local online
+    online="$(cat /sys/devices/system/cpu/online 2>/dev/null || true)"
+    if [[ -n "$online" ]]; then
+        log "Online CPUs: $online; requested DPDK=$lcores QUIC=$cpus"
+        python3 - "$online" "$lcores" "$cpus" <<'PYCPU' || die "Requested CPU topology is unavailable or overlapping on this host."
+import re, sys
+
+def expand(text, allow_ranges=True):
+    out=set()
+    for tok in text.split(','):
+        tok=tok.strip()
+        if re.fullmatch(r'\d+', tok): out.add(int(tok))
+        elif allow_ranges and re.fullmatch(r'\d+-\d+', tok):
+            lo,hi=map(int,tok.split('-',1));
+            if lo>hi: raise ValueError(tok)
+            out.update(range(lo,hi+1))
+        else: raise ValueError(tok)
+    return out
+try:
+    online=expand(sys.argv[1], True)
+    dpdk=expand(sys.argv[2], True)
+    quic=expand(sys.argv[3], False)
+except ValueError as exc:
+    print(f'invalid CPU token: {exc}', file=sys.stderr); raise SystemExit(2)
+missing=(dpdk|quic)-online
+if missing:
+    print(f'requested offline/nonexistent CPUs: {sorted(missing)}', file=sys.stderr); raise SystemExit(2)
+overlap=dpdk&quic
+if overlap:
+    print(f'DPDK and QUIC CPUs overlap: {sorted(overlap)}', file=sys.stderr); raise SystemExit(2)
+PYCPU
+    else
+        warn "Cannot read /sys/devices/system/cpu/online; CPU availability was not verified."
+    fi
+    local hp locked
+    hp="$(awk '/HugePages_Total/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+    if [[ "$hp" == 0 ]]; then warn "HugePages_Total is 0. DPDK EAL may fail unless your setup uses another hugepage configuration."; fi
+    locked="$(ulimit -l 2>/dev/null || true)"
+    log "Locked-memory limit: ${locked:-unknown}"
+}
+
+
+write_dpdk_ini() {
+    local role="$1" runtime="$2" mode="$3"
+    local device lcores cpus pmap txowner profile enable_rx enable_tx tx_owner_also_rx
+    local local_ip peer_mac
+    if [[ "$role" == server ]]; then
+        device="$SERVER_DPDK_DEVICE"; lcores="$SERVER_DPDK_LCORES"; cpus="$SERVER_QUIC_CPUS"
+        pmap="$SERVER_PARTITION_MAP"; txowner="$SERVER_TX_OWNER_LCORE"; profile="$SERVER_PROFILE"
+        local_ip="$SERVER_LOCAL_IP"; peer_mac="$SERVER_PEER_MAC"
+    else
+        device="$CLIENT_DPDK_DEVICE"; lcores="$CLIENT_DPDK_LCORES"; cpus="$CLIENT_QUIC_CPUS"
+        pmap="$CLIENT_PARTITION_MAP"; txowner="$CLIENT_TX_OWNER_LCORE"; profile="$CLIENT_PROFILE"
+        local_ip="$CLIENT_LOCAL_IP"; peer_mac="$CLIENT_PEER_MAC"
+    fi
+
+    enable_rx="${GREENQUIC_ENABLE_RX:-1}"
+    enable_tx="${GREENQUIC_ENABLE_TX:-1}"
+    tx_owner_also_rx="${CASE_TX_OWNER_ALSO_RX:-${GREENQUIC_TX_OWNER_ALSO_RX:-1}}"
+    enable_rx="${CASE_ENABLE_RX:-$enable_rx}"
+    enable_tx="${CASE_ENABLE_TX:-$enable_tx}"
+
+    local multi=0
+    [[ "$ENABLE_MULTICORE" == 1 ]] && multi=1
+    if [[ "$multi" == 0 ]]; then
+        lcores="${lcores%%,*}"
+        txowner="$lcores"
+        tx_owner_also_rx=1
+        local rebuilt_map="" idx
+        IFS=',' read -r -a gq_cpu_array <<< "$cpus"
+        for idx in "${!gq_cpu_array[@]}"; do
+            [[ -n "$rebuilt_map" ]] && rebuilt_map+=","
+            rebuilt_map+="${idx}:${lcores}"
+        done
+        pmap="$rebuilt_map"
+    fi
+
+    local role_config="$runtime/dpdk.ini"
+    mkdir -p "$runtime"
+    cat > "$role_config" <<EOF
+# GreenQUIC V22 topology/runtime configuration for $TEST_ID ($role), mode=$mode.
+# Power-policy values intentionally live in powermng.ini.
+DeviceName=$device
+LocalIp=$local_ip
+PeerMac=$peer_mac
+DpdkInitArgs=secnetperf -l $lcores -a $device
+GreenQuicMode=$mode
+GreenQuicProfile=$profile
+GreenQuicQuicProfile=$MSQUIC_EXECUTION_PROFILE
+GreenQuicDpdkLcores=$lcores
+GreenQuicEnableMultiCore=$multi
+GreenQuicQuicWorkerCpus=$cpus
+GreenQuicPartitionDpdkMap=$pmap
+GreenQuicTxOwnerLcore=$txowner
+GreenQuicTxOwnerAlsoRx=$tx_owner_also_rx
+GreenQuicEnableRx=$enable_rx
+GreenQuicEnableTx=$enable_tx
+EOF
+}
+
+write_powermng_ini() {
+    local role="$1" runtime="$2" mode="$3"
+    local role_config="$runtime/powermng.ini"
+    local idle_mode="$EFFECTIVE_IDLE_MODE"
+    local idle_fallback="$EFFECTIVE_IDLE_FALLBACK"
+    local enable_cstate_idle="${ENABLE_CSTATE_IDLE:-0}"
+    [[ "$idle_mode" == pause ]] && enable_cstate_idle=1
+    mkdir -p "$runtime"
+    cat > "$role_config" <<EOF
+# GreenQUIC V22 separated-signal and selectable-idle power policy.
+# Materialized for $TEST_ID ($role), mode=$mode.
+# QUIC semantic floors are active only in PLUS mode.
+
+GreenQuicEnableFreq=$ENABLE_FREQ
+GreenQuicEnableSleep=$ENABLE_SLEEP
+GreenQuicNoSleepIfTxRingNotEmpty=$NO_SLEEP_IF_TX_RING_NOT_EMPTY
+GreenQuicTxRingProtectUp=$TX_RING_PROTECT_UP
+
+GreenQuicPressureScale=$PRESSURE_SCALE
+GreenQuicPressureMaxThreshold=$PRESSURE_MAX
+GreenQuicPressureUpThreshold=$PRESSURE_UP
+GreenQuicPressureKeepThreshold=$PRESSURE_KEEP
+
+GreenQuicRxQueueHigh=$RX_QUEUE_HIGH
+GreenQuicRxQueueSamplePeriod=$RX_QUEUE_SAMPLE_PERIOD
+GreenQuicTxRingHigh=$TX_RING_HIGH
+
+GreenQuicRxBurstRiseAlphaPermille=$RX_BURST_RISE_ALPHA_PERMILLE
+GreenQuicRxBurstFallAlphaPermille=$RX_BURST_FALL_ALPHA_PERMILLE
+GreenQuicRxQueueRiseAlphaPermille=$RX_QUEUE_RISE_ALPHA_PERMILLE
+GreenQuicRxQueueFallAlphaPermille=$RX_QUEUE_FALL_ALPHA_PERMILLE
+GreenQuicTxBurstRiseAlphaPermille=$TX_BURST_RISE_ALPHA_PERMILLE
+GreenQuicTxBurstFallAlphaPermille=$TX_BURST_FALL_ALPHA_PERMILLE
+GreenQuicTxRingRiseAlphaPermille=$TX_RING_RISE_ALPHA_PERMILLE
+GreenQuicTxRingFallAlphaPermille=$TX_RING_FALL_ALPHA_PERMILLE
+
+GreenQuicFullBurstMaxCount=$FULL_BURST_COUNT
+GreenQuicFullBurstFloor=$FULL_BURST_FLOOR
+
+GreenQuicAckClientFloor=$ACK_CLIENT_FLOOR
+GreenQuicAckOtherFloor=$ACK_OTHER_FLOOR
+GreenQuicAckRxHardMaxThreshold=$ACK_RX_HARDMAX_THRESHOLD
+GreenQuicEnableAckRxHardMax=$ENABLE_ACK_RX_HARDMAX
+GreenQuicAckBlocksSleep=$ACK_BLOCKS_SLEEP
+
+GreenQuicCwndGrowthNoWorkFloor=$CWND_GROWTH_NO_WORK_FLOOR
+GreenQuicCwndGrowthWorkFloor=$CWND_GROWTH_WORK_FLOOR
+GreenQuicCwndGrowthPhysicalThreshold=$CWND_GROWTH_PHYSICAL_THRESHOLD
+GreenQuicCwndGrowthBlocksSleep=$CWND_GROWTH_BLOCKS_SLEEP
+
+GreenQuicRecoveryFloor=$RECOVERY_FLOOR
+GreenQuicRecoveryHardMaxPhysicalThreshold=$RECOVERY_HARDMAX_PHYSICAL_THRESHOLD
+GreenQuicEnableRecoveryHardMax=$ENABLE_RECOVERY_HARDMAX
+GreenQuicRecoveryBlocksSleep=$RECOVERY_BLOCKS_SLEEP
+
+GreenQuicBlockedRxFloor=$BLOCKED_RX_FLOOR
+GreenQuicBlockedSleepGuardLevel=$BLOCKED_SLEEP_GUARD_LEVEL
+GreenQuicActiveTransferSleepMinLevel=$ACTIVE_TRANSFER_SLEEP_MIN_LEVEL
+GreenQuicEnablePhysicalHardMax=$ENABLE_PHYSICAL_HARDMAX
+
+GreenQuicRxEmptyPollThreshold=$RX_EMPTY_POLLS
+GreenQuicTxEmptyPollThreshold=$TX_EMPTY_POLLS
+GreenQuicFreqUpPeriodUs=$FREQ_UP_PERIOD_US
+GreenQuicFreqDownPeriodUs=$FREQ_DOWN_PERIOD_US
+GreenQuicFreqMinIdleUs=$FREQ_MIN_IDLE_US
+GreenQuicFreqPeriodUs=$FREQ_PERIOD_US
+
+GreenQuicSleepShortMinLevel=$SLEEP_SHORT_MIN_LEVEL
+GreenQuicSleepDataMinLevel=$SLEEP_DATA_MIN_LEVEL
+GreenQuicSleepDeepMinLevel=$SLEEP_DEEP_MIN_LEVEL
+GreenQuicAckPathMaxSleepUs=$ACK_SLEEP_US
+GreenQuicDataPathMaxSleepUs=$DATA_SLEEP_US
+GreenQuicMaxSleepUs=$MAX_SLEEP_US
+
+GreenQuicLogLevel=$EFFECTIVE_GQ_LOG_LEVEL
+GreenQuicStatsPeriodUs=$EFFECTIVE_GQ_STATS_PERIOD_US
+
+# V19 bounded optimized-pause policy.
+GreenQuicEnableCStateIdle=$enable_cstate_idle
+GreenQuicCStateMinIdleUs=${CSTATE_MIN_IDLE_US:-20000}
+GreenQuicCStateMinLevel=${CSTATE_MIN_LEVEL:-16}
+GreenQuicCStateDeepMinLevel=${CSTATE_DEEP_MIN_LEVEL:-64}
+GreenQuicCStateWaitUs=${CSTATE_WAIT_US:-50}
+GreenQuicCStateDeepWaitUs=${CSTATE_DEEP_WAIT_US:-300}
+GreenQuicCStateMaxWaitUs=${CSTATE_MAX_WAIT_US:-300}
+GreenQuicCStateTxOwnerMaxWaitUs=${CSTATE_TX_OWNER_MAX_WAIT_US:-50}
+GreenQuicCStateAllowDuringActiveTransfer=${CSTATE_ALLOW_DURING_ACTIVE_TRANSFER:-0}
+
+# V22 selectable idle mechanisms: off | short | pause | monitor | epoll | auto.
+GreenQuicIdleMode=$idle_mode
+GreenQuicIdleFallback=$idle_fallback
+GreenQuicWorkWaitMinIdleUs=${WORK_WAIT_MIN_IDLE_US:-20000}
+GreenQuicWorkWaitMinLevel=${WORK_WAIT_MIN_LEVEL:-16}
+GreenQuicIdleWatchdogUs=${IDLE_WATCHDOG_US:-1000000}
+GreenQuicAllowWorkWaitDuringActiveTransfer=${ALLOW_WORK_WAIT_DURING_ACTIVE_TRANSFER:-0}
+GreenQuicEpollMaxEvents=${EPOLL_MAX_EVENTS:-8}
+EOF
+}
+
+validate_runtime_config() {
+    local runtime="$1" json_out="${2:-}"
+    local args=(--dpdk "$runtime/dpdk.ini" --power "$runtime/powermng.ini")
+    [[ -n "$json_out" ]] && args+=(--json-out "$json_out")
+    python3 "$GQ_COMMON_DIR/bin/validate_v22_config.py" "${args[@]}"
+}
+
+validate_runtime_log() {
+    local role="$1" logf="$2" mode="$3" stamp="$4"
+    if [[ "${ENABLE_FREQ:-0}" == 1 ]] && grep -qi 'rte_power_init failed' "$logf" 2>/dev/null; then
+        printf '\n[GreenQUIC-Test:ERROR] %s\n' "DVFS was enabled, but rte_power_init failed. This run cannot support a GreenQUIC frequency/energy claim." >&2
+        return 2
+    fi
+    if [[ "$mode" != off && "${EFFECTIVE_GQ_LOG_LEVEL:-0}" -gt 0 ]]; then
+        python3 "$GQ_COMMON_DIR/bin/validate_v21_log.py" "$logf" --require-all \
+            --expect-idle-mode "$EFFECTIVE_IDLE_MODE" || return $?
+        python3 "$GQ_COMMON_DIR/bin/parse_v21_stats.py" "$logf" \
+            --out "$TEST_DIR/results/${role}_${mode}_${stamp}_v21_stats.csv" || return $?
+
+        if [[ "${VALIDATE_IDLE_EVIDENCE:-0}" == 1 ]]; then
+            local upper="${role^^}" key role_key value
+            local args=("$logf" --idle-mode "$EFFECTIVE_IDLE_MODE")
+            for key in REQUIRE_ACTIONS REQUIRE_ANY_ACTIONS FORBID_ACTIONS MIN_FIELDS MAX_FIELDS ROLE_ACTIONS ROLE_MIN_FIELDS REQUIRE_HINTS FORBID_HINT_ACTIONS; do
+                role_key="${upper}_${key}"
+                value="${!role_key:-${!key:-}}"
+                [[ -n "$value" ]] || continue
+                case "$key" in
+                    REQUIRE_ACTIONS) args+=(--require-actions "$value") ;;
+                    REQUIRE_ANY_ACTIONS) args+=(--require-any-actions "$value") ;;
+                    FORBID_ACTIONS) args+=(--forbid-actions "$value") ;;
+                    MIN_FIELDS) args+=(--min-fields "$value") ;;
+                    MAX_FIELDS) args+=(--max-fields "$value") ;;
+                    ROLE_ACTIONS) args+=(--role-actions "$value") ;;
+                    ROLE_MIN_FIELDS) args+=(--role-min-fields "$value") ;;
+                    REQUIRE_HINTS) args+=(--require-hints "$value") ;;
+                    FORBID_HINT_ACTIONS) args+=(--forbid-hint-actions "$value") ;;
+                esac
+            done
+            python3 "$GQ_COMMON_DIR/bin/validate_v21_idle_evidence.py" "${args[@]}" || return $?
+        fi
+    fi
+    return 0
+}
+
+record_runtime_artifacts() {
+    local role="$1" runtime="$2" mode="$3" stamp="$4"
+    local result_prefix="$TEST_DIR/results/${role}_${mode}_${stamp}"
+    cp "$runtime/dpdk.ini" "${result_prefix}_dpdk.ini"
+    cp "$runtime/powermng.ini" "${result_prefix}_powermng.ini"
+    local bin lib=""
+    bin="$(runtime_binary_for_role "$role")"
+    [[ -n "$bin" && -x "$bin" ]] || die "Cannot record manifest: no executable resolved for role=$role"
+    lib="$(linked_msquic_for_binary "$bin" || true)"
+    {
+        printf 'test_id=%s\n' "$TEST_ID"
+        printf 'role=%s\n' "$role"
+        printf 'mode=%s\n' "$mode"
+        printf 'timestamp=%s\n' "$stamp"
+        printf 'workload_kind=%s\n' "${WORKLOAD_KIND:-unknown}"
+        printf 'idle_mode=%s\n' "$EFFECTIVE_IDLE_MODE"
+        printf 'idle_fallback=%s\n' "$EFFECTIVE_IDLE_FALLBACK"
+        printf 'logging_level=%s\n' "$EFFECTIVE_GQ_LOG_LEVEL"
+        printf 'stats_period_us=%s\n' "$EFFECTIVE_GQ_STATS_PERIOD_US"
+        printf 'dpdk_ini_sha256=%s\n' "$(sha256sum "$runtime/dpdk.ini" | awk '{print $1}')"
+        printf 'powermng_ini_sha256=%s\n' "$(sha256sum "$runtime/powermng.ini" | awk '{print $1}')"
+        printf 'binary=%s\n' "$bin"
+        printf 'binary_sha256=%s\n' "$(sha256sum "$bin" | awk '{print $1}')"
+        if [[ -n "$lib" && -r "$lib" ]]; then
+            printf 'libmsquic=%s\n' "$lib"
+            printf 'libmsquic_sha256=%s\n' "$(sha256sum "$lib" | awk '{print $1}')"
+        else
+            printf 'libmsquic=unresolved_or_static\n'
+        fi
+    } > "${result_prefix}_manifest.txt"
+}
+
+
+energy_start() {
+    local file="$1"
+    local -a args=(start --out "$file")
+    [[ "${GQ_REQUIRE_RAPL:-1}" == 1 ]] && args+=(--require-package)
+    python3 "$GQ_COMMON_DIR/bin/energy_meter.py" "${args[@]}"
+}
+
+
+energy_finish() {
+    local start="$1"
+    local out="$2"
+    local label="$3"
+    local -a args=(finish --start "$start" --out "$out" --label "$label")
+    [[ "${GQ_REQUIRE_RAPL:-1}" == 1 ]] && args+=(--require-package)
+    local captured rc=0 rapl_available=0
+    captured="$(mktemp)"
+    python3 "$GQ_COMMON_DIR/bin/energy_meter.py" "${args[@]}" >"$captured" || rc=$?
+    if [[ -s "$out" ]]; then
+        rapl_available="$(python3 - "$out" <<'PY_RAPL'
+import json, sys
+try:
+    print(1 if json.load(open(sys.argv[1], encoding='utf-8')).get('rapl_available') else 0)
+except Exception:
+    print(0)
+PY_RAPL
+)"
+    fi
+    if [[ "$rapl_available" == 1 || "${GQ_REQUIRE_RAPL:-1}" == 1 ]]; then
+        cat "$captured"
+    else
+        if [[ "${GQ_ENABLE_MSR_TRACE:-1}" != 0 ]]; then
+            warn "One-shot RAPL snapshot did not report a package counter. The compiled powercap time series will be validated during result bundling and remains the authoritative RAPL source when its final validation is PASS."
+        else
+            warn "Package RAPL is unavailable and the compiled powercap trace is disabled; power1 is the only power source for this run."
+        fi
+    fi
+    rm -f "$captured"
+    return "$rc"
+}
+
+# GREENQUIC-V22-GOODPUT-ACPI-TRACE-HOTFIX
+power_trace_start() {
+    local role="$1" prefix="$2" label="$3"
+    GQ_POWER_TRACE_PID=""
+    [[ "${GQ_ENABLE_ACPI_POWER_TRACE:-1}" == 1 ]] || return 0
+    local interval="${GQ_POWER_SAMPLE_INTERVAL_MS:-1000}"
+    local match="${GQ_POWER_SENSOR_MATCH:-power1}"
+    local occurrence="${GQ_POWER_SENSOR_OCCURRENCE:-last}"
+    python3 "$GQ_COMMON_DIR/bin/power_trace.py" record \
+        --role "$role" --label "$label" --prefix "$prefix" \
+        --interval-ms "$interval" --sensor-match "$match" --sensor-occurrence "$occurrence" \
+        >"${prefix}_sampler.log" 2>&1 &
+    GQ_POWER_TRACE_PID=$!
+    sleep 0.10
+    if ! kill -0 "$GQ_POWER_TRACE_PID" 2>/dev/null; then
+        local rc=0
+        wait "$GQ_POWER_TRACE_PID" || rc=$?
+        GQ_POWER_TRACE_PID=""
+        if [[ "${GQ_REQUIRE_ACPI_POWER_TRACE:-0}" == 1 ]]; then
+            cat "${prefix}_sampler.log" >&2 || true
+            die "The required power1 sampler failed during startup (status $rc)."
+        fi
+        warn "power1 sampler is unavailable; see ${prefix}_sampler.log"
+        return 0
+    fi
+    log "Started ${role} whole-system power1 trace pid=$GQ_POWER_TRACE_PID interval=${interval}ms prefix=$prefix"
+}
+
+power_trace_stop() {
+    local pid="$1" prefix="$2"
+    [[ "${GQ_ENABLE_ACPI_POWER_TRACE:-1}" == 1 ]] || return 0
+    local rc=0
+    if [[ -n "$pid" ]]; then
+        if kill -0 "$pid" 2>/dev/null; then kill -INT "$pid" 2>/dev/null || true; fi
+        wait "$pid" || rc=$?
+    fi
+    if [[ -s "${prefix}.json" ]]; then
+        python3 "$GQ_COMMON_DIR/bin/power_trace.py" summary --input "${prefix}.json"
+    else
+        [[ -s "${prefix}_sampler.log" ]] && cat "${prefix}_sampler.log" >&2 || true
+        if [[ "${GQ_REQUIRE_ACPI_POWER_TRACE:-0}" == 1 ]]; then
+            return "${rc:-4}"
+        fi
+        warn "No valid power1 trace was produced for $prefix"
+        return 0
+    fi
+    if [[ "$rc" != 0 && "${GQ_REQUIRE_ACPI_POWER_TRACE:-0}" == 1 ]]; then return "$rc"; fi
+    return 0
+}
+
+
+prepare_assets() {
+    local required=(
+        "$GQ_COMMON_DIR/certs/server.crt"
+        "$GQ_COMMON_DIR/certs/server.key"
+        "$GQ_COMMON_DIR/files/server_root/chunks/chunk_001.bin"
+    )
+    local missing=0 item
+    for item in "${required[@]}"; do [[ -e "$item" ]] || missing=1; done
+    [[ "$missing" == 0 ]] || python3 "$GQ_COMMON_DIR/bin/prepare_assets.py" --common "$GQ_COMMON_DIR"
+    for item in "${required[@]}"; do [[ -e "$item" ]] || die "Asset preparation did not create $item"; done
+}
+
+
+check_requested_assets() {
+    local path
+    for path in "${REQUEST_PATH_ARRAY[@]:-}"; do
+        if [[ "$path" == "/file_10G.bin" && ! -e "$GQ_COMMON_DIR/files/server_root/file_10G.bin" ]]; then
+            die "The 10 GiB test file is not prepared. Run: python3 $GQ_COMMON_DIR/bin/prepare_assets.py --common $GQ_COMMON_DIR --create-10g"
+        fi
+    done
+}
+
+# GREENQUIC-V22-C-RAPL-MSR-RESULT-LAYOUT-DEFAULTS-V2
+msr_trace_start() {
+    local role="$1" output_csv="$2"
+    GQ_MSR_TRACE_PID=""
+    [[ "${GQ_ENABLE_MSR_TRACE:-1}" == 0 ]] && return 0
+
+    local sampler="$GQ_COMMON_DIR/bin/gq_rapl_msr_sampler"
+    local interval_ms="${GQ_MSR_SAMPLE_INTERVAL_MS:-6}"
+    local smooth_samples="${GQ_MSR_SMOOTH_SAMPLES:-3}"
+    local sampler_log="${output_csv%.csv}_sampler.log"
+
+    if [[ ! -x "$sampler" ]]; then
+        if [[ "${GQ_REQUIRE_MSR_TRACE:-0}" == 1 ]]; then
+            die "Compiled RAPL/MSR sampler is missing: $sampler"
+        fi
+        warn "Compiled RAPL/MSR sampler is unavailable; continuing without it."
+        return 0
+    fi
+
+    "$sampler" \
+        --output "$output_csv" \
+        --interval-ms "$interval_ms" \
+        --smooth-samples "$smooth_samples" \
+        >"$sampler_log" 2>&1 &
+    GQ_MSR_TRACE_PID=$!
+
+    sleep 0.05
+    if ! kill -0 "$GQ_MSR_TRACE_PID" 2>/dev/null; then
+        local rc=0
+        wait "$GQ_MSR_TRACE_PID" || rc=$?
+        GQ_MSR_TRACE_PID=""
+        if [[ "${GQ_REQUIRE_MSR_TRACE:-0}" == 1 ]]; then
+            die "RAPL/MSR sampler failed to start; inspect $sampler_log"
+        fi
+        warn "RAPL/MSR sampler failed to start (rc=$rc); continuing without it."
+        return 0
+    fi
+
+    log "Started ${role} C RAPL powercap trace pid=$GQ_MSR_TRACE_PID interval=${interval_ms}ms smoothing=${smooth_samples}"
+}
+
+msr_trace_stop() {
+    local pid="${1:-}"
+    [[ -n "$pid" ]] || return 0
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -TERM "$pid" 2>/dev/null || true
+    fi
+    local rc=0
+    wait "$pid" || rc=$?
+    if [[ "$rc" != 0 ]]; then
+        if [[ "${GQ_REQUIRE_MSR_TRACE:-0}" == 1 ]]; then
+            return "$rc"
+        fi
+        warn "RAPL/MSR sampler stopped with rc=$rc; the transport result is preserved."
+    fi
+    return 0
+}
+
+# GREENQUIC-V22-CSTATE-TRACE-V1
+cstate_trace_start() {
+    local role="$1" output_prefix="$2"
+    GQ_CSTATE_TRACE_PID=""
+    [[ "${ENABLE_CSTATE_RECORD:-0}" == 1 ]] || return 0
+
+    local helper="$GQ_COMMON_DIR/bin/gq_cstate_trace"
+    local cpus="${GQ_CSTATE_CPUS:-}"
+    if [[ -z "$cpus" ]]; then
+        local cfg="$TEST_DIR/runtime/$role/dpdk.ini"
+        cpus="$(sed -n 's/^[[:space:]]*GreenQuicDpdkLcores[[:space:]]*=[[:space:]]*//p' "$cfg" 2>/dev/null | tail -n 1 | tr -d '[:space:]')"
+    fi
+    [[ -n "$cpus" ]] || cpus="19"
+
+    # GREENQUIC-V22-CSTATE-READER-AFFINITY-V1
+    # GQ_CSTATE_CPUS identifies the CPUs being measured.  The trace reader
+    # must run on a different physical core, otherwise its own wakeups can
+    # generate cpu_idle events on the measured CPU and create a feedback loop.
+    local reader_request="${GQ_CSTATE_READER_CPU:-auto}"
+    local reader_cpu
+    if ! reader_cpu="$(python3 - "$TEST_DIR/runtime/$role/dpdk.ini" "$cpus" "$reader_request" <<'PYCPU'
+import pathlib
+import sys
+
+cfg_path = pathlib.Path(sys.argv[1])
+trace_text = sys.argv[2]
+request = sys.argv[3].strip().lower()
+
+
+def parse_cpu_list(value):
+    result = set()
+    for token in value.replace(" ", "").split(","):
+        if not token:
+            continue
+        if "-" in token:
+            start_text, end_text = token.split("-", 1)
+            start, end = int(start_text), int(end_text)
+            if end < start:
+                raise ValueError(f"invalid CPU range: {token}")
+            result.update(range(start, end + 1))
+        else:
+            result.add(int(token))
+    return result
+
+
+try:
+    online = parse_cpu_list(
+        pathlib.Path("/sys/devices/system/cpu/online").read_text().strip()
+    )
+    traced = parse_cpu_list(trace_text)
+except Exception as exc:
+    print(f"cannot parse CPU list: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+
+used = set(traced)
+if cfg_path.is_file():
+    for raw in cfg_path.read_text(errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")) or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() in {"GreenQuicDpdkLcores", "GreenQuicQuicWorkerCpus"}:
+            try:
+                used.update(parse_cpu_list(value.strip()))
+            except Exception as exc:
+                print(f"cannot parse {key.strip()}: {exc}", file=sys.stderr)
+                raise SystemExit(2)
+
+# Exclude SMT siblings of every DPDK and QUIC CPU as well.
+for cpu in list(used):
+    sibling_path = pathlib.Path(
+        f"/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list"
+    )
+    try:
+        used.update(parse_cpu_list(sibling_path.read_text().strip()))
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        print(f"cannot parse siblings for CPU {cpu}: {exc}", file=sys.stderr)
+        raise SystemExit(2)
+
+if request == "auto":
+    candidates = sorted(online - used)
+    if not candidates:
+        print("no housekeeping CPU remains outside DPDK/QUIC CPUs and their SMT siblings", file=sys.stderr)
+        raise SystemExit(3)
+    chosen = candidates[0]
+else:
+    try:
+        chosen = int(request)
+    except ValueError:
+        print(f"GQ_CSTATE_READER_CPU must be 'auto' or an integer, got {request!r}", file=sys.stderr)
+        raise SystemExit(4)
+    if chosen not in online:
+        print(f"requested reader CPU {chosen} is not online", file=sys.stderr)
+        raise SystemExit(5)
+    if chosen in used:
+        print(
+            f"requested reader CPU {chosen} conflicts with a DPDK/QUIC CPU "
+            "or one of their SMT siblings",
+            file=sys.stderr,
+        )
+        raise SystemExit(6)
+
+print(chosen)
+PYCPU
+)"; then
+        die "Unable to choose a safe CPU for the C-state trace reader. Set GQ_CSTATE_READER_CPU to a housekeeping CPU."
+    fi
+
+    if [[ ! -x "$helper" ]]; then
+        [[ "${GQ_REQUIRE_CSTATE_RECORD:-0}" == 1 ]] && die "C-state recorder is missing: $helper"
+        warn "C-state recorder is unavailable; continuing without it."
+        return 0
+    fi
+
+    taskset -c "$reader_cpu" \
+        "$helper" --cpus "$cpus" --output "${output_prefix}.csv" --summary "${output_prefix}.json" \
+        >"${output_prefix}_sampler.log" 2>&1 &
+    GQ_CSTATE_TRACE_PID=$!
+    sleep 0.10
+    if ! kill -0 "$GQ_CSTATE_TRACE_PID" 2>/dev/null; then
+        local rc=0; wait "$GQ_CSTATE_TRACE_PID" || rc=$?
+        GQ_CSTATE_TRACE_PID=""
+        [[ "${GQ_REQUIRE_CSTATE_RECORD:-0}" == 1 ]] && die "C-state recorder failed to start; inspect ${output_prefix}_sampler.log"
+        warn "C-state recorder failed to start (rc=$rc); continuing without it."
+        return 0
+    fi
+    log "Started ${role} Linux cpu_idle trace pid=$GQ_CSTATE_TRACE_PID traced_cpus=$cpus reader_cpu=$reader_cpu clock=mono_raw"
+}
+
+cstate_trace_stop() {
+    local pid="${1:-}"
+    [[ -n "$pid" ]] || return 0
+    kill -TERM "$pid" 2>/dev/null || true
+    local rc=0; wait "$pid" || rc=$?
+    if [[ "$rc" != 0 ]]; then
+        [[ "${GQ_REQUIRE_CSTATE_RECORD:-0}" == 1 ]] && return "$rc"
+        warn "C-state recorder stopped with rc=$rc; transport result is preserved."
+    fi
+    return 0
+}
+
+# GREENQUIC-V22-OFF-FULL-RESULTS-V1
+# OFF is a controlled fixed-maximum-frequency baseline. The original cpufreq
+# state is restored after the run. The synthetic log line is a configuration
+# record used by the existing frequency postprocessor; after_khz is the value
+# verified through scaling_min_freq/scaling_max_freq.
+gq_expand_cpu_list() {
+    python3 - "$1" <<'PY_CPU_LIST'
+import sys
+
+value = sys.argv[1].strip().replace(" ", "")
+rows = []
+for token in value.split(","):
+    if not token:
+        continue
+    if "-" in token:
+        first, last = token.split("-", 1)
+        start, end = int(first), int(last)
+        if end < start:
+            raise SystemExit(f"invalid CPU range: {token}")
+        rows.extend(range(start, end + 1))
+    else:
+        rows.append(int(token))
+for cpu in sorted(set(rows)):
+    print(cpu)
+PY_CPU_LIST
+}
+
+gq_dpdk_cpus_from_config() {
+    local cfg="$1" cpus
+    cpus="$(sed -n 's/^[[:space:]]*GreenQuicDpdkLcores[[:space:]]*=[[:space:]]*//p' "$cfg" 2>/dev/null | tail -n 1 | tr -d '[:space:]')"
+    [[ -n "$cpus" ]] || return 1
+    printf '%s\n' "$cpus"
+}
+
+off_cpu_max_start() {
+    local mode="$1" role="$2" cfg="$3" state_file="$4"
+    [[ "$mode" == off ]] || return 0
+
+    local cpus cpu dir governor minimum maximum target available current_min current_max failed=0
+    cpus="$(gq_dpdk_cpus_from_config "$cfg")" || die "Cannot determine active DPDK CPUs for OFF mode from $cfg"
+    : > "$state_file"
+
+    while IFS= read -r cpu; do
+        [[ -n "$cpu" ]] || continue
+        dir="/sys/devices/system/cpu/cpu${cpu}/cpufreq"
+        if [[ ! -d "$dir" ]]; then
+            warn "CPU $cpu has no cpufreq sysfs directory."
+            failed=1
+            continue
+        fi
+
+        governor="$(cat "$dir/scaling_governor" 2>/dev/null || true)"
+        minimum="$(cat "$dir/scaling_min_freq" 2>/dev/null || true)"
+        maximum="$(cat "$dir/scaling_max_freq" 2>/dev/null || true)"
+        target="$(cat "$dir/cpuinfo_max_freq" 2>/dev/null || true)"
+        [[ "$target" =~ ^[0-9]+$ ]] || target="$maximum"
+
+        if [[ ! "$minimum" =~ ^[0-9]+$ || ! "$maximum" =~ ^[0-9]+$ || ! "$target" =~ ^[0-9]+$ ]]; then
+            warn "CPU $cpu has incomplete cpufreq values."
+            failed=1
+            continue
+        fi
+
+        printf '%s\t%s\t%s\t%s\n' "$cpu" "$governor" "$minimum" "$maximum" >> "$state_file"
+
+        available="$(cat "$dir/scaling_available_governors" 2>/dev/null || true)"
+        if [[ -w "$dir/scaling_governor" && " $available " == *" performance "* ]]; then
+            printf '%s\n' performance > "$dir/scaling_governor"
+        fi
+
+        printf '%s\n' "$target" > "$dir/scaling_max_freq" 2>/dev/null || failed=1
+        printf '%s\n' "$target" > "$dir/scaling_min_freq" 2>/dev/null || failed=1
+
+        current_min="$(cat "$dir/scaling_min_freq" 2>/dev/null || true)"
+        current_max="$(cat "$dir/scaling_max_freq" 2>/dev/null || true)"
+        if [[ "$current_min" != "$target" || "$current_max" != "$target" ]]; then
+            warn "CPU $cpu OFF maximum-frequency verification failed: min=$current_min max=$current_max target=$target"
+            failed=1
+        else
+            log "OFF baseline CPU $cpu fixed at $((target / 1000)) MHz for $role."
+        fi
+    done < <(gq_expand_cpu_list "$cpus")
+
+    if [[ "$failed" != 0 ]]; then
+        off_cpu_max_stop "$state_file"
+        if [[ "${GQ_REQUIRE_OFF_MAX_FREQ:-1}" == 1 ]]; then
+            die "OFF mode requires every active DPDK CPU to be fixed at verified maximum frequency."
+        fi
+        warn "Continuing OFF mode without a fully verified fixed-maximum baseline."
+    fi
+}
+
+off_cpu_max_stop() {
+    local state_file="${1:-}"
+    [[ -n "$state_file" && -f "$state_file" ]] || return 0
+
+    local cpu governor minimum maximum dir
+    while IFS=$'\t' read -r cpu governor minimum maximum; do
+        [[ -n "$cpu" ]] || continue
+        dir="/sys/devices/system/cpu/cpu${cpu}/cpufreq"
+        [[ -d "$dir" ]] || continue
+
+        # Lower the minimum first so restoring a lower maximum cannot violate
+        # the min <= max constraint.
+        [[ "$minimum" =~ ^[0-9]+$ && -w "$dir/scaling_min_freq" ]] && printf '%s\n' "$minimum" > "$dir/scaling_min_freq" 2>/dev/null || true
+        [[ "$maximum" =~ ^[0-9]+$ && -w "$dir/scaling_max_freq" ]] && printf '%s\n' "$maximum" > "$dir/scaling_max_freq" 2>/dev/null || true
+        [[ -n "$governor" && -w "$dir/scaling_governor" ]] && printf '%s\n' "$governor" > "$dir/scaling_governor" 2>/dev/null || true
+    done < "$state_file"
+}
+
+off_cpu_max_emit_log() {
+    local mode="$1" cfg="$2"
+    [[ "$mode" == off ]] || return 0
+
+    local cpus cpu dir minimum maximum current target result
+    cpus="$(gq_dpdk_cpus_from_config "$cfg")" || return 0
+
+    while IFS= read -r cpu; do
+        [[ -n "$cpu" ]] || continue
+        dir="/sys/devices/system/cpu/cpu${cpu}/cpufreq"
+        minimum="$(cat "$dir/scaling_min_freq" 2>/dev/null || echo 0)"
+        maximum="$(cat "$dir/scaling_max_freq" 2>/dev/null || echo 0)"
+        current="$(cat "$dir/scaling_cur_freq" 2>/dev/null || echo 0)"
+        target="$maximum"
+        result=verified
+        [[ "$minimum" == "$maximum" && "$maximum" =~ ^[0-9]+$ && "$maximum" -gt 0 ]] || result=unverified
+
+        printf '[CPU %s] GreenQUIC FREQ policy_action=off_fixed_max api=sysfs_fixed_max result=%s ret=0 before_index=-1 after_index=-1 before_khz=%s after_khz=%s current_khz=%s cooldown_remaining_us=0 error=-\n' \
+            "$cpu" "$result" "$target" "$target" "$current"
+    done < <(gq_expand_cpu_list "$cpus")
+}
+
+run_server() {
+    local test_dir="$1" mode_override="${2:-}"
+    load_test "$test_dir"
+    local mode="${GQ_MODE_OVERRIDE:-${mode_override:-$DEFAULT_MODE}}"
+    validate_mode "$mode"
+    detect_runtime server
+    verify_exact_v22_install
+    check_ldd "$INTEROP_SERVER_BIN"
+    verify_msquic_greenquic_config server "$mode"
+    validate_host_prereqs server
+    prepare_assets
+    if grep -qx '/file_10G.bin' <<<"$REQUEST_PATHS" && [[ ! -e "$GQ_COMMON_DIR/files/server_root/file_10G.bin" ]]; then
+        die "The 10 GiB test file is not prepared. Run: python3 $GQ_COMMON_DIR/bin/prepare_assets.py --common $GQ_COMMON_DIR --create-10g"
+    fi
+
+    local runtime="$TEST_DIR/runtime/server"
+    write_dpdk_ini server "$runtime" "$mode"
+    write_powermng_ini server "$runtime" "$mode"
+    validate_runtime_config "$runtime" "$TEST_DIR/results/server_${mode}_config_validation.json"
+
+    local cert="$GQ_COMMON_DIR/certs/server.crt" key="$GQ_COMMON_DIR/certs/server.key"
+    [[ -f "$cert" && -f "$key" ]] || die "Server certificate missing. Run common/bin/prepare_assets.py."
+    local root="$GQ_COMMON_DIR/files/server_root"
+    local stamp
+    stamp="$(date +%Y%m%d_%H%M%S_%N)"
+    record_runtime_artifacts server "$runtime" "$mode" "$stamp"
+    local logf="$TEST_DIR/logs/server_${mode}_${stamp}.log"
+    local timelinef="$TEST_DIR/logs/server_${mode}_${stamp}_timeline.jsonl"
+    local estart="$runtime/energy_start_${stamp}.json" eout="$TEST_DIR/results/server_energy_${mode}_${stamp}.json"
+    local power_prefix="$TEST_DIR/results/server_power_${mode}_${stamp}"
+    local msr_csv="$TEST_DIR/results/server_msr_${mode}_${stamp}.csv"
+    local transfer_window="$TEST_DIR/results/server_transfer_${mode}_${stamp}.json"
+    local cstate_prefix="$TEST_DIR/results/server_cstate_${mode}_${stamp}"
+    GQ_TRANSFER_WINDOW_FILE="$transfer_window"
+    GQ_TRANSFER_ROLE=server
+    export GQ_TRANSFER_WINDOW_FILE GQ_TRANSFER_ROLE
+
+    log "Starting $TEST_ID server mode=$mode from $runtime"
+    log "Binary: $INTEROP_SERVER_BIN"
+    if [[ "${GQ_ALLOW_UNALIGNED_SERVER_ENERGY:-0}" != 1 ]]; then
+        warn "Server RAPL covers listener startup, waiting time, transfer, and time until Ctrl+C. Do not compare this JSON as transfer energy unless both endpoints are externally synchronized."
+    fi
+    power_trace_start server "$power_prefix" "$TEST_ID server $mode UNSYNCHRONIZED_LISTENER_LIFETIME"
+    msr_trace_start server "$msr_csv"
+    cstate_trace_start server "$cstate_prefix"
+    GQ_SERVER_CSTATE_PID="${GQ_CSTATE_TRACE_PID:-}"
+    GQ_SERVER_MSR_PID="${GQ_MSR_TRACE_PID:-}"
+    GQ_SERVER_POWER_PID="${GQ_POWER_TRACE_PID:-}"
+    GQ_SERVER_POWER_PREFIX="$power_prefix"
+    energy_start "$estart"
+    GQ_SERVER_OFF_CPU_STATE="$runtime/off_cpu_max_${stamp}.state"
+    off_cpu_max_start "$mode" server "$runtime/dpdk.ini" "$GQ_SERVER_OFF_CPU_STATE"
+    GQ_SERVER_ESTART="$estart"
+    GQ_SERVER_EOUT="$eout"
+    GQ_SERVER_LABEL="$TEST_ID server $mode UNSYNCHRONIZED_LISTENER_LIFETIME"
+    GQ_SERVER_TEST_DIR="$TEST_DIR"
+    GQ_SERVER_LOGF="$logf"
+    GQ_SERVER_MODE="$mode"
+    GQ_SERVER_STAMP="$stamp"
+    gq_server_finish() {
+        local rc=$?
+        trap - EXIT INT TERM
+        local check_rc=0 energy_rc=0 power_rc=0 msr_rc=0 cstate_rc=0 bundle_rc=0
+        cstate_trace_stop "${GQ_SERVER_CSTATE_PID:-}" || cstate_rc=$?
+        msr_trace_stop "${GQ_SERVER_MSR_PID:-}" || msr_rc=$?
+        power_trace_stop "${GQ_SERVER_POWER_PID:-}" "$GQ_SERVER_POWER_PREFIX" || power_rc=$?
+        validate_runtime_log server "$GQ_SERVER_LOGF" "$GQ_SERVER_MODE" "$GQ_SERVER_STAMP" || check_rc=$?
+        energy_finish "$GQ_SERVER_ESTART" "$GQ_SERVER_EOUT" "$GQ_SERVER_LABEL" || energy_rc=$?
+        off_cpu_max_stop "${GQ_SERVER_OFF_CPU_STATE:-}"
+        python3 "$GQ_COMMON_DIR/bin/bundle_run_results.py" --test-dir "$GQ_SERVER_TEST_DIR" --role server --mode "$GQ_SERVER_MODE" --stamp "$GQ_SERVER_STAMP" || bundle_rc=$?
+        [[ "$rc" == 0 && "$power_rc" != 0 ]] && rc="$power_rc"
+        [[ "$rc" == 0 && "$msr_rc" != 0 ]] && rc="$msr_rc"
+        [[ "$rc" == 0 && "$cstate_rc" != 0 ]] && rc="$cstate_rc"
+        [[ "$rc" == 0 && "$check_rc" != 0 ]] && rc="$check_rc"
+        [[ "$rc" == 0 && "$energy_rc" != 0 ]] && rc="$energy_rc"
+        [[ "$rc" == 0 && "$bundle_rc" != 0 ]] && rc="$bundle_rc"
+        exit "$rc"
+    }
+    trap gq_server_finish EXIT INT TERM
+    cd "$runtime"
+    (
+        off_cpu_max_emit_log "$mode" "$runtime/dpdk.ini"
+        export GREENQUIC_CONFIG="$runtime/dpdk.ini"
+        export GREENQUIC_POWER_CONFIG="$runtime/powermng.ini"
+        exec stdbuf -oL -eL "$INTEROP_SERVER_BIN" \
+            "-listen:$SERVER_LISTEN" "-port:$SERVER_PORT" \
+            "-root:$root" "-file:$cert" "-key:$key" -noexit
+    ) 2>&1 | python3 "$GQ_COMMON_DIR/bin/timestamp_tee.py" --raw-log "$logf" --timeline "$timelinef"
+}
+
+
+client_once() {
+    local path="$1" index="${2:-0}"
+    local url="https://${SERVER_HOST}:${SERVER_PORT}${path}"
+    "$INTEROP_CLIENT_BIN" \
+        "-custom:$SERVER_HOST" "-port:$SERVER_PORT" -test:D  \
+        "-timeout:$CLIENT_TIMEOUT_MS" "-download:$EFFECTIVE_DOWNLOAD_DIR" \
+        "-urls:$url"
+}
+
+client_multi_stream() {
+    local args=() first=1 path url
+    for path in "${REQUEST_PATH_ARRAY[@]}"; do
+        url="https://${SERVER_HOST}:${SERVER_PORT}${path}"
+        if [[ "$first" == 1 ]]; then args+=("-urls:$url"); first=0; else args+=("$url"); fi
+    done
+    "$INTEROP_CLIENT_BIN" \
+        "-custom:$SERVER_HOST" "-port:$SERVER_PORT" -test:D  \
+        "-timeout:$CLIENT_TIMEOUT_MS" "-download:$EFFECTIVE_DOWNLOAD_DIR" \
+        "${args[@]}"
+}
+
+wait_gap() {
+    [[ "$GAP_US" -le 0 ]] && return 0
+    if [[ -x "$GQ_COMMON_DIR/bin/gap_wait" ]]; then
+        "$GQ_COMMON_DIR/bin/gap_wait" "$GAP_US"
+    else
+        warn "Compiled gap_wait helper is missing; Python startup adds uncontrolled delay. Run common/bin/build_helpers.sh."
+        python3 "$GQ_COMMON_DIR/bin/gap_wait.py" --us "$GAP_US"
+    fi
+}
+
+run_inprocess_client() {
+    local mode="$1"
+    [[ -n "$INPROCESS_CLIENT_BIN" && -x "$INPROCESS_CLIENT_BIN" ]] || return 1
+    local args=(
+        --server "$SERVER_HOST" --port "$SERVER_PORT"
+        --workload "$WORKLOAD_KIND" --gap-us "$GAP_US"
+        --repetitions "$REPETITIONS" --parallel "$PARALLEL_CONNECTIONS"
+        --download-dir "$EFFECTIVE_DOWNLOAD_DIR"
+    )
+    local p
+    for p in "${REQUEST_PATH_ARRAY[@]}"; do args+=(--path "$p"); done
+    "$INPROCESS_CLIENT_BIN" "${args[@]}"
+}
+
+run_idle_dpdk_endpoint() {
+    local idle_port=$((SERVER_PORT + 100))
+    local cert="$GQ_COMMON_DIR/certs/server.crt" key="$GQ_COMMON_DIR/certs/server.key"
+    local root="$GQ_COMMON_DIR/files/server_root"
+    local rc=0 pid
+    log "Starting an idle DPDK endpoint for ${IDLE_DURATION_S}s on port $idle_port. No connection will be made to it."
+    "$INTEROP_SERVER_BIN" \
+        "-listen:*" "-port:$idle_port" \
+        "-root:$root" "-file:$cert" "-key:$key" -noexit &
+    pid=$!
+    sleep 0.25
+    if ! kill -0 "$pid" 2>/dev/null; then
+        wait "$pid" || rc=$?
+        die "Idle endpoint exited during startup with status $rc; no valid idle-DPDK interval was measured."
+    fi
+    sleep "$IDLE_DURATION_S"
+    if ! kill -0 "$pid" 2>/dev/null; then
+        wait "$pid" || rc=$?
+        die "Idle endpoint exited before the requested interval completed (status $rc)."
+    fi
+    kill -TERM "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || rc=$?
+    [[ "$rc" == 0 || "$rc" == 143 ]] || die "Idle endpoint terminated unexpectedly with status $rc"
+}
+
+
+run_client_workload() {
+    local mode="$1"
+    case "$WORKLOAD_KIND" in
+        idle_no_client)
+            run_idle_dpdk_endpoint
+            ;;
+        single)
+            client_once "${REQUEST_PATH_ARRAY[0]}"
+            ;;
+        multi_stream_single_connection)
+            client_multi_stream
+            ;;
+        sequential_connections)
+            if run_inprocess_client "$mode"; then return 0; fi
+            if [[ "$ALLOW_APPROX_MICRO_GAPS" != 1 ]]; then
+                die "A valid two-sided $TEST_ID run requires INPROCESS_CLIENT_BIN. One stock quicinterop process per connection destroys/reinitializes the client DPDK datapath, so the client cannot accumulate empty pulls across gaps. Use --approximate only for a clearly labeled server-side orchestration check."
+            fi
+            warn "APPROXIMATION ONLY: every connection uses a new client process. Server-side gaps are observable, but client-side GreenQUIC idle/DVFS results are invalid and the wire gap includes process startup."
+            local i path
+            for ((i=1; i<=REPETITIONS; i++)); do
+                path="${REQUEST_PATH_ARRAY[$(((i-1) % ${#REQUEST_PATH_ARRAY[@]}))]}"
+                printf '[%s] repetition=%d start_ns=%s path=%s\n' "$TEST_ID" "$i" "$(date +%s%N)" "$path"
+                client_once "$path" "$i"
+                printf '[%s] repetition=%d complete_ns=%s\n' "$TEST_ID" "$i" "$(date +%s%N)"
+                [[ "$i" -eq "$REPETITIONS" ]] || wait_gap
+            done
+            ;;
+        parallel_connections)
+            if run_inprocess_client "$mode"; then return 0; fi
+            if [[ "$ALLOW_APPROX_MICRO_GAPS" != 1 ]]; then
+                die "A valid $TEST_ID run requires INPROCESS_CLIENT_BIN. Four stock quicinterop processes would create multiple independent MsQuic/DPDK EAL instances that contend for the same client NIC and do not represent one multicore datapath."
+            fi
+            warn "APPROXIMATION ONLY: parallel stock client processes do not provide a valid client DPDK multicore measurement. Use only to create server-side parallel connections, preferably from separate non-DPDK clients."
+            local batch j path pids=() rc=0
+            for ((batch=1; batch<=REPETITIONS; batch++)); do
+                printf '[%s] batch=%d start_ns=%s\n' "$TEST_ID" "$batch" "$(date +%s%N)"
+                pids=()
+                for ((j=0; j<PARALLEL_CONNECTIONS; j++)); do
+                    path="${REQUEST_PATH_ARRAY[$((j % ${#REQUEST_PATH_ARRAY[@]}))]}"
+                    client_once "$path" "$j" &
+                    pids+=("$!")
+                done
+                for j in "${pids[@]}"; do wait "$j" || rc=1; done
+                printf '[%s] batch=%d complete_ns=%s\n' "$TEST_ID" "$batch" "$(date +%s%N)"
+                [[ "$batch" -eq "$REPETITIONS" ]] || wait_gap
+            done
+            return "$rc"
+            ;;
+        *) die "Unknown WORKLOAD_KIND=$WORKLOAD_KIND" ;;
+    esac
+}
+
+validate_stock_client_completions() {
+    local logf="$1" actual_bin expected=0 observed=0
+    actual_bin="$(runtime_binary_for_role client)"
+    [[ "$actual_bin" == "$INTEROP_CLIENT_BIN" ]] || return 0
+    case "$WORKLOAD_KIND" in
+        single) expected=1 ;;
+        multi_stream_single_connection) expected="${#REQUEST_PATH_ARRAY[@]}" ;;
+        sequential_connections) [[ "$ALLOW_APPROX_MICRO_GAPS" == 1 ]] && expected="$REPETITIONS" || return 0 ;;
+        parallel_connections) [[ "$ALLOW_APPROX_MICRO_GAPS" == 1 ]] && expected=$((REPETITIONS * PARALLEL_CONNECTIONS)) || return 0 ;;
+        *) return 0 ;;
+    esac
+    observed="$(grep -c 'Completed download!' "$logf" 2>/dev/null || true)"
+    [[ "$observed" -ge "$expected" ]] || die "QUIC workload exited but only $observed/$expected expected download completions were logged."
+    log "Verified $observed completed QUIC download(s) in the stock-client log."
+}
+
+# GREENQUIC-V22-DOWNLOAD-CLEANUP-HOTFIX
+write_client_download_manifest() {
+    local start_wall_ns="$1" out="$2"
+    python3 - \
+        "$EFFECTIVE_DOWNLOAD_DIR" "$start_wall_ns" "$out" "$TEST_ID" "$WORKLOAD_KIND" \
+        "$logf" "$GQ_COMMON_DIR/files/server_root" <<'PY_MANIFEST'
+from __future__ import annotations
+
+import json
+import os
+import re
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).resolve()
+start_ns = int(sys.argv[2])
+out = Path(sys.argv[3])
+test_id = sys.argv[4]
+workload = sys.argv[5]
+log_path = Path(sys.argv[6])
+server_root = Path(sys.argv[7]).resolve()
+text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+completions = [
+    {"reported_name": name.strip(), "duration_ms": int(ms)}
+    for name, ms in re.findall(r"(?m)^\s*(.+?):\s*Completed download!\s*\((\d+)\s*ms\)\s*$", text)
+]
+rows = []
+for completion in completions:
+    basename = Path(completion["reported_name"]).name
+    candidates = [server_root / basename]
+    candidates.extend(server_root.rglob(basename))
+    source = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if source is None:
+        raise SystemExit(f"completed object has no server source file: {basename}")
+    sink = root / basename
+    if sink.is_symlink():
+        sink_kind = "symlink"
+        sink_target = str(sink.resolve(strict=False))
+    elif sink.is_file():
+        sink_kind = "regular_file"
+        sink_target = None
+    elif sink.exists():
+        sink_kind = "other"
+        sink_target = None
+    else:
+        sink_kind = "missing"
+        sink_target = None
+    rows.append({
+        "basename": basename,
+        "reported_name": completion["reported_name"],
+        "duration_ms": completion["duration_ms"],
+        "logical_size_bytes": source.stat().st_size,
+        "source_path": str(source),
+        "sink_path": str(sink),
+        "sink_kind_before_cleanup": sink_kind,
+        "sink_target_before_cleanup": sink_target,
+    })
+data = {
+    "schema": "greenquic-client-download-manifest-v2-logical-bytes",
+    "test_id": test_id,
+    "workload_kind": workload,
+    "download_root": str(root),
+    "start_wall_ns": start_ns,
+    "file_count": len(rows),
+    "total_bytes": sum(row["logical_size_bytes"] for row in rows),
+    "files": rows,
+}
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+print(f"[GreenQUIC-Test] Download accounting: completed={data['file_count']} logical_bytes={data['total_bytes']}")
+PY_MANIFEST
+}
+
+cleanup_client_downloads() {
+    local manifest="$1"
+    [[ "${GQ_CLEANUP_DOWNLOADED_FILES:-1}" == 1 ]] || return 0
+    python3 - "$manifest" <<'PY_CLEANUP'
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+
+manifest = Path(sys.argv[1])
+data = json.loads(manifest.read_text(encoding="utf-8"))
+root = Path(data["download_root"]).resolve()
+removed_files = 0
+removed_bytes = 0
+sinks_ready = 0
+for row in data.get("files", []):
+    sink = Path(row["sink_path"])
+    try:
+        sink.parent.resolve().relative_to(root)
+    except ValueError:
+        raise SystemExit(f"refusing to modify a sink outside the download root: {sink}")
+    keep = sink.is_symlink() and sink.resolve(strict=False) == Path("/dev/null")
+    if not keep:
+        if sink.is_file() and not sink.is_symlink():
+            removed_bytes += sink.stat().st_size
+            removed_files += 1
+        if sink.exists() or sink.is_symlink():
+            sink.unlink()
+        sink.parent.mkdir(parents=True, exist_ok=True)
+        sink.symlink_to("/dev/null")
+    sinks_ready += 1
+remaining = sum(
+    Path(row["sink_path"]).stat().st_size
+    for row in data.get("files", [])
+    if Path(row["sink_path"]).is_file() and not Path(row["sink_path"]).is_symlink()
+)
+data["cleanup"] = {
+    "removed_regular_files": removed_files,
+    "removed_regular_bytes": removed_bytes,
+    "regular_bytes_remaining": remaining,
+    "sinks_ready": sinks_ready,
+    "strategy": "preserve or restore each client output as a /dev/null symlink",
+}
+manifest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+print(f"[GreenQUIC-Test] Client storage cleanup: removed_files={removed_files} removed_bytes={removed_bytes} persistent_payload_bytes={remaining}")
+PY_CLEANUP
+}
+
+run_client() {
+    local test_dir="$1" mode_override="${2:-}" approximate="${3:-0}"
+    load_test "$test_dir"
+    local mode="${GQ_MODE_OVERRIDE:-${mode_override:-$DEFAULT_MODE}}"
+    validate_mode "$mode"
+    validate_test_specific_requirements client run
+    [[ "$approximate" == 1 ]] && ALLOW_APPROX_MICRO_GAPS=1
+    detect_runtime client
+    verify_exact_v22_install
+    require_inprocess_client_if_needed
+    local actual_bin
+    actual_bin="$(runtime_binary_for_role client)"
+    check_ldd "$actual_bin"
+    verify_msquic_greenquic_config client "$mode"
+    if [[ "$WORKLOAD_KIND" == idle_no_client ]]; then
+        check_ldd "$INTEROP_SERVER_BIN"
+        verify_msquic_greenquic_config server "$mode"
+    fi
+    validate_host_prereqs client
+    prepare_assets
+
+    local runtime="$TEST_DIR/runtime/client"
+    write_dpdk_ini client "$runtime" "$mode"
+    write_powermng_ini client "$runtime" "$mode"
+    validate_runtime_config "$runtime" "$TEST_DIR/results/client_${mode}_config_validation.json"
+
+    mapfile -t REQUEST_PATH_ARRAY < <(printf '%s\n' "$REQUEST_PATHS" | sed '/^$/d')
+    if [[ "$WORKLOAD_KIND" != idle_no_client ]]; then
+        [[ "${#REQUEST_PATH_ARRAY[@]}" -gt 0 ]] || die "No request paths configured."
+        check_requested_assets
+    fi
+
+    local stamp
+    stamp="$(date +%Y%m%d_%H%M%S_%N)"
+    record_runtime_artifacts client "$runtime" "$mode" "$stamp"
+    local logf="$TEST_DIR/logs/client_${mode}_${stamp}.log"
+    local timelinef="$TEST_DIR/logs/client_${mode}_${stamp}_timeline.jsonl"
+    local estart="$runtime/energy_start_${stamp}.json" eout="$TEST_DIR/results/client_energy_${mode}_${stamp}.json"
+    local power_prefix="$TEST_DIR/results/client_power_${mode}_${stamp}"
+    local msr_csv="$TEST_DIR/results/client_msr_${mode}_${stamp}.csv"
+    local transfer_window="$TEST_DIR/results/client_transfer_${mode}_${stamp}.json"
+    local cstate_prefix="$TEST_DIR/results/client_cstate_${mode}_${stamp}"
+    GQ_TRANSFER_WINDOW_FILE="$transfer_window"
+    GQ_TRANSFER_ROLE=client
+    export GQ_TRANSFER_WINDOW_FILE GQ_TRANSFER_ROLE
+    local download_manifest="$TEST_DIR/results/client_download_manifest_${mode}_${stamp}.json"
+    local download_start_wall_ns
+    download_start_wall_ns="$(date +%s%N)"
+
+    log "Running $TEST_ID client mode=$mode kind=$WORKLOAD_KIND"
+    log "Binary: $actual_bin"
+    power_trace_start client "$power_prefix" "$TEST_ID client $mode"
+    msr_trace_start client "$msr_csv"
+    cstate_trace_start client "$cstate_prefix"
+    local cstate_pid="${GQ_CSTATE_TRACE_PID:-}"
+    local msr_pid="${GQ_MSR_TRACE_PID:-}"
+    local power_pid="${GQ_POWER_TRACE_PID:-}"
+    energy_start "$estart"
+    local off_cpu_state="$runtime/off_cpu_max_${stamp}.state"
+    off_cpu_max_start "$mode" client "$runtime/dpdk.ini" "$off_cpu_state"
+    local rc=0 energy_rc=0 power_rc=0 msr_rc=0 cstate_rc=0 manifest_rc=0 cleanup_rc=0
+    (
+        cd "$runtime"
+        export GREENQUIC_CONFIG="$runtime/dpdk.ini"
+        export GREENQUIC_POWER_CONFIG="$runtime/powermng.ini"
+        off_cpu_max_emit_log "$mode" "$runtime/dpdk.ini"
+        run_client_workload "$mode"
+    ) 2>&1 | python3 "$GQ_COMMON_DIR/bin/timestamp_tee.py" --raw-log "$logf" --timeline "$timelinef" || rc=${PIPESTATUS[0]}
+    if [[ "$rc" == 0 ]]; then
+        local post_transfer_wait_s="${GQ_POST_TRANSFER_WAIT_S:-4}"
+        if [[ "$post_transfer_wait_s" != 0 && "$post_transfer_wait_s" != 0.0 ]]; then
+            log "Client transport finished; keeping whole-test energy samplers active for ${post_transfer_wait_s}s."
+            sleep "$post_transfer_wait_s"
+        fi
+    fi
+    cstate_trace_stop "$cstate_pid" || cstate_rc=$?
+    msr_trace_stop "$msr_pid" || msr_rc=$?
+    power_trace_stop "$power_pid" "$power_prefix" || power_rc=$?
+    energy_finish "$estart" "$eout" "$TEST_ID client $mode" || energy_rc=$?
+    off_cpu_max_stop "$off_cpu_state"
+    write_client_download_manifest "$download_start_wall_ns" "$download_manifest" || manifest_rc=$?
+
+    # Validate before deleting payloads. Logs, JSON, CSV and SVG reports are preserved.
+    if [[ "$rc" == 0 && "$power_rc" == 0 && "$energy_rc" == 0 && "$manifest_rc" == 0 ]]; then
+        validate_stock_client_completions "$logf" || rc=$?
+    fi
+    if [[ "$rc" == 0 && "$power_rc" == 0 && "$energy_rc" == 0 && "$manifest_rc" == 0 ]]; then
+        validate_runtime_log client "$logf" "$mode" "$stamp" || rc=$?
+    fi
+    cleanup_client_downloads "$download_manifest" || cleanup_rc=$?
+
+    [[ "$rc" == 0 ]] || return "$rc"
+    [[ "$power_rc" == 0 ]] || return "$power_rc"
+    [[ "$msr_rc" == 0 ]] || return "$msr_rc"
+    [[ "$cstate_rc" == 0 ]] || return "$cstate_rc"
+    [[ "$energy_rc" == 0 ]] || return "$energy_rc"
+    [[ "$manifest_rc" == 0 ]] || return "$manifest_rc"
+    [[ "$cleanup_rc" == 0 ]] || return "$cleanup_rc"
+}
+
+
+preflight() {
+    local test_dir="$1" role="${2:-both}"
+    load_test "$test_dir"
+    validate_mode "$DEFAULT_MODE"
+    if [[ "$role" == client || "$role" == both ]]; then validate_test_specific_requirements client preflight; fi
+    detect_runtime "$role"
+    verify_exact_v22_install
+    if [[ ! -x "$GQ_COMMON_DIR/bin/gap_wait" ]]; then
+        [[ -x "$GQ_COMMON_DIR/bin/build_helpers.sh" ]] || die "gap_wait is missing and build_helpers.sh is not executable"
+        "$GQ_COMMON_DIR/bin/build_helpers.sh"
+    fi
+    printf 'Suite root:             %s\n' "$SUITE_ROOT"
+    printf 'MsQuic:                 %s\n' "$(resolve_path "$MSQUIC_DIR")"
+    printf 'DPDK:                   %s\n' "$(resolve_path "$DPDK_DIR")"
+    printf 'quicinteropserver:      %s\n' "$INTEROP_SERVER_BIN"
+    printf 'quicinterop:            %s\n' "$INTEROP_CLIENT_BIN"
+    printf 'secnetperf:             %s\n' "${SECNETPERF_BIN:-not found}"
+    printf 'in-process client:      %s\n' "${INPROCESS_CLIENT_BIN:-not found}"
+    printf 'LD_LIBRARY_PATH:        %s\n' "${LD_LIBRARY_PATH:-}"
+    printf 'PKG_CONFIG_PATH:        %s\n' "${PKG_CONFIG_PATH:-}"
+    printf 'DPDK driver path:       %s\n' "${GREENQUIC_DPDK_DRIVER_PATH:-}"
+    printf 'idle mode/fallback:     %s / %s\n' "$EFFECTIVE_IDLE_MODE" "$EFFECTIVE_IDLE_FALLBACK"
+    printf 'dpdk-devbind:           %s\n' "${DETECTED_DPDK_DEVBIND:-not found}"
+
+    case "$role" in
+      server)
+        check_ldd "$INTEROP_SERVER_BIN"
+        verify_msquic_greenquic_config server "$DEFAULT_MODE"
+        validate_host_prereqs server
+        ;;
+      client)
+        require_inprocess_client_if_needed
+        check_ldd "$(runtime_binary_for_role client)"
+        verify_msquic_greenquic_config client "$DEFAULT_MODE"
+        validate_host_prereqs client
+        ;;
+      both)
+        require_inprocess_client_if_needed
+        check_ldd "$INTEROP_SERVER_BIN"
+        check_ldd "$(runtime_binary_for_role client)"
+        verify_msquic_greenquic_config server "$DEFAULT_MODE"
+        verify_msquic_greenquic_config client "$DEFAULT_MODE"
+        validate_host_prereqs server
+        validate_host_prereqs client
+        ;;
+      *) die "preflight role must be server, client, or both" ;;
+    esac
+    prepare_assets
+    case "$role" in
+      server)
+        write_dpdk_ini server "$TEST_DIR/runtime/server" "$DEFAULT_MODE"
+        write_powermng_ini server "$TEST_DIR/runtime/server" "$DEFAULT_MODE"
+        validate_runtime_config "$TEST_DIR/runtime/server" "$TEST_DIR/results/server_preflight_config_validation.json"
+        ;;
+      client)
+        write_dpdk_ini client "$TEST_DIR/runtime/client" "$DEFAULT_MODE"
+        write_powermng_ini client "$TEST_DIR/runtime/client" "$DEFAULT_MODE"
+        validate_runtime_config "$TEST_DIR/runtime/client" "$TEST_DIR/results/client_preflight_config_validation.json"
+        ;;
+      both)
+        write_dpdk_ini server "$TEST_DIR/runtime/server" "$DEFAULT_MODE"
+        write_powermng_ini server "$TEST_DIR/runtime/server" "$DEFAULT_MODE"
+        validate_runtime_config "$TEST_DIR/runtime/server" "$TEST_DIR/results/server_preflight_config_validation.json"
+        write_dpdk_ini client "$TEST_DIR/runtime/client" "$DEFAULT_MODE"
+        write_powermng_ini client "$TEST_DIR/runtime/client" "$DEFAULT_MODE"
+        validate_runtime_config "$TEST_DIR/runtime/client" "$TEST_DIR/results/client_preflight_config_validation.json"
+        ;;
+    esac
+    log "Preflight passed for actual runtime artifacts, helper requirements, host CPU topology, and strict V22 configuration. NIC binding and EAL startup are verified only when the program is actually run."
+}
+
+
+# GREENQUIC-V22-RESULTS-FREQ-TIMESERIES-FIX-V2
+
+# GREENQUIC-V22-C-RAPL-MSR-RESULT-LAYOUT-DEFAULTS-V2
+
+# GREENQUIC-V22-ACTIVE-TRANSFER-ENERGY-POSTWAIT-V1
+
+# GREENQUIC-V22-CSTATE-TRACE-V1
+
+# GREENQUIC-V22-MODE-OVERRIDE-PRECEDENCE-FIX-V1

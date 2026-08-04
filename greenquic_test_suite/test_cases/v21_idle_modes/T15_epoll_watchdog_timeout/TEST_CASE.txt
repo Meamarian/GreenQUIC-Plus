@@ -1,0 +1,5 @@
+T15 — V21 epoll watchdog timeout
+================================
+Purpose: exercise RX-interrupt/eventfd epoll blocking with no traffic and prove that the bounded watchdog returns control.
+Hardware gate: the PMD must expose a per-RX-queue interrupt FD and support enable/disable. Fallback is `fail`.
+Required evidence: `epoll_work_wait`, attempts, and watchdog timeouts while the endpoint remains alive.

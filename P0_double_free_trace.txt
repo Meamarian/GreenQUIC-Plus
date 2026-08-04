@@ -1,0 +1,2312 @@
+========== CURRENT SOURCE CLEANUP ==========
+3279-        QuicTraceLogVerbose(
+3280-                DpdkUninitializeComplete,
+3281-                "[dpdk][%p] DPDK uninitialize complete",
+3282-                Dpdk);
+3283-        CxPlatDataPathUninitializeComplete((CXPLAT_DATAPATH_RAW*)Dpdk);
+3284-    }
+3285-}
+3286-
+3287-_IRQL_requires_max_(PASSIVE_LEVEL)
+3288-void
+3289:CxPlatDpRawUninitialize(
+3290-        _In_ CXPLAT_DATAPATH_RAW* Datapath
+3291-)
+3292-{
+3293-    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Datapath;
+3294-    Dpdk->Running = FALSE;
+3295-    for (uint16_t Core = 0; Core < RTE_MAX_LCORE; ++Core) {
+3296-        GreenQuicSignalLcoreWork(Dpdk, Core);
+3297-    }
+3298-    CxPlatThreadWait(&Dpdk->DpdkThread);
+3299-    CxPlatThreadDelete(&Dpdk->DpdkThread);
+3300-    CxPlatPoolUninitialize(&Dpdk->AdditionalInfoPool);
+3301-    CxPlatLockUninitialize(&Dpdk->Interface.TxLock);
+3302-    CxPlatEventUninitialize(Dpdk->StartComplete);
+3303-
+3304-    if (Dpdk->DpdkInitArgv != NULL) {
+3305-        for (int i = 0; i < Dpdk->DpdkInitArgc; i++) {
+3306-            free(Dpdk->DpdkInitArgv[i]);
+3307-        }
+3308-    }
+3309-    free(Dpdk->DpdkInitArgv);
+3310-
+3311-    CxPlatDpRawRelease(Dpdk);
+3312-}
+3313-
+3314-_IRQL_requires_max_(PASSIVE_LEVEL)
+3315-void
+3316-CxPlatDpRawUpdateConfig(
+3317-        _In_ CXPLAT_DATAPATH_RAW* Datapath,
+3318-        _In_ QUIC_EXECUTION_CONFIG* Config
+3319-)
+3320-{
+3321-    UNREFERENCED_PARAMETER(Datapath);
+3322-    UNREFERENCED_PARAMETER(Config);
+3323-}
+3324-
+3325-#pragma GCC diagnostic push
+3326-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+3327-
+3328-/* Check the link status of all ports in up to 9s, and print them finally */
+3329-_IRQL_requires_max_(PASSIVE_LEVEL)
+3330-static void
+3331-CxPlatCheckAllPortsLinkStatus(
+3332-        uint32_t port_mask
+3333-)
+3334-{
+3335-#define CHECK_INTERVAL 200 /* 200ms */
+3336-#define MAX_CHECK_TIME 200 /* 40s (200 * 200ms) in total */
+3337-    uint16_t portid;
+3338-    uint8_t count, all_ports_up, print_flag = 0;
+3339-    struct rte_eth_link link;
+3340-    int ret;
+3341-    char link_status_text[RTE_ETH_LINK_MAX_STR_LEN];
+3342-
+3343-    printf("\nChecking link status\n");
+3344-    fflush(stdout);
+3345-    for (count = 0; count <= MAX_CHECK_TIME; count++) {
+3346-        if (force_quit)
+3347-            return;
+3348-        all_ports_up = 1;
+3349-        RTE_ETH_FOREACH_DEV(portid) {
+3350-            if (force_quit)
+3351-                return;
+3352-            if ((port_mask & (1 << portid)) == 0)
+3353-                continue;
+3354-            memset(&link, 0, sizeof(link));
+3355-            ret = rte_eth_link_get_nowait(portid, &link);
+3356-            if (ret < 0) {
+3357-                all_ports_up = 0;
+3358-                if (print_flag == 1)
+3359-                    printf("Port %u link get failed: %s\n",
+3360-                           portid, rte_strerror(-ret));
+3361-                continue;
+3362-            }
+3363-            /* print link status if flag set */
+3364-            if (print_flag == 1) {
+3365-                rte_eth_link_to_str(link_status_text,
+3366-                                    sizeof(link_status_text), &link);
+3367-                printf("Port %d %s\n", portid,
+3368-                       link_status_text);
+3369-                continue;
+3370-            }
+3371-            /* clear all_ports_up flag if any link down */
+3372-            if (link.link_status == RTE_ETH_LINK_DOWN) {
+3373-                all_ports_up = 0;
+3374-                break;
+3375-            }
+3376-        }
+3377-        /* after finally printing all link status, get out */
+3378-        if (print_flag == 1)
+3379-            break;
+3380-
+3381-        if (all_ports_up == 0) {
+3382-            printf(".");
+3383-            fflush(stdout);
+3384-            rte_delay_ms(CHECK_INTERVAL);
+3385-        }
+3386-
+3387-        /* set the print_flag if all ports up or timeout */
+3388-        if (all_ports_up == 1 || count == (MAX_CHECK_TIME - 1)) {
+3389-            print_flag = 1;
+
+========== RELEASE CLEANUP ==========
+3256-            CxPlatLockUninitialize(&Dpdk->Interface.TxLock);
+3257-        }
+3258-        CxPlatEventUninitialize(Dpdk->StartComplete);
+3259-    }
+3260-
+3261-    return Status;
+3262-}
+3263-
+3264-_IRQL_requires_max_(PASSIVE_LEVEL)
+3265-void
+3266:CxPlatDpRawRelease(
+3267-        _In_ DPDK_DATAPATH* Dpdk
+3268-)
+3269-{
+3270-    QuicTraceLogVerbose(
+3271-            DpdkRelease,
+3272-            "[dpdk][%p] DPDK release",
+3273-            Dpdk);
+3274-    force_quit = true;
+3275-    for (uint16_t Core = 0; Core < RTE_MAX_LCORE; ++Core) {
+3276-        GreenQuicSignalLcoreWork(Dpdk, Core);
+3277-    }
+3278-    if (CxPlatRefDecrement(&Dpdk->RefCount)) {
+3279-        QuicTraceLogVerbose(
+3280-                DpdkUninitializeComplete,
+3281-                "[dpdk][%p] DPDK uninitialize complete",
+3282-                Dpdk);
+3283-        CxPlatDataPathUninitializeComplete((CXPLAT_DATAPATH_RAW*)Dpdk);
+3284-    }
+3285-}
+3286-
+3287-_IRQL_requires_max_(PASSIVE_LEVEL)
+3288-void
+3289-CxPlatDpRawUninitialize(
+3290-        _In_ CXPLAT_DATAPATH_RAW* Datapath
+3291-)
+3292-{
+3293-    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Datapath;
+3294-    Dpdk->Running = FALSE;
+3295-    for (uint16_t Core = 0; Core < RTE_MAX_LCORE; ++Core) {
+3296-        GreenQuicSignalLcoreWork(Dpdk, Core);
+3297-    }
+3298-    CxPlatThreadWait(&Dpdk->DpdkThread);
+3299-    CxPlatThreadDelete(&Dpdk->DpdkThread);
+3300-    CxPlatPoolUninitialize(&Dpdk->AdditionalInfoPool);
+3301-    CxPlatLockUninitialize(&Dpdk->Interface.TxLock);
+3302-    CxPlatEventUninitialize(Dpdk->StartComplete);
+3303-
+3304-    if (Dpdk->DpdkInitArgv != NULL) {
+3305-        for (int i = 0; i < Dpdk->DpdkInitArgc; i++) {
+3306-            free(Dpdk->DpdkInitArgv[i]);
+3307-        }
+3308-    }
+3309-    free(Dpdk->DpdkInitArgv);
+3310-
+3311:    CxPlatDpRawRelease(Dpdk);
+3312-}
+3313-
+3314-_IRQL_requires_max_(PASSIVE_LEVEL)
+3315-void
+3316-CxPlatDpRawUpdateConfig(
+3317-        _In_ CXPLAT_DATAPATH_RAW* Datapath,
+3318-        _In_ QUIC_EXECUTION_CONFIG* Config
+3319-)
+3320-{
+3321-    UNREFERENCED_PARAMETER(Datapath);
+3322-    UNREFERENCED_PARAMETER(Config);
+3323-}
+3324-
+3325-#pragma GCC diagnostic push
+3326-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+3327-
+3328-/* Check the link status of all ports in up to 9s, and print them finally */
+3329-_IRQL_requires_max_(PASSIVE_LEVEL)
+3330-static void
+3331-CxPlatCheckAllPortsLinkStatus(
+3332-        uint32_t port_mask
+3333-)
+3334-{
+3335-#define CHECK_INTERVAL 200 /* 200ms */
+3336-#define MAX_CHECK_TIME 200 /* 40s (200 * 200ms) in total */
+3337-    uint16_t portid;
+3338-    uint8_t count, all_ports_up, print_flag = 0;
+3339-    struct rte_eth_link link;
+3340-    int ret;
+3341-    char link_status_text[RTE_ETH_LINK_MAX_STR_LEN];
+3342-
+3343-    printf("\nChecking link status\n");
+3344-    fflush(stdout);
+3345-    for (count = 0; count <= MAX_CHECK_TIME; count++) {
+3346-        if (force_quit)
+3347-            return;
+3348-        all_ports_up = 1;
+3349-        RTE_ETH_FOREACH_DEV(portid) {
+3350-            if (force_quit)
+3351-                return;
+3352-            if ((port_mask & (1 << portid)) == 0)
+3353-                continue;
+3354-            memset(&link, 0, sizeof(link));
+3355-            ret = rte_eth_link_get_nowait(portid, &link);
+3356-            if (ret < 0) {
+3357-                all_ports_up = 0;
+3358-                if (print_flag == 1)
+3359-                    printf("Port %u link get failed: %s\n",
+3360-                           portid, rte_strerror(-ret));
+3361-                continue;
+3362-            }
+3363-            /* print link status if flag set */
+3364-            if (print_flag == 1) {
+3365-                rte_eth_link_to_str(link_status_text,
+3366-                                    sizeof(link_status_text), &link);
+3367-                printf("Port %d %s\n", portid,
+3368-                       link_status_text);
+3369-                continue;
+3370-            }
+3371-            /* clear all_ports_up flag if any link down */
+3372-            if (link.link_status == RTE_ETH_LINK_DOWN) {
+3373-                all_ports_up = 0;
+3374-                break;
+3375-            }
+3376-        }
+3377-        /* after finally printing all link status, get out */
+3378-        if (print_flag == 1)
+3379-            break;
+3380-
+3381-        if (all_ports_up == 0) {
+3382-            printf(".");
+3383-            fflush(stdout);
+3384-            rte_delay_ms(CHECK_INTERVAL);
+3385-        }
+3386-
+3387-        /* set the print_flag if all ports up or timeout */
+3388-        if (all_ports_up == 1 || count == (MAX_CHECK_TIME - 1)) {
+3389-            print_flag = 1;
+3390-            printf("done\n");
+3391-        }
+3392-    }
+3393-}
+3394-
+3395-#pragma GCC diagnostic pop
+3396-
+3397-CXPLAT_THREAD_CALLBACK(CxPlatDpdkMainThread, Context)
+3398-{
+3399-    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Context;
+3400-
+3401-    QUIC_STATUS Status = QUIC_STATUS_SUCCESS;
+3402-    BOOLEAN CleanUpRte = FALSE;
+3403-    uint16_t Port;
+3404-    struct rte_eth_conf PortConfig = {};
+3405-    uint16_t rx_rings = 1, tx_rings = 1;
+3406-    struct rte_eth_dev_info DeviceInfo;
+3407-    struct rte_eth_rxconf rxconf;
+3408-    struct rte_eth_txconf txconf;
+3409-    struct rte_ether_addr addr;
+3410-
+3411-    int ret = rte_eal_init(Dpdk->DpdkInitArgc, Dpdk->DpdkInitArgv);
+
+========== GDB DOUBLE-FREE TRACE ==========
+Breakpoint 1 at 0x13c620
+Breakpoint 2 at 0x408a0
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+[Switching to Thread 0x7ffff530c6c0 (LWP 125117)]
+EAL: Detected CPU lcores: 48
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'PA'
+EAL: No available 1048576 kB hugepages reported
+EAL: Probe PCI driver: net_ice (8086:1592) device: 0000:18:00.0 (socket 0)
+ice_load_pkg_type(): Active package is: 1.3.41.0, ICE OS Default Package (single VLAN mode)
+TELEMETRY: No legacy callbacks, legacy socket not created
+ice_set_rx_function(): Using AVX2 Vector Scattered Rx (port 0).
+GreenQUIC: MsQuic worker CPU list from dpdk.ini = 21,22,23,24
+using configuration file dpdk.ini!
+GreenQUIC: installed 4 explicit MsQuic partition -> DPDK lcore mapping entries.
+config params:
+--------------
+MbufCacheSize = 256
+NumRxDescriptors = 4096
+NumTxDescriptors = 4096
+RxMbufPoolSize = 16383
+TxMbufPoolSize = 16383
+RxBurstSize = 32
+TxBurstSize = 32
+TxRingSize = 4096
+
+SeparateRxThread = 0
+SeparateTxThread = 0
+
+Found 5 DpdkInitArgs: secnetperf -l 19 -a 0000:18:00.0 
+--------------
+Log path: /tmp/
+GreenQUIC roles: lcores=1 rx_owners=1 rxq=1 tx_enabled=1 tx_owner=19 tx_owner_also_rx=1
+Mbuf fast free offload activated
+
+Starting Port 0 on Interface 0, 6c:fe:54:59:99:38
+
+Checking link status
+[Switching to Thread 0x7ffff7314940 (LWP 125110)]
+[Switching to Thread 0x7fffece0f6c0 (LWP 125121)]
+[Switching to Thread 0x7ffff7314940 (LWP 125110)]
+[Switching to Thread 0x7fffece0f6c0 (LWP 125121)]
+[Switching to Thread 0x7ffff7314940 (LWP 125110)]
+[Switching to Thread 0x7fffea60a6c0 (LWP 125126)]
+[Switching to Thread 0x7fffec60e6c0 (LWP 125122)]
+[Switching to Thread 0x7fffea60a6c0 (LWP 125126)]
+[Switching to Thread 0x7fffec60e6c0 (LWP 125122)]
+[Switching to Thread 0x7fffea60a6c0 (LWP 125126)]
+[Switching to Thread 0x7fffec60e6c0 (LWP 125122)]
+[Switching to Thread 0x7ffff7314940 (LWP 125110)]
+[Switching to Thread 0x7fffebe0d6c0 (LWP 125123)]
+[Switching to Thread 0x7ffff7314940 (LWP 125110)]
+[Switching to Thread 0x7fffeb60c6c0 (LWP 125124)]
+[Switching to Thread 0x7ffff7314940 (LWP 125110)]
+[Switching to Thread 0x7fffeae0b6c0 (LWP 125125)]
+[Switching to Thread 0x7ffff7314940 (LWP 125110)]
+
+==================================================
+ENTERED CxPlatDpRawUninitialize
+Datapath argument = 0x5555558b2d60
+==================================================
+#0  0x0000555555690620 in CxPlatDpRawUninitialize ()
+#1  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#2  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#3  0x00005555555a29fd in MsQuicRelease ()
+#4  0x00005555555a34f8 in MsQuicClose ()
+#5  0x00005555555956ff in main ()
+[Switching to Thread 0x7ffff530c6c0 (LWP 125117)]
+
+==================================================
+FREE DURING UNINITIALIZE: count=1 pointer=0x7ffff01b3300
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff793daf5 in _IO_setb () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff793aed7 in _IO_file_close_it () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff792f071 in fclose () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x000055555568dbd4 in nic_xstats_display ()
+#5  0x000055555568e057 in CxPlatDpdkMainThread ()
+#6  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#7  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=2 pointer=0x7ffff016ef20
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff792ef25 in fclose () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x000055555568dbd4 in nic_xstats_display ()
+#3  0x000055555568e057 in CxPlatDpdkMainThread ()
+#4  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=3 pointer=0x7ffff0119d20
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555568dbdc in nic_xstats_display ()
+#2  0x000055555568e057 in CxPlatDpdkMainThread ()
+#3  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=4 pointer=0x7ffff01b25f0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555568e057 in CxPlatDpdkMainThread ()
+#2  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+[Switching to Thread 0x7fffede116c0 (LWP 125119)]
+
+==================================================
+FREE DURING UNINITIALIZE: count=5 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff796cb16 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff79569d3 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=6 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79569d3 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+[Switching to Thread 0x7ffff530c6c0 (LWP 125117)]
+
+==================================================
+FREE DURING UNINITIALIZE: count=7 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=8 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=9 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=10 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=11 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=12 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=13 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=14 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=15 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=16 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=17 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=18 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=19 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=20 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=21 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=22 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=23 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=24 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=25 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=26 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=27 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=28 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=29 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=30 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=31 pointer=0x5555558c0fb0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99ff in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff7d7b0c5 in rte_mp_channel_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x00007ffff7d82fc0 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#7  0x000055555568e075 in CxPlatDpdkMainThread ()
+#8  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#9  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=32 pointer=0x7ffff0171380
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7d7d9ea in trace_metadata_destroy () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#2  0x00007ffff7d7c861 in eal_trace_fini () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#3  0x00007ffff7d82fca in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#4  0x000055555568e075 in CxPlatDpdkMainThread ()
+#5  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#6  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=33 pointer=0x7ffff016e710
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7d621f8 in rte_intr_instance_free () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#2  0x00007ffff7d82fcf in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#3  0x000055555568e075 in CxPlatDpdkMainThread ()
+#4  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=34 pointer=0x7ffff01773d0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7d62201 in rte_intr_instance_free () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#2  0x00007ffff7d82fcf in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#3  0x000055555568e075 in CxPlatDpdkMainThread ()
+#4  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=35 pointer=0x7ffff011ffc0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7d82fcf in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#2  0x000055555568e075 in CxPlatDpdkMainThread ()
+#3  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=36 pointer=0x7ffff017d3e0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7d8897e in fd_list_destroy_walk () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#2  0x00007ffff7d66851 in rte_memseg_list_walk_thread_unsafe () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#3  0x00007ffff7d8887f in eal_memalloc_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#4  0x00007ffff7d66f28 in rte_eal_memory_detach () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#5  0x00007ffff7d82fd4 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x000055555568e075 in CxPlatDpdkMainThread ()
+#7  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#8  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=37 pointer=0x7ffff01853f0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7d8897e in fd_list_destroy_walk () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#2  0x00007ffff7d66851 in rte_memseg_list_walk_thread_unsafe () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#3  0x00007ffff7d8887f in eal_memalloc_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#4  0x00007ffff7d66f28 in rte_eal_memory_detach () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#5  0x00007ffff7d82fd4 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x000055555568e075 in CxPlatDpdkMainThread ()
+#7  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#8  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=38 pointer=0x7ffff018d400
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7d8897e in fd_list_destroy_walk () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#2  0x00007ffff7d66851 in rte_memseg_list_walk_thread_unsafe () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#3  0x00007ffff7d8887f in eal_memalloc_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#4  0x00007ffff7d66f28 in rte_eal_memory_detach () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#5  0x00007ffff7d82fd4 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x000055555568e075 in CxPlatDpdkMainThread ()
+#7  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#8  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=39 pointer=0x7ffff0195410
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7d8897e in fd_list_destroy_walk () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#2  0x00007ffff7d66851 in rte_memseg_list_walk_thread_unsafe () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#3  0x00007ffff7d8887f in eal_memalloc_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#4  0x00007ffff7d66f28 in rte_eal_memory_detach () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#5  0x00007ffff7d82fd4 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#6  0x000055555568e075 in CxPlatDpdkMainThread ()
+#7  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#8  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=40 pointer=0x7ffff016cbd0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7d5fb4c in rte_fbarray_detach () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#2  0x00007ffff7d66fd3 in rte_eal_memory_detach () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#3  0x00007ffff7d82fd4 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#4  0x000055555568e075 in CxPlatDpdkMainThread ()
+#5  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#6  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=41 pointer=0x7ffff016b910
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7d5fb4c in rte_fbarray_detach () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#2  0x00007ffff7d66fd3 in rte_eal_memory_detach () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#3  0x00007ffff7d82fd4 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#4  0x000055555568e075 in CxPlatDpdkMainThread ()
+#5  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#6  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=42 pointer=0x7ffff016b7d0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7d5fb4c in rte_fbarray_detach () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#2  0x00007ffff7d66fd3 in rte_eal_memory_detach () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#3  0x00007ffff7d82fd4 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#4  0x000055555568e075 in CxPlatDpdkMainThread ()
+#5  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#6  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=43 pointer=0x7ffff0005c90
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7d5fb4c in rte_fbarray_detach () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#2  0x00007ffff7d66fd3 in rte_eal_memory_detach () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#3  0x00007ffff7d82fd4 in rte_eal_cleanup () from /root/mohsen/msquic/deps/dpdk-install/lib/librte_eal.so.22
+#4  0x000055555568e075 in CxPlatDpdkMainThread ()
+#5  0x00007ffff7943b7b in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#6  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=44 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff796cb16 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff79569d3 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=45 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79569d3 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=46 pointer=0x7ffff0110990
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=47 pointer=0x7ffff010f3f0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=48 pointer=0x7ffff0008770
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=49 pointer=0x7ffff016b7d0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=50 pointer=0x7ffff016b910
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=51 pointer=0x7ffff016cbd0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=52 pointer=0x7ffff010f410
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=53 pointer=0x7ffff01109b0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=54 pointer=0x7ffff01111a0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=55 pointer=0x7ffff0111420
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=56 pointer=0x7ffff0154270
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=57 pointer=0x7ffff011ffc0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=58 pointer=0x7ffff012bc30
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=59 pointer=0x7ffff012bc80
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=60 pointer=0x7ffff012bcd0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=61 pointer=0x7ffff016d600
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=62 pointer=0x7ffff016d410
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=63 pointer=0x7ffff0004170
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=64 pointer=0x7ffff0168ed0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=65 pointer=0x7ffff016e200
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=66 pointer=0x7ffff016d920
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=67 pointer=0x7ffff016d0d0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=68 pointer=0x7ffff0130d90
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=69 pointer=0x7ffff016a420
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=70 pointer=0x7ffff016b640
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=71 pointer=0x7ffff016cac0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=72 pointer=0x7ffff016b800
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=73 pointer=0x7ffff016bd70
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=74 pointer=0x7ffff011a8d0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=75 pointer=0x7ffff011a960
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=76 pointer=0x7ffff011a7b0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=77 pointer=0x7ffff0133530
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=78 pointer=0x7ffff016c090
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=79 pointer=0x7ffff016ceb0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=80 pointer=0x7ffff0110800
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=81 pointer=0x7ffff01712d0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=82 pointer=0x7ffff016b060
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=83 pointer=0x7ffff016afa0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=84 pointer=0x7ffff0122360
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=85 pointer=0x7ffff016e3b0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=86 pointer=0x7ffff016e270
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=87 pointer=0x7ffff016dad0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=88 pointer=0x7ffff016d990
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=89 pointer=0x7ffff016d660
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=90 pointer=0x7ffff016d330
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=91 pointer=0x7ffff016b940
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=92 pointer=0x7ffff016dc10
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=93 pointer=0x7ffff016cc00
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=94 pointer=0x7ffff016b110
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=95 pointer=0x7ffff011fed0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=96 pointer=0x7ffff0116000
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=97 pointer=0x7ffff01108a0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=98 pointer=0x7ffff010fa90
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=99 pointer=0x7ffff016c130
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=100 pointer=0x7ffff016be00
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=101 pointer=0x7ffff016aea0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=102 pointer=0x7ffff016b6c0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=103 pointer=0x7ffff012d710
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=104 pointer=0x7ffff0129670
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=105 pointer=0x7ffff0129560
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=106 pointer=0x7ffff01103a0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=107 pointer=0x7ffff012b9c0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=108 pointer=0x7ffff010c530
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=109 pointer=0x7ffff016c840
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=110 pointer=0x7ffff016b250
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=111 pointer=0x7ffff016bf40
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=112 pointer=0x7ffff016cd60
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=113 pointer=0x7ffff016b390
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=114 pointer=0x7ffff016d140
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=115 pointer=0x7ffff016bc10
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=116 pointer=0x7ffff016b4e0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=117 pointer=0x7ffff0124c80
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=118 pointer=0x7ffff016e080
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=119 pointer=0x7ffff016d7a0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=120 pointer=0x7ffff016cf50
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=121 pointer=0x7ffff016d470
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=122 pointer=0x7ffff0119a10
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=123 pointer=0x7ffff011ca00
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=124 pointer=0x5555558c0fb0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=125 pointer=0x7ffff0119d20
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=126 pointer=0x7ffff011cd10
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=127 pointer=0x7ffff0120340
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=128 pointer=0x7ffff010c640
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=129 pointer=0x7ffff016ba20
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=130 pointer=0x7ffff0119840
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=131 pointer=0x7ffff011c830
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=132 pointer=0x7ffff0120010
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=133 pointer=0x7ffff016ef20
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=134 pointer=0x7ffff016f100
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=135 pointer=0x7ffff016c460
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=136 pointer=0x7ffff016c270
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=137 pointer=0x7ffff013dbe0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=138 pointer=0x7ffff013ddf0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=139 pointer=0x7ffff013ea50
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=140 pointer=0x7ffff016e4f0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=141 pointer=0x7ffff0171090
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=142 pointer=0x7ffff016ab30
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=143 pointer=0x5555558c1640
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=144 pointer=0x7ffff016f2e0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff79544e2 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+==================================================
+FREE DURING UNINITIALIZE: count=145 pointer=0x7ffff00008e0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7954511 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff7943a53 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff79c17f8 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+[Switching to Thread 0x7ffff7314940 (LWP 125110)]
+
+==================================================
+FREE DURING UNINITIALIZE: count=146 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=147 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=148 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=149 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=150 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=151 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=152 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=153 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=154 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=155 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=156 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=157 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=158 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=159 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=160 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=161 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=162 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=163 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=164 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=165 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=166 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=167 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=168 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=169 pointer=(nil)
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99e6 in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=170 pointer=0x5555558c1160
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff7fd99ff in _dl_deallocate_tls () from /lib64/ld-linux-x86-64.so.2
+#2  0x00007ffff794101d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff794116d in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff79456cf in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x000055555559fb6e in CxPlatThreadWait ()
+#6  0x00005555556906b2 in CxPlatDpRawUninitialize ()
+#7  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#8  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#9  0x00005555555a29fd in MsQuicRelease ()
+#10 0x00005555555a34f8 in MsQuicClose ()
+#11 0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=171 pointer=0x7ffff01b24c0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555569071e in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=172 pointer=0x7ffff01b1da0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555569071e in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=173 pointer=0x7ffff01b2130
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555569071e in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=174 pointer=0x7ffff01b1ed0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555569071e in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=175 pointer=0x7ffff01b2000
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555569071e in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=176 pointer=0x7ffff01b1c70
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555569071e in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=177 pointer=0x7ffff01b2390
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555569071e in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=178 pointer=0x7ffff01b2260
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555569071e in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=179 pointer=0x7ffff0170f00
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555569071e in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=180 pointer=0x7fffdc018130
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555569071e in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=181 pointer=0x7ffff0170ca0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555569071e in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=182 pointer=0x7ffff0170dd0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x000055555569071e in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=183 pointer=0x5555558a6990
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00005555556907ec in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=184 pointer=0x5555558a3a30
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00005555556907ec in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=185 pointer=0x5555558a49d0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00005555556907ec in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=186 pointer=0x5555558a77a0
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00005555556907ec in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+
+==================================================
+FREE DURING UNINITIALIZE: count=187 pointer=0x5555558a6990
+==================================================
+#0  0x00007ffff7954280 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00005555556907ec in CxPlatDpRawUninitialize ()
+#2  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#3  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#4  0x00005555555a29fd in MsQuicRelease ()
+#5  0x00005555555a34f8 in MsQuicClose ()
+#6  0x00005555555956ff in main ()
+free(): double free detected in tcache 2
+
+Thread 1 "quicinterop" received signal SIGABRT, Aborted.
+0x00007ffff794595c in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+
+========== PROCESS STOPPED ==========
+Recorded free calls during uninitialize: 187
+#0  0x00007ffff794595c in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x00007ffff78f0cc2 in raise () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x00007ffff78d94ac in abort () from /lib/x86_64-linux-gnu/libc.so.6
+#3  0x00007ffff78da291 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#4  0x00007ffff794f465 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#5  0x00007ffff794f4f6 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#6  0x00007ffff7954470 in free () from /lib/x86_64-linux-gnu/libc.so.6
+#7  0x00005555556907ec in CxPlatDpRawUninitialize ()
+#8  0x00005555555b71a2 in CxPlatDataPathUninitialize ()
+#9  0x00005555555a28fd in MsQuicLibraryUninitialize ()
+#10 0x00005555555a29fd in MsQuicRelease ()
+#11 0x00005555555a34f8 in MsQuicClose ()
+#12 0x00005555555956ff in main ()

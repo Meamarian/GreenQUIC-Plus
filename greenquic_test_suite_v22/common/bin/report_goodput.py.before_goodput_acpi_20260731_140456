@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import argparse, json
+from pathlib import Path
+
+def main() -> int:
+    ap=argparse.ArgumentParser(description='Calculate payload goodput from a GreenQUIC client energy interval.')
+    ap.add_argument('--energy', type=Path, required=True)
+    ap.add_argument('--bytes', type=int, required=True)
+    ap.add_argument('--mode', required=True)
+    ap.add_argument('--test-id', required=True)
+    ap.add_argument('--out', type=Path, required=True)
+    args=ap.parse_args()
+    data=json.loads(args.energy.read_text())
+    elapsed=float(data.get('elapsed_s') or 0)
+    if elapsed <= 0:
+        raise SystemExit('invalid elapsed_s in energy JSON')
+    bits=args.bytes*8
+    result={
+        'test_id': args.test_id,
+        'mode': args.mode,
+        'payload_bytes': args.bytes,
+        'payload_gib': args.bytes/(1024**3),
+        'elapsed_s': elapsed,
+        'goodput_gbps_decimal': bits/elapsed/1e9,
+        'goodput_gib_per_s': args.bytes/elapsed/(1024**3),
+        'rapl_available': bool(data.get('rapl_available')),
+        'total_package_j': data.get('total_package_j'),
+        'average_package_w': data.get('average_package_w'),
+        'timing_scope': 'client process interval: DPDK/MsQuic startup + handshake + transfer + shutdown',
+        'energy_source': str(args.energy),
+    }
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(result, indent=2)+'\n')
+    print('\n=== GreenQUIC pretest goodput ===')
+    print(f"test={args.test_id} mode={args.mode}")
+    print(f"payload={result['payload_gib']:.3f} GiB elapsed={elapsed:.6f} s")
+    print(f"goodput={result['goodput_gbps_decimal']:.3f} Gbit/s ({result['goodput_gib_per_s']:.3f} GiB/s)")
+    if result['rapl_available']:
+        print(f"client package energy={float(result['total_package_j']):.3f} J average={float(result['average_package_w']):.3f} W")
+    else:
+        print('client package energy=unavailable (allowed for pretest)')
+    print(f"result={args.out}")
+    return 0
+if __name__=='__main__': raise SystemExit(main())

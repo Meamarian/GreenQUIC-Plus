@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""Write a readable GreenQUIC summary; keep terminal output concise."""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+
+def read_json(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def first(folder: Path, pattern: str) -> Path | None:
+    rows = sorted(folder.glob(pattern))
+    return rows[0] if rows else None
+
+
+def fmt(value: Any, digits: int = 3) -> str:
+    if value is None:
+        return "unavailable"
+    try:
+        return f"{float(value):.{digits}f}"
+    except Exception:
+        return str(value)
+
+
+def config_rows(path: Path | None) -> list[str]:
+    if path is None or not path.is_file():
+        return []
+    return [
+        raw.rstrip()
+        for raw in path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if raw.strip() and not raw.lstrip().startswith("#")
+    ]
+
+
+def log_details(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.is_file():
+        return {}
+    text = path.read_text(encoding="utf-8", errors="replace")
+    transmission = [int(value) for value in re.findall(
+        r"(?mi)^\s*transmission time \[us\]:\s*(\d+)\s*$", text
+    )]
+    completions = [(name.strip(), int(ms)) for name, ms in re.findall(
+        r"(?m)^\s*(.+?):\s*Completed download!\s*\((\d+)\s*ms\)\s*$", text
+    )]
+    return {
+        "transmission_us": transmission[-1] if transmission else None,
+        "completions": completions,
+        "idle_modes": sorted(set(re.findall(r"\bidle_mode=([^\s]+)", text))),
+        "epoll_try": max([int(value) for value in re.findall(r"\bepoll_try=(\d+)", text)] or [0]),
+        "epoll_wake": max([int(value) for value in re.findall(r"\bepoll_wake=(\d+)", text)] or [0]),
+        "epoll_timeout": max([int(value) for value in re.findall(r"\bepoll_timeout=(\d+)", text)] or [0]),
+        "freq_actions": sorted(set(re.findall(r"policy_action=([^\s]+)", text))),
+    }
+
+
+def append_config(lines: list[str], title: str, rows: list[str]) -> None:
+    lines.extend(["", title, "-" * len(title)])
+    lines.extend((f"- {row}" for row in rows),)
+    if not rows:
+        lines.append("- No values were available.")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--role", choices=("server", "client"), required=True)
+    parser.add_argument("--mode", required=True)
+    parser.add_argument("--test-id", required=True)
+    parser.add_argument("--test-name", required=True)
+    parser.add_argument("--stamp", required=True)
+    parser.add_argument("--stem", required=True)
+    args = parser.parse_args()
+
+    details = args.run_dir / "details"
+    power = read_json(first(details, f"{args.stem}_power.json"))
+    msr = read_json(first(details, f"{args.stem}_msr_power.json"))
+    freq = read_json(first(details, f"{args.stem}_frequency.json"))
+    manifest = read_json(first(details, f"{args.stem}_download_manifest.json"))
+    goodput = read_json(first(details, f"{args.stem}_goodput*.json"))
+    log = log_details(first(details, f"{args.stem}_log.txt"))
+
+    lines = [
+        "=" * 72,
+        "GreenQUIC Run Summary",
+        "=" * 72,
+        "",
+        "Run",
+        "---",
+        f"- Test: {args.test_id} — {args.test_name}",
+        f"- Role: {args.role}",
+        f"- GreenQUIC mode: {args.mode}",
+        f"- Timestamp: {args.stamp}",
+        "",
+        "Goodput",
+        "-------",
+    ]
+
+    primary = goodput.get("primary") or {}
+    if args.role == "client" and primary:
+        lines.extend([
+            f"- Payload: {fmt(goodput.get('payload_gib'), 3)} GiB",
+            f"- Download duration: {fmt(primary.get('duration_s'), 6)} s",
+            f"- Goodput: {fmt(primary.get('goodput_gbps_decimal'), 6)} Gbit/s",
+            f"- Goodput: {fmt(primary.get('goodput_mbps_decimal'), 3)} Mbit/s",
+            f"- Timing source: {goodput.get('timing_source', 'unavailable')}",
+        ])
+        cross = goodput.get("msquic_completion_crosscheck") or {}
+        if cross:
+            lines.append(
+                f"- MsQuic completion cross-check: {fmt(cross.get('goodput_gbps_decimal'), 6)} Gbit/s"
+            )
+    elif args.role == "client":
+        payload = int(manifest.get("total_bytes", 0) or 0)
+        duration = (log.get("transmission_us") or 0) / 1_000_000.0
+        if payload > 0 and duration > 0:
+            gbps = payload * 8.0 / duration / 1e9
+            lines.extend([
+                f"- Payload: {payload / (1024 ** 3):.3f} GiB",
+                f"- Download duration: {duration:.6f} s",
+                f"- Goodput: {gbps:.6f} Gbit/s",
+            ])
+        else:
+            lines.append("- Goodput: unavailable because payload accounting or the client timer is missing.")
+    else:
+        lines.append("- Goodput: measured at the client; not derived from server listener lifetime.")
+
+    lines.extend([
+        "",
+        "Whole-system Power and Energy",
+        "-----------------------------",
+        "- Sensor: power1 from lm-sensors/sysfs",
+        "- Scope: whole-system/board power, not CPU-package RAPL",
+        f"- Samples: {power.get('sample_count', 0)}",
+        f"- Requested sampling interval: {power.get('sample_interval_ms_requested', 'unavailable')} ms",
+        f"- Estimated cumulative energy: {fmt(power.get('estimated_energy_j_trapezoidal'), 3)} J",
+        f"- Time-weighted average power: {fmt(power.get('average_power_w_time_weighted'), 3)} W",
+        f"- Minimum / median / P95 / maximum: {fmt(power.get('power_w_min'))} / {fmt(power.get('power_w_median'))} / {fmt(power.get('power_w_p95'))} / {fmt(power.get('power_w_max'))} W",
+        "",
+        "RAPL/MSR Package and DRAM Power",
+        "--------------------------------",
+    ])
+    if msr:
+        lines.extend([
+            "- Source: Intel RAPL powercap counters sampled by the compiled C helper",
+            f"- Samples: {msr.get('sample_count', 0)}",
+            f"- Requested sampling interval: {fmt(msr.get('requested_interval_ms'), 3)} ms",
+            f"- Smoothing: {msr.get('smoothing_samples', 0)} samples ({fmt(msr.get('nominal_smoothing_window_ms'), 3)} ms nominal window)",
+            f"- Actual interval median / P95 / maximum: {fmt(msr.get('actual_interval_ms_median'), 3)} / {fmt(msr.get('actual_interval_ms_p95'), 3)} / {fmt(msr.get('actual_interval_ms_max'), 3)} ms",
+            f"- Package energy: {fmt(msr.get('package_energy_j'), 3)} J",
+            f"- DRAM energy: {fmt(msr.get('dram_energy_j'), 3)} J",
+            f"- Average package power: {fmt(msr.get('average_package_power_w'), 3)} W",
+            f"- Average DRAM power: {fmt(msr.get('average_dram_power_w'), 3)} W",
+            f"- Average package + DRAM power: {fmt(msr.get('average_total_power_w'), 3)} W",
+            f"- Smoothed total minimum / median / P95 / maximum: {fmt(msr.get('smoothed_total_power_w_min'))} / {fmt(msr.get('smoothed_total_power_w_median'))} / {fmt(msr.get('smoothed_total_power_w_p95'))} / {fmt(msr.get('smoothed_total_power_w_max'))} W",
+        ])
+    else:
+        lines.append("- RAPL/MSR trace unavailable for this run.")
+
+    lines.extend([
+        "",
+        "CPU Frequency",
+        "-------------",
+        f"- CPUs observed: {', '.join(str(value) for value in freq.get('cpus', [])) or 'none'}",
+        f"- Timestamped frequency events: {freq.get('event_count', 0)}",
+        f"- Minimum observed frequency: {fmt((freq.get('min_freq_khz') or 0) / 1e6 if freq.get('min_freq_khz') else None, 3)} GHz",
+        f"- Maximum observed frequency: {fmt((freq.get('max_freq_khz') or 0) / 1e6 if freq.get('max_freq_khz') else None, 3)} GHz",
+        f"- Frequency actions: {', '.join(log.get('freq_actions', [])) or 'none'}",
+        "",
+        "Idle and Wake Behavior",
+        "----------------------",
+        f"- Idle modes observed: {', '.join(log.get('idle_modes', [])) or 'none'}",
+        f"- EPOLL attempts: {log.get('epoll_try', 0)}",
+        f"- EPOLL wakeups: {log.get('epoll_wake', 0)}",
+        f"- EPOLL timeouts: {log.get('epoll_timeout', 0)}",
+    ])
+
+    terminal_end = len(lines)
+
+    if args.role == "client":
+        cleanup = manifest.get("cleanup") or {}
+        lines.extend([
+            "",
+            "Client Storage",
+            "--------------",
+            f"- Logical downloaded bytes: {manifest.get('total_bytes', 0)}",
+            f"- Regular downloaded payload bytes left on disk: {cleanup.get('regular_bytes_remaining', 0)}",
+            f"- /dev/null sinks preserved or restored: {cleanup.get('sinks_ready', 0)}",
+        ])
+
+    lines.extend([
+        "",
+        "Measurement Notes",
+        "-----------------",
+        "- RAPL/MSR watts are interval averages derived from cumulative energy-counter differences.",
+        "- The C sampler runs as a separate helper so it does not execute on the DPDK polling lcore.",
+        "- Frequency timestamps are captured when each complete log row reaches the wrapper.",
+        "- Goodput counts application payload bytes only; protocol overhead and retransmissions are excluded.",
+    ])
+
+    append_config(lines, "Effective DPDK Configuration", config_rows(first(details, f"{args.stem}_dpdk_config.txt")))
+    append_config(lines, "Effective Power Configuration", config_rows(first(details, f"{args.stem}_powermng_config.txt")))
+    append_config(lines, "Test Configuration Snapshot", config_rows(first(details, f"{args.stem}_test_config.txt")))
+    append_config(lines, "Environment Overrides", config_rows(first(details, f"{args.stem}_environment.txt")))
+    lines.append("")
+
+    summary_path = details / f"{args.stem}_summary.txt"
+    summary_path.write_text("\n".join(lines), encoding="utf-8")
+    print("\n" + "\n".join(lines[:terminal_end]).rstrip() + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

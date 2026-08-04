@@ -1,0 +1,5 @@
+T20 — V21 CUBIC-recovery guard against work-triggered wait
+==========================================================
+Purpose: under externally verified packet loss, confirm that the persistent CUBIC_RECOVERY hint vetoes epoll/monitor/pause actions on the server TX direction.
+Workload: one 64-MiB download with tc/netem or equivalent loss. Set `GQ_LOSS_INJECTION_CONFIRMED=1` only after independently confirming loss.
+Required server evidence: `txh & 0x4` appears, and no work-wait or optimized-pause action overlaps the recovery hint. QUIC must complete successfully.

@@ -1,0 +1,151 @@
+# GreenQUIC V18 power-management configuration
+#
+# Runtime loading order:
+#   1. Built-in safe defaults
+#   2. dpdk.ini (mode, profile, lcores, roles, plus legacy power keys)
+#   3. this powermng.ini file, which overrides all power-policy values
+#
+# Override the path with:
+#   export GREENQUIC_POWER_CONFIG=/absolute/path/to/powermng.ini
+#
+# Pressure values use a 0..GreenQuicPressureScale range. 1000 is recommended.
+# A pressure value is NOT a frequency percentage. It selects a policy region.
+
+# -----------------------------------------------------------------------------
+# Master switches
+# -----------------------------------------------------------------------------
+GreenQuicEnableFreq=1
+GreenQuicEnableSleep=1
+GreenQuicNoSleepIfTxRingNotEmpty=1
+GreenQuicTxRingProtectUp=1
+
+# -----------------------------------------------------------------------------
+# Pressure scale and final CPU-action thresholds
+# -----------------------------------------------------------------------------
+GreenQuicPressureScale=1000
+# >= 900: request maximum frequency immediately from the averaged/control path.
+GreenQuicPressureMaxThreshold=900
+# 600..899: request one DPDK frequency step upward, rate-limited below.
+GreenQuicPressureUpThreshold=600
+# 250..599: keep the current frequency and continue polling.
+# <250: begin empty-poll and idle-duration checks.
+GreenQuicPressureKeepThreshold=250
+
+# -----------------------------------------------------------------------------
+# Physical signal normalization
+# -----------------------------------------------------------------------------
+# RX queue count 64 maps to full pressure (1000 by default).
+GreenQuicRxQueueHigh=64
+# rte_eth_rx_queue_count() is sampled once per this many RX polls.
+GreenQuicRxQueueSamplePeriod=64
+# TX software-ring count 64 maps to full pressure.
+GreenQuicTxRingHigh=64
+
+# -----------------------------------------------------------------------------
+# Separate physical-signal EWMAs
+# -----------------------------------------------------------------------------
+# Alpha is written in permille: 500 = 0.5 = 1/2, 250 = 0.25 = 1/4.
+#
+# Bursts are instantaneous, so they rise and fall quickly.
+GreenQuicRxBurstRiseAlphaPermille=500
+GreenQuicRxBurstFallAlphaPermille=500
+GreenQuicTxBurstRiseAlphaPermille=500
+GreenQuicTxBurstFallAlphaPermille=500
+#
+# Queue/ring backlog is stronger evidence of insufficient service capacity.
+# Rise alpha 1000 reacts immediately; fall alpha 250 remembers real backlog
+# through short gaps without keeping burst history artificially sticky.
+GreenQuicRxQueueRiseAlphaPermille=1000
+GreenQuicRxQueueFallAlphaPermille=250
+GreenQuicTxRingRiseAlphaPermille=1000
+GreenQuicTxRingFallAlphaPermille=250
+
+# Optional legacy aliases. If used, each shift is converted to alpha=1/(2^shift)
+# and applied to all four physical signals. Explicit per-signal alpha keys later
+# in this file override the alias.
+# GreenQuicEwmaRiseShift=1
+# GreenQuicEwmaFallShift=2
+
+# -----------------------------------------------------------------------------
+# Full-burst persistence
+# -----------------------------------------------------------------------------
+GreenQuicFullBurstMaxCount=8
+# Default 0 disables an extra floor because a current full burst already maps
+# to full pressure. Set a value such as 600 only for controlled experiments.
+GreenQuicFullBurstFloor=0
+
+# -----------------------------------------------------------------------------
+# QUIC semantic floors (PLUS mode only)
+# -----------------------------------------------------------------------------
+# These are direct, short-lived floors applied AFTER physical EWMAs.
+# They are not fed into a long EWMA, so they disappear when the hint expires.
+
+# Client-download ACKs are throughput-critical: reach the frequency-up boundary.
+GreenQuicAckClientFloor=600
+# Other ACKs stay active and avoid sleep, but remain below the up boundary.
+GreenQuicAckOtherFloor=550
+# Optional ACK+heavy-RX immediate maximum threshold.
+GreenQuicAckRxHardMaxThreshold=900
+GreenQuicEnableAckRxHardMax=1
+GreenQuicAckBlocksSleep=1
+
+# CUBIC growth predicts future TX work. Without physical work, stay ready at 550.
+# With real TX pressure >=250, use 600 and permit one upward step.
+GreenQuicCwndGrowthNoWorkFloor=550
+GreenQuicCwndGrowthWorkFloor=600
+GreenQuicCwndGrowthPhysicalThreshold=250
+GreenQuicCwndGrowthBlocksSleep=1
+
+# Recovery is stronger than normal up pressure but below max pressure.
+GreenQuicRecoveryFloor=750
+# Recovery + substantial current physical work forces immediate max frequency.
+GreenQuicRecoveryHardMaxPhysicalThreshold=600
+GreenQuicEnableRecoveryHardMax=1
+GreenQuicRecoveryBlocksSleep=1
+
+# A blocked sender is waiting for feedback, not doing local work. Default 0 means
+# no numerical frequency floor. It can optionally guard shallow sleep below.
+GreenQuicBlockedRxFloor=0
+# 0 disables the blocked-state sleep guard. 2 would forbid sleep until idle level 2.
+GreenQuicBlockedSleepGuardLevel=0
+
+# Active file-transfer hints do not create frequency pressure. Real burst/queue/
+# ring signals control frequency. The hint only requires deeper idle before sleep.
+GreenQuicActiveTransferSleepMinLevel=4
+
+# -----------------------------------------------------------------------------
+# Physical and semantic hard-maximum controls
+# -----------------------------------------------------------------------------
+GreenQuicEnablePhysicalHardMax=1
+
+# -----------------------------------------------------------------------------
+# Empty confirmation and DVFS timing
+# -----------------------------------------------------------------------------
+GreenQuicRxEmptyPollThreshold=50000
+GreenQuicTxEmptyPollThreshold=50000
+# At most one upward step every 500 us.
+GreenQuicFreqUpPeriodUs=500
+# At most one downward/minimum request every 5 ms.
+GreenQuicFreqDownPeriodUs=5000
+# After 20 ms since the latest owned-direction activity, request min frequency.
+GreenQuicFreqMinIdleUs=20000
+# Backward-compatible alias used by old configurations.
+GreenQuicFreqPeriodUs=100000
+
+# -----------------------------------------------------------------------------
+# Sleep depth and duration
+# -----------------------------------------------------------------------------
+# EmptyLevel = consecutive_empty_polls / direction_empty_threshold.
+GreenQuicSleepShortMinLevel=2
+GreenQuicSleepDataMinLevel=4
+GreenQuicSleepDeepMinLevel=8
+# Requested sleeps; actual wake-up latency must be measured on the target CPU.
+GreenQuicAckPathMaxSleepUs=1
+GreenQuicDataPathMaxSleepUs=2
+GreenQuicMaxSleepUs=2
+
+# -----------------------------------------------------------------------------
+# Decision logging
+# -----------------------------------------------------------------------------
+GreenQuicLogLevel=0
+GreenQuicStatsPeriodUs=0

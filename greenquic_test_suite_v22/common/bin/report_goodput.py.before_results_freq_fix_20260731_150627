@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Accurate payload-goodput report for GreenQUIC client downloads.
+
+GREENQUIC-V22-GOODPUT-ACPI-TRACE-HOTFIX
+
+The primary formula is payload bits divided by the measured client download
+interval. The script preserves the old CLI and derives the matching client log
+from the energy JSON timestamp.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+
+def goodput(payload_bytes: int, duration_s: float) -> dict[str, float]:
+    if payload_bytes <= 0:
+        raise ValueError("payload bytes must be positive")
+    if duration_s <= 0:
+        raise ValueError("duration must be positive")
+    bits = payload_bytes * 8
+    return {
+        "duration_s": duration_s,
+        "goodput_bps": bits / duration_s,
+        "goodput_mbps_decimal": bits / duration_s / 1e6,
+        "goodput_gbps_decimal": bits / duration_s / 1e9,
+        "goodput_gib_per_s": payload_bytes / duration_s / (1024 ** 3),
+    }
+
+
+def derive_client_log(energy: Path, mode: str) -> Path | None:
+    match = re.fullmatch(rf"client_energy_{re.escape(mode)}_(.+)\.json", energy.name)
+    test_dir = energy.parent.parent
+    logs = test_dir / "logs"
+    if match:
+        exact = logs / f"client_{mode}_{match.group(1)}.log"
+        if exact.is_file():
+            return exact
+    candidates = sorted(logs.glob(f"client_{mode}_*.log"), key=lambda path: path.stat().st_mtime_ns, reverse=True)
+    return candidates[0] if candidates else None
+
+
+def parse_client_log(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    transmission_us = [int(value) for value in re.findall(r"(?mi)^\s*transmission time \[us\]:\s*(\d+)\s*$", text)]
+    total_execution_s = [float(value) for value in re.findall(r"(?mi)^\s*Total execution time:\s*([0-9]+(?:\.[0-9]+)?)s\s*$", text)]
+    completions = [
+        {"file": name.strip(), "duration_ms": int(milliseconds)}
+        for name, milliseconds in re.findall(r"(?m)^\s*(.+?):\s*Completed download!\s*\((\d+)\s*ms\)\s*$", text)
+    ]
+    return {
+        "transmission_time_us_values": transmission_us,
+        "total_execution_s_values": total_execution_s,
+        "completions": completions,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Calculate payload goodput from the exact GreenQUIC client download log.")
+    parser.add_argument("--energy", type=Path, required=True, help="Backward-compatible process/RAPL interval JSON")
+    parser.add_argument("--client-log", type=Path, help="Exact client log; normally derived from --energy")
+    parser.add_argument("--bytes", type=int, required=True)
+    parser.add_argument("--mode", required=True)
+    parser.add_argument("--test-id", required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    args = parser.parse_args()
+
+    energy_data = json.loads(args.energy.read_text(encoding="utf-8"))
+    client_log = args.client_log or derive_client_log(args.energy, args.mode)
+    parsed: dict[str, Any] = {"transmission_time_us_values": [], "total_execution_s_values": [], "completions": []}
+    if client_log is not None and client_log.is_file():
+        parsed = parse_client_log(client_log)
+
+    primary_source: str
+    primary_scope: str
+    primary_duration_s: float
+    transmission_values = parsed["transmission_time_us_values"]
+    completions = parsed["completions"]
+
+    if transmission_values:
+        primary_duration_s = transmission_values[-1] / 1_000_000.0
+        primary_source = "client log: transmission time [us]"
+        primary_scope = "client framework download/transmission interval (microsecond timer)"
+    elif len(completions) == 1:
+        primary_duration_s = completions[0]["duration_ms"] / 1000.0
+        primary_source = "client log: Completed download! (ms)"
+        primary_scope = "MsQuic application download-completion interval (millisecond timer)"
+    else:
+        primary_duration_s = float(energy_data.get("elapsed_s") or 0.0)
+        primary_source = "fallback: client process/RAPL interval"
+        primary_scope = "DPDK/MsQuic startup + handshake + transfer + shutdown; not preferred for paper-comparable goodput"
+
+    primary = goodput(args.bytes, primary_duration_s)
+    completion_result = None
+    if len(completions) == 1:
+        completion_result = goodput(args.bytes, completions[0]["duration_ms"] / 1000.0)
+    process_result = None
+    process_elapsed = float(energy_data.get("elapsed_s") or 0.0)
+    if process_elapsed > 0:
+        process_result = goodput(args.bytes, process_elapsed)
+
+    matching_power = None
+    power_match = re.fullmatch(rf"client_energy_{re.escape(args.mode)}_(.+)\.json", args.energy.name)
+    if power_match:
+        power_path = args.energy.with_name(f"client_power_{args.mode}_{power_match.group(1)}.json")
+        if power_path.is_file():
+            matching_power = json.loads(power_path.read_text(encoding="utf-8"))
+
+    result: dict[str, Any] = {
+        "test_id": args.test_id,
+        "mode": args.mode,
+        "definition": "payload goodput = (successfully downloaded payload bytes * 8) / measured download duration",
+        "payload_bytes": args.bytes,
+        "payload_gib": args.bytes / (1024 ** 3),
+        "units": {
+            "Gbit_per_s": "decimal, 1 Gbit/s = 1,000,000,000 bit/s",
+            "GiB_per_s": "binary, 1 GiB = 1,073,741,824 bytes",
+        },
+        "primary": {
+            "timing_source": primary_source,
+            "timing_scope": primary_scope,
+            **primary,
+        },
+        "paper_method_note": (
+            "The paper evaluates goodput from file downloads. Its PDF does not print an algebraic equation; "
+            "this report uses payload bits divided by the measured download duration and exposes every timing scope."
+        ),
+        "client_log": str(client_log) if client_log else None,
+        "raw_client_timers": parsed,
+        "msquic_completion_crosscheck": completion_result,
+        "client_process_interval_crosscheck": process_result,
+        "energy_source": str(args.energy),
+        "rapl_available": bool(energy_data.get("rapl_available")),
+        "total_package_j": energy_data.get("total_package_j") if energy_data.get("rapl_available") else None,
+        "average_package_w": energy_data.get("average_package_w") if energy_data.get("rapl_available") else None,
+        "whole_system_power1": matching_power,
+    }
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+
+    print("\n=== GreenQUIC client payload goodput ===")
+    print("formula=(payload_bytes * 8) / download_duration_seconds")
+    print(f"test={args.test_id} mode={args.mode}")
+    print(f"payload={args.bytes} bytes ({result['payload_gib']:.3f} GiB)")
+    print(f"primary_timing={primary_source}")
+    print(f"duration={primary['duration_s']:.6f} s")
+    print(f"goodput={primary['goodput_gbps_decimal']:.6f} Gbit/s ({primary['goodput_mbps_decimal']:.3f} Mbit/s)")
+    if completion_result is not None:
+        print(
+            "msquic_completion_crosscheck="
+            f"{completion_result['goodput_gbps_decimal']:.6f} Gbit/s "
+            f"from {completion_result['duration_s']:.6f} s"
+        )
+    if process_result is not None:
+        print(
+            "whole_client_process_crosscheck="
+            f"{process_result['goodput_gbps_decimal']:.6f} Gbit/s "
+            f"from {process_result['duration_s']:.6f} s"
+        )
+    print("note=payload bytes only; Ethernet/IP/UDP/QUIC headers and retransmitted bytes are excluded")
+    if matching_power is not None:
+        print(
+            "client_whole_system_power1="
+            f"energy={matching_power.get('estimated_energy_j_trapezoidal')} J "
+            f"average={matching_power.get('average_power_w_time_weighted')} W "
+            f"samples={matching_power.get('sample_count')}"
+        )
+    print(f"client_log={client_log}")
+    print(f"result={args.out}")
+    print()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

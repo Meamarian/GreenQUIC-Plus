@@ -1,0 +1,57 @@
+GreenQUIC V18 test-suite review fixes
+=====================================
+
+Corrected hard failures
+-----------------------
+1. Restored executable permissions for every launcher, shell helper and Python tool.
+2. Removed the bundled architecture-specific gap_wait binary. Preflight builds it locally
+   from gap_wait.c through the executable build_helpers.sh.
+3. Changed default repository paths to ./msquic and ./dpdk, matching README.txt.
+4. Made preflight fail when a testcase requires INPROCESS_CLIENT_BIN and it is absent.
+5. Made the idle endpoint fail if the server exits during startup or before the interval ends.
+6. Made package RAPL mandatory by default; energy collection no longer reports a successful
+   zero-joule run when no package counter exists.
+
+Corrected validation and reproducibility
+----------------------------------------
+7. Replaced the permissive config validator with strict checks for mode/profile values,
+   booleans, CPU/lcore syntax, partition maps, TX owner, CPU overlap, positive timing/count
+   fields, pressure ordering, sleep ordering and duplicate/unknown keys.
+8. The suite audit now calls the complete validator for every one of the 44 endpoint pairs.
+9. Preflight verifies that requested DPDK and MsQuic CPUs exist and do not overlap.
+10. Source-tree markers no longer prove that a selected binary is current. Verification uses
+    the actual executable and its actually linked libmsquic when dynamically resolvable.
+11. Manifests now hash the actual workload executable. In-process tests no longer record the
+    unrelated stock quicinterop executable.
+12. Static testcase INI files are no longer overwritten. Only runtime/ is materialized.
+13. Timestamps include nanoseconds, reducing collisions between repeated runs.
+
+Corrected testcase logic
+------------------------
+14. T4 now uses GreenQuicTxOwnerAlsoRx=1. With only two DPDK lcores this preserves two RX/RSS
+    queues while keeping one TX-ring consumer. The old value 0 produced one TX-only lcore and
+    only one RX queue, contradicting the multicore-RSS testcase description.
+15. T8 now refuses the client run unless GQ_LOSS_INJECTION_CONFIRMED=1, because the suite does
+    not create loss automatically.
+16. Stock-client workloads verify the expected number of "Completed download!" messages.
+17. Logging-enabled runs validate every V18 stats line and export parsed CSV; a union of fields
+    across malformed lines is no longer accepted.
+18. A logged rte_power_init failure makes a frequency/energy run fail.
+
+Important remaining methodological limits
+-----------------------------------------
+A. The persistent server starts RAPL before listening and stops it on Ctrl+C. The interval
+   includes startup and arbitrary waiting time. Server joules are not transfer joules unless
+   both hosts are externally synchronized.
+B. run_local.sh measures both endpoints on the same package with overlapping RAPL intervals.
+   Those values cannot be interpreted as independent client/server energy.
+C. Stock downloads are directed to /dev/null. Completion is verified, but payload integrity is
+   not hashed. The custom in-process client should compute an in-memory byte count/checksum.
+D. The suite records raw evidence but does not by itself prove an energy improvement. Use
+   repeated randomized OFF/BASIC/PLUS trials, equal useful work, thermal control, actual CPU
+   frequency/C-state telemetry, throughput/latency/retransmission gates and joules per GB.
+E. T7/T9 need a separate logging-enabled diagnostic run to validate hint/action timing; keep
+   logging off for the final energy run.
+F. T8 still needs external tc/netem or equivalent impairment plus independent evidence that
+   retransmission/recovery actually occurred.
+G. Hardware NIC/DPDK/RAPL behavior cannot be validated without running on the target hosts.

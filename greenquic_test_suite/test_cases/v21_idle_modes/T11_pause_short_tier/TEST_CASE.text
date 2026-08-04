@@ -1,0 +1,6 @@
+T11 — V21 bounded optimized-pause short tier
+============================================
+Purpose: exercise `rte_power_pause()` with the 50-us short optimized-pause tier on a single RX+TX lcore.
+The long threshold is intentionally unreachable. Fallback is `fail`, so unsupported `power_pause` is reported instead of silently passing.
+Required evidence: `optimized_pause_short`, successful pause attempts, and nonzero measured elapsed pause time.
+This API does not prove C3/C6 residency; verify hardware residency separately.

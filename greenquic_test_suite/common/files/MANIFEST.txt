@@ -1,0 +1,6 @@
+file_10G.bin	10737418240
+chunk_1M.bin	1048576
+chunk_64M.bin	67108864
+file_4K.bin	4096
+file_64K.bin	65536
+file_1M.bin	1048576

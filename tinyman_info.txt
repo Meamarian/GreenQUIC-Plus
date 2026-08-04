@@ -1,0 +1,23 @@
+# Automatically generated GreenQUIC host information
+# Reload using: source /root/mohsen/info.txt
+HOST_NAME=tinyman
+HOST_ROLE=client
+PEER_NAME=idex
+OS_PRETTY=Debian\ GNU/Linux\ 13\ \(trixie\)
+KERNEL_VERSION=6.12.38+deb13-amd64
+ARCHITECTURE=x86_64
+MANAGEMENT_INTERFACE=eno1
+MANAGEMENT_IPV4=172.16.139.1/12
+RAW_DPDK_IP=192.168.100.2
+PEER_RAW_DPDK_IP=192.168.100.1
+DPDK_INTERFACE=NONE
+DPDK_BDF=0000:18:00.0
+DPDK_NUMA_NODE=0
+PCI_DESCRIPTION=0000:18:00.0\ Ethernet\ controller\ \[0200\]:\ Intel\ Corporation\ Ethernet\ Controller\ E810-C\ for\ QSFP\ \[8086:1592\]\ \(rev\ 02\)
+DPDK_LCORES=19\,20
+QUIC_CPUS=21\,22\,23\,24
+TX_OWNER_LCORE=19
+PARTITION_MAP=0:19\,1:19\,2:20\,3:20
+DPDK_MAC=6c:fe:54:59:99:38
+DPDK_LINK_STATUS=up
+DPDK_DRIVER=igb_uio

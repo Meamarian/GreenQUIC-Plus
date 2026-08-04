@@ -1,0 +1,21 @@
+GreenQUIC Test Suite V22 package
+================================
+Package root: greenquic_test_suite_v22
+Target autopatcher version: 22-private-split-linux-dpdk
+Target active backend: src/platform/datapath_raw_dpdk_linux.c
+Target DPDK: 21.11.9
+Server host/role: idex / server
+Client host/role: tinyman / client
+Test cases: 36
+Static endpoint configurations: 72
+Pretests:
+  P0 1 MiB verified smoke download, mode OFF
+  P1 10 GiB goodput baseline, mode OFF, DVFS=0, sleep=0
+  P2 10 GiB goodput, mode BASIC, DVFS=1, sleep=1, idle=short, budgets=1/2/2 us
+Validation performed before packaging:
+  bash syntax: all scripts passed
+  Python compilation: all modules passed
+  runner path/completeness audit: passed
+  V22 configuration audit: 72 endpoint pairs passed
+  V21/V22 idle evidence self-tests: passed
+  exact V22 installation verifier unit test: passed

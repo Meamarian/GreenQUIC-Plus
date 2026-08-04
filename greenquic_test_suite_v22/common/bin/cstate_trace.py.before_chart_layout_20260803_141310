@@ -1,0 +1,1048 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import csv
+import html
+import json
+import math
+import os
+import statistics
+import sys
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
+
+TRUE_VALUES = {"1", "true", "yes", "on"}
+
+
+def env_enabled(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default).strip().lower() in TRUE_VALUES
+
+
+def env_int(names: Iterable[str], default: int, minimum: int | None = None) -> int:
+    value = None
+    for name in names:
+        raw = os.environ.get(name)
+        if raw is not None and raw.strip() != "":
+            value = raw.strip()
+            break
+
+    if value is None:
+        result = default
+    else:
+        try:
+            result = int(value)
+        except ValueError:
+            result = default
+
+    if minimum is not None:
+        result = max(minimum, result)
+
+    return result
+
+
+def ensure_parent(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def write_placeholder_svg(path: Path, title: str, message: str) -> None:
+    ensure_parent(path)
+    safe_title = html.escape(title)
+    safe_message = html.escape(message)
+
+    path.write_text(
+        "\n".join(
+            [
+                '<svg xmlns="http://www.w3.org/2000/svg" '
+                'width="1600" height="400" viewBox="0 0 1600 400">',
+                '<rect width="1600" height="400" fill="white"/>',
+                f'<text x="50" y="100" font-family="sans-serif" '
+                f'font-size="34">{safe_title}</text>',
+                f'<text x="50" y="175" font-family="sans-serif" '
+                f'font-size="25">{safe_message}</text>',
+                "</svg>",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def read_summary(path: Path) -> dict:
+    if not path.exists():
+        return {}
+
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    return value if isinstance(value, dict) else {}
+
+
+def write_summary(path: Path, summary: dict) -> None:
+    ensure_parent(path)
+    path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class TraceRow:
+    timestamp_ns: int
+    relative_ns: int
+    cpu: int
+    state: int
+    event: str
+    previous_state: int
+    idle_duration_ns: int
+
+
+@dataclass(frozen=True)
+class IdleInterval:
+    cpu: int
+    state: int
+    start_ns: int
+    end_ns: int
+    duration_ns: int
+    end_event: str
+
+
+@dataclass
+class CompactBlock:
+    number: int
+    cpu: int
+    intervals: list[IdleInterval]
+    start_ns: int
+    end_ns: int
+    duration_by_state_ns: dict[int, int]
+    count_by_state: Counter
+    wakeups: int
+
+    @property
+    def total_idle_ns(self) -> int:
+        return sum(self.duration_by_state_ns.values())
+
+
+def load_rows(path: Path) -> list[TraceRow]:
+    rows: list[TraceRow] = []
+
+    with path.open(newline="", encoding="utf-8", errors="replace") as handle:
+        for raw in csv.DictReader(handle):
+            try:
+                rows.append(
+                    TraceRow(
+                        timestamp_ns=int(raw["timestamp_mono_raw_ns"]),
+                        relative_ns=int(raw["relative_ns"]),
+                        cpu=int(raw["cpu"]),
+                        state=int(raw["state"]),
+                        event=str(raw["event"]).strip().lower(),
+                        previous_state=int(raw["previous_state"]),
+                        idle_duration_ns=int(raw["idle_duration_ns"]),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+
+    return rows
+
+
+def completed_intervals(rows: list[TraceRow]) -> list[IdleInterval]:
+    intervals: list[IdleInterval] = []
+
+    # A wake row closes an idle interval. A reenter row also closes the
+    # previous state's interval before entering a new idle state.
+    for row in rows:
+        if row.event not in {"wake", "reenter"}:
+            continue
+        if row.previous_state < 0 or row.idle_duration_ns <= 0:
+            continue
+
+        start_ns = max(0, row.relative_ns - row.idle_duration_ns)
+
+        intervals.append(
+            IdleInterval(
+                cpu=row.cpu,
+                state=row.previous_state,
+                start_ns=start_ns,
+                end_ns=row.relative_ns,
+                duration_ns=row.idle_duration_ns,
+                end_event=row.event,
+            )
+        )
+
+    intervals.sort(key=lambda item: (item.cpu, item.end_ns, item.start_ns))
+    return intervals
+
+
+def cpuidle_name(cpu: int, state: int) -> str:
+    path = Path(
+        f"/sys/devices/system/cpu/cpu{cpu}/cpuidle/state{state}/name"
+    )
+
+    try:
+        name = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        name = ""
+
+    return name or f"state{state}"
+
+
+def state_title(cpu: int, state: int) -> str:
+    return f"S{state} — {cpuidle_name(cpu, state)}"
+
+
+def compact_intervals(
+    cpu: int,
+    intervals: list[IdleInterval],
+    compact_size: int,
+) -> list[CompactBlock]:
+    blocks: list[CompactBlock] = []
+
+    for offset in range(0, len(intervals), compact_size):
+        part = intervals[offset : offset + compact_size]
+
+        duration_by_state: dict[int, int] = defaultdict(int)
+        count_by_state: Counter = Counter()
+
+        for interval in part:
+            duration_by_state[interval.state] += interval.duration_ns
+            count_by_state[interval.state] += 1
+
+        blocks.append(
+            CompactBlock(
+                number=len(blocks) + 1,
+                cpu=cpu,
+                intervals=part,
+                start_ns=min(item.start_ns for item in part),
+                end_ns=max(item.end_ns for item in part),
+                duration_by_state_ns=dict(duration_by_state),
+                count_by_state=count_by_state,
+                wakeups=sum(item.end_event == "wake" for item in part),
+            )
+        )
+
+    return blocks
+
+
+def chunked(items: list[str], size: int) -> list[list[str]]:
+    return [items[index : index + size] for index in range(0, len(items), size)]
+
+
+def compact_annotation(block: CompactBlock, cpu: int) -> str:
+    interval_count = len(block.intervals)
+    trace_span_ms = (
+        block.end_ns - block.start_ns
+    ) / 1_000_000.0
+
+    title = (
+        f"Block {block.number} — "
+        f"{interval_count} idle intervals"
+    )
+
+    sequence = (
+        f"Inside block: {interval_count} idle entries → "
+        f"colored C-state residency → "
+        f"{block.wakeups} distributed wakeups/exits"
+    )
+
+    state_parts = []
+
+    for state in sorted(block.count_by_state):
+        count = block.count_by_state[state]
+        duration_ms = (
+            block.duration_by_state_ns[state]
+            / 1_000_000.0
+        )
+
+        state_parts.append(
+            f"{state_title(cpu, state)}: "
+            f"{count} intervals / "
+            f"{duration_ms:.3f} ms"
+        )
+
+    state_lines = [
+        " | ".join(group)
+        for group in chunked(state_parts, 2)
+    ]
+
+    footer = (
+        f"Total idle residency: "
+        f"{block.total_idle_ns / 1_000_000.0:.3f} ms"
+        f" | block time span: {trace_span_ms:.3f} ms"
+    )
+
+    return "\n".join(
+        [
+            title,
+            sequence,
+            *state_lines,
+            footer,
+        ]
+    )
+
+def choose_colors(states: list[int]) -> dict[int, str]:
+    # Fixed first colors make the common state indices immediately distinct.
+    fixed = [
+        "#4E79A7",
+        "#F28E2B",
+        "#E15759",
+        "#76B7B2",
+        "#59A14F",
+        "#EDC948",
+        "#B07AA1",
+        "#FF9DA7",
+        "#9C755F",
+        "#BAB0AC",
+    ]
+
+    colors: dict[int, str] = {}
+    for index, state in enumerate(states):
+        colors[state] = fixed[index % len(fixed)]
+
+    return colors
+
+
+def timeline_plot(
+    *,
+    output: Path,
+    role: str,
+    intervals: list[IdleInterval],
+    compact_size: int,
+    width_px: int,
+    height_px: int,
+    max_x_ticks: int,
+    annotate_every: int,
+    max_annotations: int,
+) -> dict:
+    import matplotlib
+    matplotlib.use("Agg")
+
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+    from matplotlib.ticker import MaxNLocator
+
+    cpus = sorted({item.cpu for item in intervals})
+    states = sorted({item.state for item in intervals})
+    colors = choose_colors(states)
+
+    intervals_by_cpu = {
+        cpu: [
+            item
+            for item in intervals
+            if item.cpu == cpu
+        ]
+        for cpu in cpus
+    }
+
+    blocks_by_cpu = {
+        cpu: compact_intervals(
+            cpu,
+            intervals_by_cpu[cpu],
+            compact_size,
+        )
+        for cpu in cpus
+    }
+
+    dpi = 100
+    panel_height_px = max(900, height_px)
+    total_height_px = (
+        panel_height_px * max(1, len(cpus))
+    )
+
+    fig, axes = plt.subplots(
+        nrows=max(1, len(cpus)),
+        ncols=1,
+        sharex=True,
+        figsize=(
+            width_px / dpi,
+            total_height_px / dpi,
+        ),
+        dpi=dpi,
+        squeeze=False,
+    )
+
+    axes_list = [
+        axes[index][0]
+        for index in range(len(cpus))
+    ]
+
+    trace_end_ms = (
+        max(item.end_ns for item in intervals)
+        / 1_000_000.0
+    )
+    trace_span_ms = max(trace_end_ms, 0.001)
+
+    min_visible_width_ms = max(
+        trace_span_ms * 2.0 / max(width_px, 1),
+        0.000001,
+    )
+
+    legend_handles = [
+        Patch(
+            facecolor=colors[state],
+            edgecolor="black",
+            label=state_title(cpus[0], state),
+        )
+        for state in states
+    ]
+
+    legend_handles.append(
+        Patch(
+            facecolor="#111111",
+            edgecolor="black",
+            label=(
+                "Wakeups distributed inside block "
+                "(W×N; black-cap height is symbolic)"
+            ),
+        )
+    )
+
+    compact_metadata = {}
+
+    for panel_index, cpu in enumerate(cpus):
+        ax = axes_list[panel_index]
+        blocks = blocks_by_cpu[cpu]
+        compact_metadata[str(cpu)] = []
+
+        max_idle_ms = max(
+            (
+                block.total_idle_ns / 1_000_000.0
+                for block in blocks
+            ),
+            default=0.0,
+        )
+
+        # The cap height is only a visual event marker.
+        # Its height does not encode wakeup count.
+        wake_cap_height_ms = max(
+            max_idle_ms * 0.045,
+            0.001,
+        )
+
+        label_padding_ms = max(
+            max_idle_ms * 0.025,
+            0.001,
+        )
+
+        automatic_stride = max(
+            1,
+            math.ceil(
+                len(blocks)
+                / max(1, max_annotations)
+            ),
+        )
+
+        annotation_stride = max(
+            max(1, annotate_every),
+            automatic_stride,
+        )
+
+        for block_index, block in enumerate(blocks):
+            start_ms = (
+                block.start_ns / 1_000_000.0
+            )
+            end_ms = (
+                block.end_ns / 1_000_000.0
+            )
+
+            span_ms = max(
+                end_ms - start_ms,
+                min_visible_width_ms,
+            )
+
+            center_ms = (
+                start_ms + end_ms
+            ) / 2.0
+
+            bar_width = max(
+                span_ms * 0.78,
+                min_visible_width_ms,
+            )
+
+            bottom_ms = 0.0
+
+            # Stacked colored durations for every C-state
+            # contained in this time block.
+            for state in states:
+                duration_ms = (
+                    block.duration_by_state_ns.get(
+                        state,
+                        0,
+                    )
+                    / 1_000_000.0
+                )
+
+                if duration_ms <= 0.0:
+                    continue
+
+                ax.bar(
+                    center_ms,
+                    duration_ms,
+                    width=bar_width,
+                    bottom=bottom_ms,
+                    color=colors[state],
+                    edgecolor="black",
+                    linewidth=0.45,
+                    align="center",
+                    zorder=3,
+                )
+
+                bottom_ms += duration_ms
+
+            # Wakeups are distributed between the colored
+            # intervals. This black cap summarizes them;
+            # it is not a separate group of consecutive events.
+            ax.bar(
+                center_ms,
+                wake_cap_height_ms,
+                width=bar_width,
+                bottom=bottom_ms,
+                color="#111111",
+                edgecolor="black",
+                linewidth=0.45,
+                align="center",
+                zorder=4,
+            )
+
+            show_label = (
+                compact_size > 1
+                or len(blocks) <= max_annotations
+                or block_index % annotation_stride == 0
+                or block_index == len(blocks) - 1
+            )
+
+            if show_label:
+                ax.text(
+                    center_ms,
+                    (
+                        bottom_ms
+                        + wake_cap_height_ms
+                        + label_padding_ms
+                    ),
+                    (
+                        f"W×{block.wakeups}\n"
+                        "distributed inside"
+                    ),
+                    ha="center",
+                    va="bottom",
+                    fontsize=9,
+                    fontweight="bold",
+                    color="#111111",
+                    bbox={
+                        "boxstyle": "round,pad=0.22",
+                        "facecolor": "white",
+                        "edgecolor": "#111111",
+                        "alpha": 0.94,
+                    },
+                    clip_on=False,
+                    zorder=11,
+                )
+
+            compact_metadata[str(cpu)].append(
+                {
+                    "block": block.number,
+                    "intervals": len(
+                        block.intervals
+                    ),
+                    "idle_entries": len(
+                        block.intervals
+                    ),
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "idle_total_ms": (
+                        block.total_idle_ns
+                        / 1_000_000.0
+                    ),
+                    (
+                        "wakeups_distributed_"
+                        "inside_block"
+                    ): block.wakeups,
+                    "state_interval_counts": {
+                        str(state): (
+                            block.count_by_state[state]
+                        )
+                        for state in sorted(
+                            block.count_by_state
+                        )
+                    },
+                    "state_duration_ms": {
+                        str(state): (
+                            block.duration_by_state_ns[
+                                state
+                            ]
+                            / 1_000_000.0
+                        )
+                        for state in sorted(
+                            block.duration_by_state_ns
+                        )
+                    },
+                }
+            )
+
+        # Detailed labels above compact blocks.
+        if compact_size > 1 and blocks:
+            box_offset_ms = (
+                wake_cap_height_ms
+                + label_padding_ms * 6.0
+            )
+
+            for block_index, block in enumerate(
+                blocks
+            ):
+                is_last = (
+                    block_index
+                    == len(blocks) - 1
+                )
+
+                if (
+                    block_index
+                    % annotation_stride
+                    != 0
+                    and not is_last
+                ):
+                    continue
+
+                center_ms = (
+                    block.start_ns
+                    + block.end_ns
+                ) / 2.0 / 1_000_000.0
+
+                top_ms = (
+                    block.total_idle_ns
+                    / 1_000_000.0
+                )
+
+                ax.text(
+                    center_ms,
+                    top_ms + box_offset_ms,
+                    compact_annotation(
+                        block,
+                        cpu,
+                    ),
+                    ha="center",
+                    va="bottom",
+                    fontsize=9,
+                    rotation=0,
+                    bbox={
+                        "boxstyle": "round,pad=0.35",
+                        "facecolor": "white",
+                        "edgecolor": "#555555",
+                        "alpha": 0.92,
+                    },
+                    clip_on=False,
+                    zorder=10,
+                )
+
+            ax.set_ylim(
+                0.0,
+                max(
+                    max_idle_ms * 1.75,
+                    (
+                        max_idle_ms
+                        + wake_cap_height_ms
+                        + label_padding_ms * 22.0
+                    ),
+                ),
+            )
+
+        elif max_idle_ms > 0.0:
+            ax.set_ylim(
+                0.0,
+                (
+                    max_idle_ms
+                    + wake_cap_height_ms
+                    + label_padding_ms * 6.0
+                ),
+            )
+
+        ax.set_ylabel(
+            "Idle residency by C-state (ms)",
+            fontsize=14,
+        )
+
+        ax.set_title(
+            (
+                f"CPU {cpu}: C-state bars over "
+                f"kernel-trace time — role={role} — "
+                f"compact={compact_size} intervals/bar"
+            ),
+            fontsize=17,
+        )
+
+        ax.grid(
+            True,
+            axis="y",
+            linestyle="--",
+            linewidth=0.7,
+            alpha=0.35,
+            zorder=0,
+        )
+
+        ax.tick_params(
+            axis="both",
+            labelsize=11,
+        )
+
+    axes_list[-1].set_xlabel(
+        (
+            "Kernel cpu_idle trace time from "
+            "first recorded event (ms)"
+        ),
+        fontsize=14,
+    )
+
+    axes_list[-1].xaxis.set_major_locator(
+        MaxNLocator(
+            nbins=max_x_ticks,
+            min_n_ticks=4,
+        )
+    )
+
+    for ax in axes_list:
+        ax.set_xlim(
+            -trace_span_ms * 0.005,
+            trace_end_ms
+            + trace_span_ms * 0.005,
+        )
+
+    fig.legend(
+        handles=legend_handles,
+        loc="upper right",
+        bbox_to_anchor=(0.992, 0.995),
+        title="C-state / event legend",
+        title_fontsize=12,
+        fontsize=11,
+        frameon=True,
+        ncol=min(
+            3,
+            max(1, len(legend_handles)),
+        ),
+    )
+
+    fig.suptitle(
+        (
+            "GreenQUIC Linux C-state "
+            "compact bar timeline\n"
+            "Colored stack = C-state residency "
+            "inside each block; black cap = "
+            "wakeups distributed inside that block"
+        ),
+        fontsize=20,
+        y=0.999,
+    )
+
+    fig.tight_layout(
+        rect=(0.0, 0.0, 1.0, 0.955)
+    )
+
+    ensure_parent(output)
+    fig.savefig(
+        output,
+        format="svg",
+    )
+    plt.close(fig)
+
+    return {
+        "compact_size_intervals": compact_size,
+        "compact_blocks_by_cpu": compact_metadata,
+        "timeline_x_axis": (
+            "relative kernel cpu_idle timestamp "
+            "in milliseconds"
+        ),
+        "timeline_state_bar_unit": (
+            "milliseconds of idle residency"
+        ),
+        "timeline_wakeup_encoding": (
+            "symbolic black cap; W×N is the "
+            "number of wakeups distributed inside "
+            "the compact block"
+        ),
+    }
+
+def histogram_plot(
+    *,
+    output: Path,
+    role: str,
+    rows: list[TraceRow],
+    intervals: list[IdleInterval],
+    width_px: int,
+) -> dict:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    state_counts: Counter = Counter(item.state for item in intervals)
+    state_duration_ns: dict[int, int] = defaultdict(int)
+
+    for item in intervals:
+        state_duration_ns[item.state] += item.duration_ns
+
+    cpus = sorted({item.cpu for item in intervals})
+    representative_cpu = cpus[0]
+    states = sorted(state_counts)
+    colors = choose_colors(states)
+
+    event_counts = Counter(row.event for row in rows)
+    wakeups = event_counts["wake"]
+    idle_entries = event_counts["enter"] + event_counts["reenter"]
+    state_switches = event_counts["reenter"]
+
+    labels = [state_title(representative_cpu, state) for state in states]
+    counts = [state_counts[state] for state in states]
+    bar_colors = [colors[state] for state in states]
+
+    labels.extend(
+        [
+            "Idle entry",
+            "State switch / re-enter",
+            "Wakeup / idle exit",
+        ]
+    )
+    counts.extend([idle_entries, state_switches, wakeups])
+    bar_colors.extend(["#8CD17D", "#B6992D", "#111111"])
+
+    dpi = 100
+    figure_width = max(width_px / dpi, max(14.0, len(labels) * 2.2))
+
+    fig, ax = plt.subplots(
+        figsize=(figure_width, 11.0),
+        dpi=dpi,
+    )
+
+    positions = list(range(len(labels)))
+    bars = ax.bar(
+        positions,
+        counts,
+        color=bar_colors,
+        edgecolor="black",
+        linewidth=0.6,
+    )
+
+    maximum_count = max(counts) if counts else 1
+    text_padding = max(maximum_count * 0.015, 0.5)
+
+    for index, bar in enumerate(bars):
+        if index < len(states):
+            state = states[index]
+            total_ms = state_duration_ns[state] / 1_000_000.0
+            text = f"{counts[index]}\n{total_ms:.3f} ms total"
+        else:
+            text = str(counts[index])
+
+        ax.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            bar.get_height() + text_padding,
+            text,
+            ha="center",
+            va="bottom",
+            fontsize=11,
+        )
+
+    ax.set_xticks(positions)
+    ax.set_xticklabels(
+        labels,
+        rotation=35,
+        ha="right",
+        fontsize=12,
+    )
+    ax.tick_params(axis="y", labelsize=12)
+    ax.set_ylabel("Number of recorded events / idle intervals", fontsize=14)
+    ax.set_xlabel("C-state or Linux cpu_idle event", fontsize=14)
+    ax.set_title(
+        (
+            f"GreenQUIC C-state and wakeup event histogram — role={role}\n"
+            "State bars count completed idle intervals; labels also show "
+            "total residency"
+        ),
+        fontsize=18,
+    )
+    ax.grid(
+        True,
+        axis="y",
+        linestyle="--",
+        linewidth=0.7,
+        alpha=0.35,
+    )
+
+    ax.set_ylim(0.0, maximum_count * 1.20 + 1.0)
+    fig.tight_layout()
+
+    ensure_parent(output)
+    fig.savefig(output, format="svg")
+    plt.close(fig)
+
+    return {
+        "state_interval_counts": {
+            str(state): state_counts[state]
+            for state in states
+        },
+        "state_total_idle_ms": {
+            str(state): state_duration_ns[state] / 1_000_000.0
+            for state in states
+        },
+        "idle_entry_events": idle_entries,
+        "state_switch_events": state_switches,
+        "wakeup_idle_exit_events": wakeups,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--csv", type=Path, required=True)
+    parser.add_argument("--summary", type=Path, required=True)
+    parser.add_argument("--timeline-svg", type=Path, required=True)
+    parser.add_argument("--histogram-svg", type=Path, required=True)
+    parser.add_argument("--role", required=True)
+    args = parser.parse_args()
+
+    summary = read_summary(args.summary)
+
+    if not env_enabled("ENABLE_CSTATE_RECORD", "0"):
+        reason = "ENABLE_CSTATE_RECORD is disabled"
+        print(f"[GreenQUIC-Test] Skipping C-state plots: {reason}.")
+        summary.update({"cstate_plots_skipped": True, "reason": reason})
+        write_summary(args.summary, summary)
+        write_placeholder_svg(
+            args.timeline_svg,
+            "GreenQUIC C-state timeline skipped",
+            reason,
+        )
+        write_placeholder_svg(
+            args.histogram_svg,
+            "GreenQUIC C-state histogram skipped",
+            reason,
+        )
+        return 0
+
+    if not args.csv.is_file():
+        reason = f"C-state CSV is missing: {args.csv}"
+        print(f"[GreenQUIC-Test] Skipping C-state plots: {reason}.")
+        summary.update({"cstate_plots_skipped": True, "reason": reason})
+        write_summary(args.summary, summary)
+        write_placeholder_svg(
+            args.timeline_svg,
+            "GreenQUIC C-state timeline skipped",
+            reason,
+        )
+        write_placeholder_svg(
+            args.histogram_svg,
+            "GreenQUIC C-state histogram skipped",
+            reason,
+        )
+        return 0
+
+    rows = load_rows(args.csv)
+    intervals = completed_intervals(rows)
+
+    if not rows or not intervals:
+        reason = "no completed C-state idle intervals were recorded"
+        print(f"[GreenQUIC-Test] Skipping C-state plots: {reason}.")
+        summary.update({"cstate_plots_skipped": True, "reason": reason})
+        write_summary(args.summary, summary)
+        write_placeholder_svg(
+            args.timeline_svg,
+            "GreenQUIC C-state timeline skipped",
+            reason,
+        )
+        write_placeholder_svg(
+            args.histogram_svg,
+            "GreenQUIC C-state histogram skipped",
+            reason,
+        )
+        return 0
+
+    compact_size = env_int(
+        ["CSTATE_COMPACT", "Cstate_compact"],
+        default=500,
+        minimum=1,
+    )
+    width_px = env_int(
+        ["GQ_CSTATE_PLOT_WIDTH_PX", "CSTATE_PLOT_WIDTH_PX", "GQ_PLOT_WIDTH_PX"],
+        default=24000,
+        minimum=1600,
+    )
+    height_px = env_int(
+        ["GQ_CSTATE_PLOT_HEIGHT_PX", "CSTATE_PLOT_HEIGHT_PX", "GQ_PLOT_HEIGHT_PX"],
+        default=3500,
+        minimum=900,
+    )
+    max_x_ticks = env_int(
+        ["CSTATE_MAX_X_TICKS"],
+        default=24,
+        minimum=4,
+    )
+    annotate_every = env_int(
+        ["CSTATE_ANNOTATE_EVERY"],
+        default=1,
+        minimum=1,
+    )
+    max_annotations = env_int(
+        ["CSTATE_MAX_ANNOTATIONS"],
+        default=100,
+        minimum=1,
+    )
+
+    timeline_summary = timeline_plot(
+        output=args.timeline_svg,
+        role=args.role,
+        intervals=intervals,
+        compact_size=compact_size,
+        width_px=width_px,
+        height_px=height_px,
+        max_x_ticks=max_x_ticks,
+        annotate_every=annotate_every,
+        max_annotations=max_annotations,
+    )
+
+    histogram_summary = histogram_plot(
+        output=args.histogram_svg,
+        role=args.role,
+        rows=rows,
+        intervals=intervals,
+        width_px=width_px,
+    )
+
+    state_names: dict[str, str] = {}
+    for interval in intervals:
+        state_names.setdefault(
+            str(interval.state),
+            state_title(interval.cpu, interval.state),
+        )
+
+    durations_ms = [
+        interval.duration_ns / 1_000_000.0
+        for interval in intervals
+    ]
+
+    summary.update(
+        {
+            "cstate_plots_skipped": False,
+            "csv_rows": len(rows),
+            "completed_idle_intervals": len(intervals),
+            "traced_cpus": sorted({item.cpu for item in intervals}),
+            "state_names": state_names,
+            "idle_interval_duration_ms": {
+                "minimum": min(durations_ms),
+                "median": statistics.median(durations_ms),
+                "mean": statistics.mean(durations_ms),
+                "maximum": max(durations_ms),
+            },
+            **timeline_summary,
+            **histogram_summary,
+        }
+    )
+    write_summary(args.summary, summary)
+
+    print(
+        "[GreenQUIC-Test] C-state bar charts generated: "
+        f"intervals={len(intervals)} "
+        f"compact={compact_size} "
+        f"cpus={','.join(str(cpu) for cpu in summary['traced_cpus'])}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

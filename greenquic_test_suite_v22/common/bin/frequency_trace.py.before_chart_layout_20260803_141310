@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Create CPU-frequency traces from timestamped GreenQUIC log lines."""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+from gq_plot import write_line_svg
+
+CPU_RE = re.compile(r"^\[CPU\s+(\d+)\]")
+ACTION_RE = re.compile(r"\bpolicy_action=([^\s]+).*?\bafter_khz=(\d+)")
+STATS_RE = re.compile(r"\bfreq_khz=(\d+)")
+
+
+def read_events(path: Path) -> tuple[list[dict[str, Any]], float]:
+    events: list[dict[str, Any]] = []
+    duration_s = 0.0
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if row.get("type") != "line":
+            continue
+        elapsed_s = float(row.get("elapsed_s", 0.0))
+        duration_s = max(duration_s, elapsed_s)
+        line = str(row.get("line", ""))
+        cpu_match = CPU_RE.search(line)
+        if not cpu_match:
+            continue
+        cpu = int(cpu_match.group(1))
+        action_match = ACTION_RE.search(line)
+        stats_match = STATS_RE.search(line)
+        if action_match:
+            events.append({
+                "elapsed_s": elapsed_s,
+                "elapsed_ms": elapsed_s * 1000.0,
+                "cpu": cpu,
+                "freq_khz": int(action_match.group(2)),
+                "source": "frequency_action",
+                "action": action_match.group(1),
+            })
+        elif stats_match:
+            events.append({
+                "elapsed_s": elapsed_s,
+                "elapsed_ms": elapsed_s * 1000.0,
+                "cpu": cpu,
+                "freq_khz": int(stats_match.group(1)),
+                "source": "periodic_stats",
+                "action": None,
+            })
+    return events, duration_s
+
+
+def deduplicate(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    last_by_cpu: dict[int, int] = {}
+    for event in events:
+        cpu = int(event["cpu"])
+        freq = int(event["freq_khz"])
+        if last_by_cpu.get(cpu) == freq and event.get("source") == "periodic_stats":
+            continue
+        result.append(event)
+        last_by_cpu[cpu] = freq
+    return result
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--timeline", type=Path, required=True)
+    parser.add_argument("--prefix", type=Path, required=True)
+    parser.add_argument("--role", choices=("server", "client"), required=True)
+    args = parser.parse_args()
+
+    raw_events, duration_s = read_events(args.timeline)
+    events = deduplicate(raw_events)
+    args.prefix.parent.mkdir(parents=True, exist_ok=True)
+    json_path = Path(str(args.prefix) + ".json")
+    csv_path = Path(str(args.prefix) + ".csv")
+    list_path = Path(str(args.prefix) + "_lists.txt")
+    svg_path = Path(str(args.prefix) + "_timeseries.svg")
+
+    cpus = sorted({int(row["cpu"]) for row in events})
+    series = []
+    for cpu in cpus:
+        points = [
+            (float(row["elapsed_ms"]), float(row["freq_khz"]) / 1_000_000.0)
+            for row in events if int(row["cpu"]) == cpu
+        ]
+        series.append({"label": f"CPU {cpu}", "points": points})
+
+    plot = None
+    if series:
+        plot = write_line_svg(
+            svg_path,
+            kind="freq",
+            title=f"GreenQUIC {args.role} CPU frequency over time",
+            y_label="Frequency [GHz]",
+            series=series,
+            duration_ms=duration_s * 1000.0,
+            step=True,
+            y_value_format=".3f",
+        )
+
+    frequencies = [int(row["freq_khz"]) for row in events]
+    output = {
+        "schema": "greenquic-frequency-trace-v2",
+        "role": args.role,
+        "timeline_duration_s": duration_s,
+        "event_count_raw": len(raw_events),
+        "event_count": len(events),
+        "cpus": cpus,
+        "min_freq_khz": min(frequencies) if frequencies else None,
+        "max_freq_khz": max(frequencies) if frequencies else None,
+        "events": events,
+        "plot": None if plot is None else {
+            "width_px": plot.width,
+            "height_px": plot.height,
+            "x_tick_ms": plot.tick_ms,
+            "x_label_ms": plot.label_ms,
+            "min_px_per_tick": plot.min_px_per_tick,
+        },
+        "measurement_note": (
+            "Event time is captured by the line-timestamp wrapper when a complete GreenQUIC "
+            "log row is received. Frequency actions are immediate log events; unchanged "
+            "intervals are represented as a step trace."
+        ),
+    }
+    json_path.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=[
+            "elapsed_s", "elapsed_ms", "cpu", "freq_khz", "source", "action"
+        ])
+        writer.writeheader()
+        writer.writerows(events)
+    list_path.write_text(
+        "frequency_events = " + repr(events) + "\n",
+        encoding="utf-8",
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

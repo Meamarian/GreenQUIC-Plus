@@ -1,0 +1,39 @@
+/*++
+
+    GreenQUIC Plus public hint API, v18.
+
+    Threading model:
+      - PulseHints is safe for short timing hints.
+      - BeginTransfer/EndTransfer are reference-counted.
+      - BeginRecovery/EndRecovery are reference-counted across connections.
+
+--*/
+
+#pragma once
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define GQPLUS_HINT_ACK_PENDING             (1ull << 0)
+#define GQPLUS_HINT_CUBIC_CWND_BLOCKED     (1ull << 1)
+#define GQPLUS_HINT_CUBIC_RECOVERY         (1ull << 2)
+#define GQPLUS_HINT_CUBIC_RAMPING          (1ull << 3)
+#define GQPLUS_HINT_SERVER_FILE_TX_ACTIVE  (1ull << 16)
+#define GQPLUS_HINT_CLIENT_FILE_RX_ACTIVE  (1ull << 17)
+
+void CxPlatGreenQuicPlusSetHints(uint64_t Hints);
+void CxPlatGreenQuicPlusClearHints(uint64_t Hints);
+void CxPlatGreenQuicPlusBeginTransfer(uint64_t Hints);
+void CxPlatGreenQuicPlusEndTransfer(uint64_t Hints);
+void CxPlatGreenQuicPlusBeginRecovery(void);
+void CxPlatGreenQuicPlusEndRecovery(void);
+void CxPlatGreenQuicPlusPulseHints(uint64_t Hints);
+uint64_t CxPlatGreenQuicPlusGetHints(void);
+uint64_t CxPlatGreenQuicPlusGetTxHints(void);
+
+#ifdef __cplusplus
+}
+#endif

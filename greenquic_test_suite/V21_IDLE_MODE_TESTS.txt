@@ -1,0 +1,30 @@
+Final V21 idle-mode testcase matrix
+===================================
+
+The original 22 cases remain under core/ and recommended_extra/. These 11 new
+cases target the selectable idle mechanisms and their safety gates.
+
+ID   Default mode   Topology       Workload                    Required proof
+T10  short          1 RX+TX        no traffic                  slept_us > 0; no other wait API
+T11  pause          1 RX+TX        no traffic                  optimized_pause_short; measured wait
+T12  pause          TX-only+RX-only no traffic                 RX-only requested 300 us long tier
+T13  monitor        TX-only+RX-only no traffic                 RX-only monitor attempt + timeout
+T14  monitor        1 RX+TX        no traffic                  role mismatch falls back to short
+T15  epoll          1 RX+TX        no traffic                  epoll attempt + watchdog timeout
+T16  epoll          1 RX+TX        60 x 64 KiB, 50 ms gaps    epoll wake + eventfd wake_signal
+T17  auto           TX-only+RX-only 4 parallel, 50 ms gaps    RX monitor and TX epoll in one run
+T18  off            1 RX+TX        no traffic                  DVFS down/min; all idle counters zero
+T19  pause          1 RX+TX        100 x 64 KiB, 20 ms gaps   ACK hint never overlaps pause action
+T20  epoll          1 RX+TX        64 MiB with packet loss    recovery hint never overlaps wait
+
+Interpretation rules
+--------------------
+* `short` is bounded rte_delay_us_sleep(), not a named hardware C-state.
+* `pause` is bounded rte_power_pause(); C-state residency must be verified with
+  turbostat/perf/MSR residency counters.
+* `monitor` is accepted only on RX-only ownership in V21.
+* `epoll` combines an RX interrupt fd with a persistent eventfd software wake.
+* `auto` selects monitor only for RX-only and epoll for TX-owning roles.
+* Watchdog timeout is a safety return, not the desired traffic wake path.
+* Final claims require identical useful bytes, successful QUIC completion,
+  comparable goodput/latency/retransmissions, and joules per completed GB.

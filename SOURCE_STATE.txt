@@ -1,0 +1,68 @@
+GreenQUIC snapshot created: 2026-08-04T11:29:06+02:00
+
+=== Original MsQuic commit ===
+0c2871c65de26c99e2943f00aa9436af7c66e7e3
+
+=== Original MsQuic working-tree status ===
+ M src/core/ack_tracker.c
+ M src/core/cubic.c
+ M src/core/precomp.h
+ M src/platform/CMakeLists.txt
+ M src/platform/datapath_raw_dpdk.c
+ M src/platform/datapath_raw_dpdk_linux.c
+ M src/tools/interop/interop.cpp
+ M src/tools/interopserver/InteropServer.cpp
+ M src/tools/interopserver/InteropServer.h
+?? CMakeLists.txt.greenquic.bak
+?? build-greenquic/
+?? deps/
+?? dpdk.greenquic.example.ini
+?? greenquic_patch_manifest.txt
+?? powermng.example.ini
+?? powermng.example.ini.greenquic.bak
+?? powermng.ini
+?? src/core/ack_tracker.c.greenquic.bak
+?? src/core/cubic.c.greenquic.bak
+?? src/core/precomp.h.greenquic.bak
+?? src/inc/greenquic_plus.h
+?? src/inc/greenquic_plus.h.greenquic.bak
+?? src/platform/CMakeLists.txt.greenquic.bak
+?? src/platform/datapath_raw_dpdk.c.greenquic.bak
+?? src/platform/datapath_raw_dpdk_linux.c.before_argv_double_free_fix_20260730_155207
+?? src/platform/datapath_raw_dpdk_linux.c.before_cpu_freq_logging_20260731_140453
+?? src/platform/datapath_raw_dpdk_linux.c.before_idle_hotfix_20260731_110528
+?? src/platform/datapath_raw_dpdk_linux.c.before_transfer_energy_20260803_095028
+?? src/platform/datapath_raw_dpdk_linux.c.greenquic.bak
+?? src/platform/greenquic_plus.c
+?? src/platform/greenquic_plus.c.greenquic.bak
+?? src/tools/interop/interop.cpp.greenquic.bak
+?? src/tools/interopserver/InteropServer.cpp.greenquic.bak
+?? src/tools/interopserver/InteropServer.h.greenquic.bak
+
+=== DPDK commit ===
+340c178977a29d2bffa4e43122207ce3a02be7ee
+
+=== DPDK working-tree status ===
+
+=== Original recursive submodule commits ===
+ f13417108b0f77260baec4784cf104fb9aff7576 submodules/clog (0.3.0-18-gf134171)
+ ff233bdd4cac0a0bf6e5cd45bda3406814cb2796 submodules/googletest (release-1.8.0-3492-gff233bdd)
+ 612d8e44d687e4b71c4724319d7aa27a733bcbca submodules/openssl (OpenSSL_1_1_1w-37-g612d8e44d6)
+ 2070f8ad9151dc8f3a73bffaa146b5e6937a583f submodules/openssl/boringssl (version_for_cocoapods_9.0-42-g2070f8ad9)
+ 890ca2f401924cdcb88f493950b04700bbe52db3 submodules/openssl/krb5 (krb5-1.17.1-final)
+ fa84d185c0fefa7d612759e02a26def2f948fe34 submodules/openssl/pyca-cryptography (35.0.0-73-gfa84d185c)
+ 2196000605e45d91097147c9c71f26b72af58003 submodules/openssl/wycheproof (google-wycheproof/v0.9~205)
+ 330feef3dcb69d95cd752d54cb9254b366bdc7cf submodules/openssl3 (openssl-3.1.4-65-g330feef3dc)
+ 2a8a5e0ecaa3e3d6f4ec722a49aa72476755c2b7 submodules/openssl3/gost-engine (v3.0.2)
+ 8a126e09547630ef900177625626b6156052f0ee submodules/openssl3/gost-engine/libprov (8a126e0)
+ aa9b4a2a64046afd2fab7cb49c346295874a5fb6 submodules/openssl3/krb5 (krb5-1.20-beta1~78)
+ 3f3d8a8cf331c73a26fe93a598273997cb54eb4f submodules/openssl3/oqs-provider (0.4.0)
+ c18d0567386414efa3caef7ed586c4ca75bf3a8b submodules/openssl3/pyca-cryptography (38.0.4)
+ 4de8d5bf89089d1140eb99aa5d7eb2dc8e6337b6 submodules/openssl3/python-ecdsa (python-ecdsa-0.5-542-g4de8d5b)
+ dbd56c149072e656ca8d6a43a59588f3e7513da2 submodules/openssl3/tlsfuzzer (dbd56c1)
+ 771e9f59d639dbb0e2fa8e646c8e588405d3903e submodules/openssl3/tlslite-ng (v0.3.9x-1541-g771e9f5)
+ 2196000605e45d91097147c9c71f26b72af58003 submodules/openssl3/wycheproof (google-wycheproof/v0.9~205)
+ eaf99076b917dd0df6fe849399b45982dd60e9f5 submodules/xdp-for-windows (v1.0.2-8-geaf9907)
+ 6bf878da1a54bf471d4d934cef6e26355860d386 submodules/xdp-for-windows/submodules/ndis-driver-library (release/v1.1.0)
+ 02dbf4e58e3b7f752ba3d97d17c36d4cd5fdc490 submodules/xdp-for-windows/submodules/net-offloads (02dbf4e)
+ ae986e12b2fa722ba70e9761ae6897565293cbea submodules/xdp-for-windows/submodules/wil (v1.0.230629.1-2-gae986e1)

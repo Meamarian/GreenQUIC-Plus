@@ -1,0 +1,26 @@
+# MsQuic generated build output
+msquic/build-greenquic/
+
+# DPDK generated build/install output
+msquic/deps/dpdk/build-greenquic/
+msquic/deps/dpdk-install/
+
+# Experiment output
+**/results/
+
+# Python-generated files
+**/__pycache__/
+*.pyc
+
+# Archives and crash dumps
+*.zip
+*.tar.gz
+core
+core.*
+
+# Machine-specific runtime files
+msquic/dpdk.ini
+msquic/powermng.ini
+
+# Generated 10 GiB test payload
+greenquic_test_suite_v22/common/files/payloads/file_10G.bin

@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""Shared wide SVG plotting helpers for GreenQUIC result artifacts."""
+from __future__ import annotations
+
+import html
+import math
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
+
+@dataclass(frozen=True)
+class PlotSettings:
+    width: int
+    height: int
+    tick_ms: int
+    label_ms: int
+    min_px_per_tick: int
+    max_width: int
+    left: int = 110
+    right: int = 50
+    top: int = 70
+    bottom: int = 100
+
+
+def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}, got {value}")
+    return value
+
+
+def settings(kind: str, duration_ms: float) -> PlotSettings:
+    kind_upper = kind.upper()
+    base_width = env_int(
+        f"GQ_{kind_upper}_PLOT_WIDTH_PX",
+        env_int("GQ_PLOT_WIDTH_PX", 24000, 1200, 500000),
+        1200,
+        500000,
+    )
+    height = env_int(
+        f"GQ_{kind_upper}_PLOT_HEIGHT_PX",
+        env_int("GQ_PLOT_HEIGHT_PX", 700, 400, 5000),
+        400,
+        5000,
+    )
+    tick_ms = env_int("GQ_PLOT_X_TICK_MS", 10, 1, 60000)
+    label_ms = env_int("GQ_PLOT_X_LABEL_MS", 100, 1, 600000)
+    min_px = env_int("GQ_PLOT_MIN_PX_PER_TICK", 12, 1, 200)
+    max_width = env_int("GQ_PLOT_MAX_WIDTH_PX", 120000, 1200, 1000000)
+    if label_ms < tick_ms:
+        label_ms = tick_ms
+    if label_ms % tick_ms != 0:
+        label_ms = math.ceil(label_ms / tick_ms) * tick_ms
+    tick_count = max(1, math.ceil(max(duration_ms, 0.0) / tick_ms))
+    dynamic_width = 160 + tick_count * min_px
+    width = min(max(base_width, dynamic_width), max_width)
+    return PlotSettings(
+        width=width,
+        height=height,
+        tick_ms=tick_ms,
+        label_ms=label_ms,
+        min_px_per_tick=min_px,
+        max_width=max_width,
+    )
+
+
+def _x(value_ms: float, xmax_ms: float, s: PlotSettings) -> float:
+    plot_w = s.width - s.left - s.right
+    if xmax_ms <= 0:
+        return float(s.left)
+    return s.left + max(0.0, min(value_ms, xmax_ms)) / xmax_ms * plot_w
+
+
+def _y(value: float, ymin: float, ymax: float, s: PlotSettings) -> float:
+    plot_h = s.height - s.top - s.bottom
+    if ymax <= ymin:
+        return s.top + plot_h / 2.0
+    return s.top + plot_h - (value - ymin) / (ymax - ymin) * plot_h
+
+
+def _nice_range(values: Iterable[float]) -> tuple[float, float]:
+    rows = list(values)
+    if not rows:
+        return 0.0, 1.0
+    low, high = min(rows), max(rows)
+    if high <= low:
+        padding = max(1.0, abs(low) * 0.05)
+    else:
+        padding = max((high - low) * 0.08, 1e-9)
+    return low - padding, high + padding
+
+
+def write_line_svg(
+    path: Path,
+    *,
+    kind: str,
+    title: str,
+    y_label: str,
+    series: list[dict[str, object]],
+    duration_ms: float,
+    step: bool = False,
+    y_value_format: str = ".2f",
+) -> PlotSettings:
+    s = settings(kind, duration_ms)
+    xmax_ms = max(float(duration_ms), float(s.tick_ms))
+    all_y = [
+        float(y)
+        for item in series
+        for _x_value, y in item.get("points", [])  # type: ignore[union-attr]
+    ]
+    ymin, ymax = _nice_range(all_y)
+    plot_bottom = s.height - s.bottom
+    plot_right = s.width - s.right
+    palette = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#17becf"]
+
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{s.width}" height="{s.height}" viewBox="0 0 {s.width} {s.height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        f'<text x="{s.width/2:.1f}" y="34" text-anchor="middle" font-family="sans-serif" font-size="24">{html.escape(title)}</text>',
+    ]
+
+    tick = 0
+    while tick <= math.ceil(xmax_ms / s.tick_ms) * s.tick_ms:
+        x = _x(float(tick), xmax_ms, s)
+        major = tick % s.label_ms == 0
+        stroke = "#b8b8b8" if major else "#e8e8e8"
+        out.append(
+            f'<line x1="{x:.2f}" y1="{s.top}" x2="{x:.2f}" y2="{plot_bottom}" stroke="{stroke}" stroke-width="1"/>'
+        )
+        tick_len = 12 if major else 6
+        out.append(
+            f'<line x1="{x:.2f}" y1="{plot_bottom}" x2="{x:.2f}" y2="{plot_bottom+tick_len}" stroke="black"/>'
+        )
+        if major:
+            out.append(
+                f'<text x="{x:.2f}" y="{plot_bottom+34}" text-anchor="middle" font-family="monospace" font-size="13">{tick}</text>'
+            )
+        tick += s.tick_ms
+
+    for index in range(6):
+        value = ymin + (ymax - ymin) * index / 5.0
+        y = _y(value, ymin, ymax, s)
+        out.append(
+            f'<line x1="{s.left}" y1="{y:.2f}" x2="{plot_right}" y2="{y:.2f}" stroke="#dedede"/>'
+        )
+        out.append(
+            f'<text x="{s.left-12}" y="{y+5:.2f}" text-anchor="end" font-family="monospace" font-size="14">{format(value, y_value_format)}</text>'
+        )
+
+    out.extend([
+        f'<line x1="{s.left}" y1="{s.top}" x2="{s.left}" y2="{plot_bottom}" stroke="black" stroke-width="2"/>',
+        f'<line x1="{s.left}" y1="{plot_bottom}" x2="{plot_right}" y2="{plot_bottom}" stroke="black" stroke-width="2"/>',
+    ])
+
+    for index, item in enumerate(series):
+        points = [(float(x), float(y)) for x, y in item.get("points", [])]  # type: ignore[union-attr]
+        if not points:
+            continue
+        color = palette[index % len(palette)]
+        if step:
+            commands = [f'M {_x(points[0][0], xmax_ms, s):.2f} {_y(points[0][1], ymin, ymax, s):.2f}']
+            previous_y = points[0][1]
+            for x_value, y_value in points[1:]:
+                xp = _x(x_value, xmax_ms, s)
+                commands.append(f'H {xp:.2f}')
+                commands.append(f'V {_y(y_value, ymin, ymax, s):.2f}')
+                previous_y = y_value
+            commands.append(f'H {_x(xmax_ms, xmax_ms, s):.2f}')
+            out.append(
+                f'<path d="{" ".join(commands)}" fill="none" stroke="{color}" stroke-width="3"/>'
+            )
+        else:
+            rendered = " ".join(
+                f'{_x(x, xmax_ms, s):.2f},{_y(y, ymin, ymax, s):.2f}' for x, y in points
+            )
+            out.append(
+                f'<polyline points="{rendered}" fill="none" stroke="{color}" stroke-width="3"/>'
+            )
+        for x_value, y_value in points:
+            out.append(
+                f'<circle cx="{_x(x_value, xmax_ms, s):.2f}" cy="{_y(y_value, ymin, ymax, s):.2f}" r="3" fill="{color}"/>'
+            )
+        legend_x = s.left + 20 + index * 220
+        out.append(f'<line x1="{legend_x}" y1="54" x2="{legend_x+32}" y2="54" stroke="{color}" stroke-width="4"/>')
+        out.append(
+            f'<text x="{legend_x+42}" y="59" font-family="sans-serif" font-size="15">{html.escape(str(item.get("label", "series")))}</text>'
+        )
+
+    out.extend([
+        f'<text x="{s.width/2:.1f}" y="{s.height-24}" text-anchor="middle" font-family="sans-serif" font-size="17">Elapsed time [ms] — minor tick {s.tick_ms} ms, labeled tick {s.label_ms} ms</text>',
+        f'<text x="28" y="{s.height/2:.1f}" text-anchor="middle" font-family="sans-serif" font-size="17" transform="rotate(-90 28 {s.height/2:.1f})">{html.escape(y_label)}</text>',
+        '</svg>',
+    ])
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return s

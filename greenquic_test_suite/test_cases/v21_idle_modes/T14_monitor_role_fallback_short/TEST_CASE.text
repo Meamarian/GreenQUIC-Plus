@@ -1,0 +1,5 @@
+T14 — V21 monitor-role mismatch and safe fallback
+=================================================
+Purpose: select `monitor` on a single RX+TX lcore, where V21 intentionally forbids descriptor monitor mode.
+Expected behavior: no monitor attempt, no datapath shutdown, and bounded short software sleep through `fallback=short`.
+This is capability-independent and verifies that ordinary role incompatibility does not break QUIC.

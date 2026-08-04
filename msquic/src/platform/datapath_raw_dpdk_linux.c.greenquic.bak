@@ -1,0 +1,1307 @@
+/*++
+
+    Copyright (c) Microsoft Corporation.
+    Licensed under the MIT License.
+
+Abstract:
+
+    QUIC DPDK Datapath Implementation (Linux)
+
+--*/
+
+#define _CRT_SECURE_NO_WARNINGS 1 // TODO - Remove
+
+#include "datapath_raw.h"
+#ifdef QUIC_CLOG
+#include "datapath_raw_dpdk_linux.c.clog.h"
+#endif
+
+#include <netinet/ether.h>
+#include <rte_memory.h>
+#include <rte_launch.h>
+#include <rte_eal.h>
+#include <rte_per_lcore.h>
+#include <rte_lcore.h>
+#include <rte_debug.h>
+#include <rte_ethdev.h>
+#include <rte_mbuf_core.h>
+#include <rte_hexdump.h>
+
+#define DEFAULT_MBUF_CACHE_SIZE    256
+#define DEFAULT_NUM_RX_DESCRIPTORS 4096
+#define DEFAULT_NUM_TX_DESCRIPTORS 4096
+#define DEFAULT_RX_MBUF_POOL_SIZE  ((8192 * 2) - 1)
+#define DEFAULT_TX_MBUF_POOL_SIZE  ((8192 * 2) - 1)
+#define DEFAULT_RX_BURST_SIZE      32
+#define DEFAULT_TX_BURST_SIZE      32
+#define DEFAULT_TX_RING_SIZE       4096
+
+#define DEFAULT_SEPARATE_RX_THREAD FALSE
+#define DEFAULT_SEPARATE_TX_THREAD FALSE
+
+volatile bool force_quit;
+
+typedef struct DPDK_INTERFACE {
+
+    CXPLAT_INTERFACE;
+
+    uint16_t Port;
+    CXPLAT_LOCK TxLock;
+    struct rte_mempool* RxMemoryPool;
+    struct rte_mempool* TxMemoryPool;
+    struct rte_ring* TxRingBuffer;
+
+    QUIC_ADDR LocalIp;
+
+    // Constants
+    char DeviceName[32];
+} DPDK_INTERFACE;
+
+typedef struct DPDK_DATAPATH {
+
+    CXPLAT_DATAPATH_RAW;
+
+    CXPLAT_REF_COUNT RefCount;
+    BOOLEAN Running;
+    CXPLAT_THREAD DpdkThread;
+    QUIC_STATUS StartStatus;
+    CXPLAT_EVENT StartComplete;
+
+    CXPLAT_POOL AdditionalInfoPool;
+
+    DPDK_INTERFACE Interface; // TODO: support multiple NIC interfaces.
+
+    // TODO: remove again, only for debugging
+    uint64_t TxCounter;
+    uint64_t TxEnqueueCounter;
+    uint64_t RxCounter;
+
+    //
+    // Config parameters
+    //
+    uint16_t MbufCacheSize;
+    uint16_t NumRxDescriptors;
+    uint16_t NumTxDescriptors;
+    uint32_t RxMbufPoolSize;
+    uint32_t TxMbufPoolSize;
+    uint16_t RxBurstSize;
+    uint16_t TxBurstSize;
+    uint16_t TxRingSize;
+
+    BOOLEAN SeparateRxThread;
+    BOOLEAN SeparateTxThread;
+
+    uint8_t DpdkInitArgc;
+    char** DpdkInitArgv;
+
+} DPDK_DATAPATH;
+
+typedef struct __attribute__((aligned(64))) DPDK_RX_PACKET {
+    CXPLAT_ROUTE RouteStorage;
+    struct rte_mbuf* Mbuf;
+    CXPLAT_POOL* OwnerPool;
+    CXPLAT_RECV_DATA RecvData;
+} DPDK_RX_PACKET;
+
+typedef struct DPDK_TX_PACKET {
+    CXPLAT_SEND_DATA;
+    struct rte_mbuf* Mbuf;
+    DPDK_DATAPATH* Dpdk;
+    DPDK_INTERFACE* Interface;
+} DPDK_TX_PACKET;
+
+CXPLAT_STATIC_ASSERT(
+        sizeof(DPDK_TX_PACKET) <= sizeof(DPDK_RX_PACKET),
+        "Code assumes memory allocated for RX is enough for TX");
+
+CXPLAT_THREAD_CALLBACK(CxPlatDpdkMainThread, Context);
+static int CxPlatDpdkRxWorkerThread(_In_ void* Context);
+static int CxPlatDpdkTxWorkerThread(_In_ void* Context);
+static int CxPlatDpdkRxTxWorkerThread(_In_ void* Context);
+
+// copied from app/proc-info/main.c
+void nic_xstats_display(uint16_t port_id, char* path){
+	FILE *f = fopen(path, "w");
+	if (f == NULL)
+		return;
+
+	struct rte_eth_xstat_name *xstats_names;
+	uint64_t *values;
+	int len, ret, i;
+	static const char *nic_stats_border = "########################";
+
+	len = rte_eth_xstats_get_names_by_id(port_id, NULL, 0, NULL);
+	if (len < 0) {
+		printf("Cannot get xstats count\n");
+		return;
+	}
+	values = malloc(sizeof(*values) * len);
+	if (values == NULL) {
+		printf("Cannot allocate memory for xstats\n");
+		return;
+	}
+
+	xstats_names = malloc(sizeof(struct rte_eth_xstat_name) * len);
+	if (xstats_names == NULL) {
+		printf("Cannot allocate memory for xstat names\n");
+		free(values);
+		return;
+	}
+	if (len != rte_eth_xstats_get_names_by_id(
+			port_id, xstats_names, len, NULL)) {
+		printf("Cannot get xstat names\n");
+		goto err;
+	}
+
+	fprintf(f, "###### NIC extended statistics for port %-2d #########\n",
+			   port_id);
+	fprintf(f, "%s############################\n",
+			   nic_stats_border);
+	ret = rte_eth_xstats_get_by_id(port_id, NULL, values, len);
+	if (ret < 0 || ret > len) {
+		printf("Cannot get xstats\n");
+		goto err;
+	}
+
+	for (i = 0; i < len; i++) {
+		fprintf(f, "%s: %"PRIu64"\n", xstats_names[i].name,
+				values[i]);
+	}
+
+	fprintf(f, "%s############################\n",
+			   nic_stats_border);
+err:
+	fclose(f);
+	free(values);
+	free(xstats_names);
+}
+
+static char log_path[1024] = "/tmp/";
+
+static BOOLEAN
+CxPlatDpdkMatchConfigParamUint16(
+        _In_ const char* key_str,
+        _In_ const char* match_str,
+        _In_ const char* val_str,
+        _Out_ uint16_t* out
+)
+{
+    char *end;
+    if (strcmp(key_str, match_str) != 0)
+        return FALSE;
+    errno = 0;
+    intmax_t val = strtoimax(val_str, &end, 10);
+    if (errno == ERANGE || val < 0 || val > UINT16_MAX || end == val_str || *end != '\0') {
+        fprintf(stderr, "invalid %s!\n", match_str);
+        return FALSE;
+    }
+    *out = (uint16_t) val;
+    return TRUE;
+}
+
+static BOOLEAN
+CxPlatDpdkMatchConfigParamUint32(
+        _In_ const char* key_str,
+        _In_ const char* match_str,
+        _In_ const char* val_str,
+        _Out_ uint32_t* out
+)
+{
+    char *end;
+    if (strcmp(key_str, match_str) != 0)
+        return FALSE;
+    errno = 0;
+    intmax_t val = strtoimax(val_str, &end, 10);
+    if (errno == ERANGE || val < 0 || val > UINT32_MAX || end == val_str || *end != '\0') {
+        fprintf(stderr, "invalid %s!\n", match_str);
+        return FALSE;
+    }
+    *out = (uint32_t) val;
+    return TRUE;
+}
+
+static BOOLEAN
+CxPlatDpdkMatchConfigParamBoolean(
+        _In_ const char* key_str,
+        _In_ const char* match_str,
+        _In_ const char* val_str,
+        _Out_ BOOLEAN* out
+)
+{
+    if (strcmp(key_str, match_str) != 0)
+        return FALSE;
+    BOOLEAN val;
+    if (strcasecmp(val_str, "true") == 0)
+        val = TRUE;
+    else if (strcasecmp(val_str, "false") == 0)
+        val = FALSE;
+    else {
+        fprintf(stderr, "invalid %s\n", match_str);
+        return FALSE;
+    }
+    *out = val;
+    return TRUE;
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+CxPlatDpdkReadConfig(
+        _Inout_ DPDK_DATAPATH* Dpdk,
+        _In_opt_ const QUIC_EXECUTION_CONFIG* Config
+)
+{
+    UNREFERENCED_PARAMETER(Config);
+
+    DPDK_INTERFACE *Interface = &Dpdk->Interface;
+
+    // Set default values for DPDK config params
+    Dpdk->MbufCacheSize = DEFAULT_MBUF_CACHE_SIZE;
+    Dpdk->NumRxDescriptors = DEFAULT_NUM_RX_DESCRIPTORS;
+    Dpdk->NumTxDescriptors = DEFAULT_NUM_TX_DESCRIPTORS;
+    Dpdk->RxMbufPoolSize = DEFAULT_RX_MBUF_POOL_SIZE;
+    Dpdk->TxMbufPoolSize = DEFAULT_TX_MBUF_POOL_SIZE;
+    Dpdk->RxBurstSize = DEFAULT_RX_BURST_SIZE;
+    Dpdk->TxBurstSize = DEFAULT_TX_BURST_SIZE;
+    Dpdk->TxRingSize = DEFAULT_TX_RING_SIZE;
+
+    Dpdk->SeparateRxThread = DEFAULT_SEPARATE_RX_THREAD;
+    Dpdk->SeparateTxThread = DEFAULT_SEPARATE_TX_THREAD;
+
+    FILE *File = fopen("dpdk.ini", "r");
+    if (File == NULL) {
+        return;
+    }
+    printf("using configuration file dpdk.ini!\n");
+
+    char Line[256];
+    while (fgets(Line, sizeof(Line), File) != NULL) {
+        char* Value = strchr(Line, '=');
+        if (Value == NULL) {
+            continue;
+        }
+        *Value++ = '\0';
+        if (Value[strlen(Value) - 1] == '\n') {
+            Value[strlen(Value) - 1] = '\0';
+        }
+
+        if (strcmp(Line, "DeviceName") == 0) {
+            strcpy(Interface->DeviceName, Value);
+            continue;
+        }
+
+         if (strcmp(Line, "LogPath") == 0) {
+            strncpy(log_path, Value, sizeof(log_path)-1);
+            continue;
+        }
+
+        if (strcmp(Line, "PeerMac") == 0) {
+            if (ether_aton_r(Value, (struct ether_addr *)Interface->PeerPhysicalAddress) == NULL) {
+                fprintf(stderr, "invalid PeerMac format!\n");
+            }
+            continue;
+        }
+
+        if (strcmp(Line, "LocalIp") == 0) {
+            if (!QuicAddr4FromString(Value, &Interface->LocalIp)) {
+                fprintf(stderr, "invalid LocalIp format (only IPv4 is supported)!\n");
+            }
+            continue;
+        }
+
+        if (strcmp(Line, "DpdkInitArgs") == 0) {
+            // allocate or grow argv array
+            char* token = strtok(Value, " \t");
+            while (token) {
+                Dpdk->DpdkInitArgv = realloc(Dpdk->DpdkInitArgv,
+                                             sizeof(char*) * (Dpdk->DpdkInitArgc + 2));
+                Dpdk->DpdkInitArgv[Dpdk->DpdkInitArgc] = strdup(token);
+                Dpdk->DpdkInitArgc++;
+                token = strtok(NULL, " \t");
+            }
+            Dpdk->DpdkInitArgv[Dpdk->DpdkInitArgc] = NULL;
+            continue;
+        }
+
+        if (CxPlatDpdkMatchConfigParamUint16(Line, "MbufCacheSize", Value, &Dpdk->MbufCacheSize))
+            continue;
+
+        if (CxPlatDpdkMatchConfigParamUint16(Line, "NumRxDescriptors", Value, &Dpdk->NumRxDescriptors))
+            continue;
+
+        if (CxPlatDpdkMatchConfigParamUint16(Line, "NumTxDescriptors", Value, &Dpdk->NumTxDescriptors))
+            continue;
+
+        if (CxPlatDpdkMatchConfigParamUint32(Line, "RxMbufPoolSize", Value, &Dpdk->RxMbufPoolSize))
+            continue;
+
+        if (CxPlatDpdkMatchConfigParamUint32(Line, "TxMbufPoolSize", Value, &Dpdk->TxMbufPoolSize))
+            continue;
+
+        if (CxPlatDpdkMatchConfigParamUint16(Line, "RxBurstSize", Value, &Dpdk->RxBurstSize))
+            continue;
+
+        if (CxPlatDpdkMatchConfigParamUint16(Line, "TxBurstSize", Value, &Dpdk->TxBurstSize))
+            continue;
+
+        if (CxPlatDpdkMatchConfigParamUint16(Line, "TxRingSize", Value, &Dpdk->TxRingSize))
+            continue;
+
+        if (CxPlatDpdkMatchConfigParamBoolean(Line, "SeparateRxThread", Value, &Dpdk->SeparateRxThread))
+            continue;
+
+        if (CxPlatDpdkMatchConfigParamBoolean(Line, "SeparateTxThread", Value, &Dpdk->SeparateTxThread))
+            continue;
+    }
+
+    fclose(File);
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+size_t
+CxPlatDpRawGetDatapathSize(
+        _In_opt_ const QUIC_EXECUTION_CONFIG* Config
+)
+{
+    UNREFERENCED_PARAMETER(Config);
+    return sizeof(DPDK_DATAPATH);
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+QUIC_STATUS
+CxPlatDpRawInitialize(
+        _Inout_ CXPLAT_DATAPATH_RAW* Datapath,
+        _In_ uint32_t ClientRecvContextLength,
+        _In_opt_ const QUIC_EXECUTION_CONFIG* Config
+)
+{
+    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Datapath;
+    CXPLAT_THREAD_CONFIG ThreadConfig = {
+            0, 0, "DpdkMain", CxPlatDpdkMainThread, Dpdk
+    };
+    const uint32_t AdditionalBufferSize =
+            sizeof(DPDK_RX_PACKET) + ClientRecvContextLength;
+
+    // Initialize DpdkInitArgc and DpdkInitArgv
+    Dpdk->DpdkInitArgc = 0;
+    Dpdk->DpdkInitArgv = NULL;
+
+    CxPlatDpdkReadConfig(Dpdk, Config);
+    printf("config params:\n--------------\n");
+    printf("MbufCacheSize = %u\n", Dpdk->MbufCacheSize);
+    printf("NumRxDescriptors = %u\n", Dpdk->NumRxDescriptors);
+    printf("NumTxDescriptors = %u\n", Dpdk->NumTxDescriptors);
+    printf("RxMbufPoolSize = %u\n", Dpdk->RxMbufPoolSize);
+    printf("TxMbufPoolSize = %u\n", Dpdk->TxMbufPoolSize);
+    printf("RxBurstSize = %u\n", Dpdk->RxBurstSize);
+    printf("TxBurstSize = %u\n", Dpdk->TxBurstSize);
+    printf("TxRingSize = %u\n", Dpdk->TxRingSize);
+    printf("\n");
+    printf("SeparateRxThread = %u\n", Dpdk->SeparateRxThread);
+    printf("SeparateTxThread = %u\n", Dpdk->SeparateTxThread);
+    printf("\n");
+    printf("Found %u DpdkInitArgs: ", Dpdk->DpdkInitArgc);
+    for (uint8_t i = 0; i < Dpdk->DpdkInitArgc; i++) {
+        printf("%s ", Dpdk->DpdkInitArgv[i]);
+    }
+    printf("\n");
+    printf("--------------\n");
+    printf("Log path: %s\n", log_path);
+
+    BOOLEAN CleanUpThread = FALSE;
+    CxPlatEventInitialize(&Dpdk->StartComplete, TRUE, FALSE);
+    CxPlatPoolInitialize(FALSE, AdditionalBufferSize, QUIC_POOL_DATAPATH, &Dpdk->AdditionalInfoPool);
+    CxPlatLockInitialize(&Dpdk->Interface.TxLock);
+    CxPlatListInitializeHead(&Dpdk->Interfaces);
+    CxPlatListInsertTail(&Dpdk->Interfaces, &Dpdk->Interface.Link);
+
+    //
+    // This starts a new thread to do all the DPDK initialization because DPDK
+    // effectively takes that thread over. It waits for the initialization part
+    // to complete before returning. After that, the DPDK main thread starts
+    // running the DPDK main loop until clean up.
+    //
+
+    QUIC_STATUS Status = CxPlatThreadCreate(&ThreadConfig, &Dpdk->DpdkThread);
+    if (QUIC_FAILED(Status)) {
+        QuicTraceEvent(
+                LibraryErrorStatus,
+                "[ lib] ERROR, %u, %s.",
+                Status,
+                "CxPlatThreadCreate");
+        goto Error;
+    }
+    CleanUpThread = TRUE;
+
+    CxPlatEventWaitForever(Dpdk->StartComplete);
+    Status = Dpdk->StartStatus;
+
+    Error:
+
+    if (QUIC_FAILED(Status)) {
+        if (CleanUpThread) {
+            CxPlatThreadWait(&Dpdk->DpdkThread);
+            CxPlatThreadDelete(&Dpdk->DpdkThread);
+            CxPlatPoolUninitialize(&Dpdk->AdditionalInfoPool);
+            CxPlatLockUninitialize(&Dpdk->Interface.TxLock);
+        }
+        CxPlatEventUninitialize(Dpdk->StartComplete);
+    }
+
+    return Status;
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+CxPlatDpRawRelease(
+        _In_ DPDK_DATAPATH* Dpdk
+)
+{
+    QuicTraceLogVerbose(
+            DpdkRelease,
+            "[dpdk][%p] DPDK release",
+            Dpdk);
+    force_quit = true;
+    if (CxPlatRefDecrement(&Dpdk->RefCount)) {
+        QuicTraceLogVerbose(
+                DpdkUninitializeComplete,
+                "[dpdk][%p] DPDK uninitialize complete",
+                Dpdk);
+        CxPlatDataPathUninitializeComplete((CXPLAT_DATAPATH_RAW*)Dpdk);
+    }
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+CxPlatDpRawUninitialize(
+        _In_ CXPLAT_DATAPATH_RAW* Datapath
+)
+{
+    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Datapath;
+    Dpdk->Running = FALSE;
+    CxPlatThreadWait(&Dpdk->DpdkThread);
+    CxPlatThreadDelete(&Dpdk->DpdkThread);
+    CxPlatPoolUninitialize(&Dpdk->AdditionalInfoPool);
+    CxPlatLockUninitialize(&Dpdk->Interface.TxLock);
+    CxPlatEventUninitialize(Dpdk->StartComplete);
+
+    if (Dpdk->DpdkInitArgv != NULL) {
+        for (int i = 0; i < Dpdk->DpdkInitArgc; i++) {
+            free(Dpdk->DpdkInitArgv[i]);
+        }
+    }
+    free(Dpdk->DpdkInitArgv);
+
+    CxPlatDpRawRelease(Dpdk);
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+CxPlatDpRawUpdateConfig(
+        _In_ CXPLAT_DATAPATH_RAW* Datapath,
+        _In_ QUIC_EXECUTION_CONFIG* Config
+)
+{
+    UNREFERENCED_PARAMETER(Datapath);
+    UNREFERENCED_PARAMETER(Config);
+}
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
+/* Check the link status of all ports in up to 9s, and print them finally */
+_IRQL_requires_max_(PASSIVE_LEVEL)
+static void
+CxPlatCheckAllPortsLinkStatus(
+        uint32_t port_mask
+)
+{
+#define CHECK_INTERVAL 200 /* 200ms */
+#define MAX_CHECK_TIME 200 /* 40s (200 * 200ms) in total */
+    uint16_t portid;
+    uint8_t count, all_ports_up, print_flag = 0;
+    struct rte_eth_link link;
+    int ret;
+    char link_status_text[RTE_ETH_LINK_MAX_STR_LEN];
+
+    printf("\nChecking link status\n");
+    fflush(stdout);
+    for (count = 0; count <= MAX_CHECK_TIME; count++) {
+        if (force_quit)
+            return;
+        all_ports_up = 1;
+        RTE_ETH_FOREACH_DEV(portid) {
+            if (force_quit)
+                return;
+            if ((port_mask & (1 << portid)) == 0)
+                continue;
+            memset(&link, 0, sizeof(link));
+            ret = rte_eth_link_get_nowait(portid, &link);
+            if (ret < 0) {
+                all_ports_up = 0;
+                if (print_flag == 1)
+                    printf("Port %u link get failed: %s\n",
+                           portid, rte_strerror(-ret));
+                continue;
+            }
+            /* print link status if flag set */
+            if (print_flag == 1) {
+                rte_eth_link_to_str(link_status_text,
+                                    sizeof(link_status_text), &link);
+                printf("Port %d %s\n", portid,
+                       link_status_text);
+                continue;
+            }
+            /* clear all_ports_up flag if any link down */
+            if (link.link_status == RTE_ETH_LINK_DOWN) {
+                all_ports_up = 0;
+                break;
+            }
+        }
+        /* after finally printing all link status, get out */
+        if (print_flag == 1)
+            break;
+
+        if (all_ports_up == 0) {
+            printf(".");
+            fflush(stdout);
+            rte_delay_ms(CHECK_INTERVAL);
+        }
+
+        /* set the print_flag if all ports up or timeout */
+        if (all_ports_up == 1 || count == (MAX_CHECK_TIME - 1)) {
+            print_flag = 1;
+            printf("done\n");
+        }
+    }
+}
+
+#pragma GCC diagnostic pop
+
+CXPLAT_THREAD_CALLBACK(CxPlatDpdkMainThread, Context)
+{
+    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Context;
+
+    QUIC_STATUS Status = QUIC_STATUS_SUCCESS;
+    BOOLEAN CleanUpRte = FALSE;
+    uint16_t Port;
+    struct rte_eth_conf PortConfig = {};
+    const uint16_t rx_rings = 1, tx_rings = 1;
+    struct rte_eth_dev_info DeviceInfo;
+    struct rte_eth_rxconf rxconf;
+    struct rte_eth_txconf txconf;
+    struct rte_ether_addr addr;
+
+    int ret = rte_eal_init(Dpdk->DpdkInitArgc, Dpdk->DpdkInitArgv);
+    if (ret < 0) {
+        QuicTraceEvent(
+                LibraryErrorStatus,
+                "[ lib] ERROR, %u, %s.",
+                ret,
+                "rte_eal_init");
+        Status = QUIC_STATUS_INTERNAL_ERROR;
+        goto Error;
+    }
+    CleanUpRte = TRUE;
+
+    if (Dpdk->Interface.DeviceName[0] != '\0') {
+        ret = rte_eth_dev_get_port_by_name(Dpdk->Interface.DeviceName, &Port);
+    } else {
+        ret = rte_eth_dev_get_port_by_name("0000:02:00.0", &Port);
+        if (ret < 0) {
+            ret = rte_eth_dev_get_port_by_name("0000:02:00.1", &Port);
+        }
+    }
+
+    if (ret < 0) {
+        QuicTraceEvent(
+                LibraryErrorStatus,
+                "[ lib] ERROR, %u, %s.",
+                ret,
+                "rte_eth_dev_get_port_by_name");
+        Status = QUIC_STATUS_INTERNAL_ERROR;
+        goto Error;
+    }
+
+    //
+    // These values are adapted from the l2fwd example:
+    // https://doc.dpdk.org/api/examples_2l2fwd_2main_8c-example.html
+    //
+    //nb_rx_mbufs = RTE_MAX(nb_rxd + Dpdk->RxBurstSize + rte_lcore_count() * Dpdk->MbufCacheSize, 8192U);
+    //nb_tx_mbufs = RTE_MAX(nb_txd + Dpdk->TxBurstSize + rte_lcore_count() * Dpdk->MbufCacheSize, 8192U);
+
+    Dpdk->Interface.Port = Port;
+    Dpdk->Interface.RxMemoryPool =
+            rte_pktmbuf_pool_create(
+                    "MBUF_POOL_RX", Dpdk->RxMbufPoolSize, Dpdk->MbufCacheSize, 0,
+                    RTE_MBUF_DEFAULT_BUF_SIZE, rte_eth_dev_socket_id(Port));
+    if (Dpdk->Interface.RxMemoryPool == NULL) {
+        QuicTraceEvent(
+                LibraryErrorStatus,
+                "[ lib] ERROR, %u, %s.",
+                0,
+                "rte_pktmbuf_pool_create (rx side)");
+        Status = QUIC_STATUS_INTERNAL_ERROR;
+        goto Error;
+    }
+    Dpdk->Interface.TxMemoryPool =
+            rte_pktmbuf_pool_create(
+                    "MBUF_POOL_TX", Dpdk->TxMbufPoolSize, Dpdk->MbufCacheSize, 0,
+                    RTE_MBUF_DEFAULT_BUF_SIZE, rte_eth_dev_socket_id(Port));
+    if (Dpdk->Interface.TxMemoryPool == NULL) {
+        QuicTraceEvent(
+                LibraryErrorStatus,
+                "[ lib] ERROR, %u, %s.",
+                0,
+                "rte_pktmbuf_pool_create (tx side)");
+        Status = QUIC_STATUS_INTERNAL_ERROR;
+        goto Error;
+    }
+
+    Dpdk->Interface.TxRingBuffer =
+            rte_ring_create(
+                    "TxRing", Dpdk->TxRingSize, rte_eth_dev_socket_id(Port),
+                    0);
+    if (Dpdk->Interface.TxRingBuffer == NULL) {
+        QuicTraceEvent(
+                LibraryErrorStatus,
+                "[ lib] ERROR, %u, %s.",
+                ret,
+                "rte_ring_create");
+        Status = QUIC_STATUS_INTERNAL_ERROR;
+        goto Error;
+    }
+
+    ret = rte_eth_dev_info_get(Port, &DeviceInfo);
+    if (ret < 0) {
+        QuicTraceEvent(
+                LibraryErrorStatus,
+                "[ lib] ERROR, %u, %s.",
+                ret,
+                "rte_eth_dev_info_get");
+        Status = QUIC_STATUS_INTERNAL_ERROR;
+        goto Error;
+    }
+
+    Dpdk->Interface.IfIndex = DeviceInfo.if_index;
+
+    // Set MTU
+    PortConfig.rxmode.mtu = DeviceInfo.max_mtu;
+
+    /*
+    if (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_IPV4_CKSUM) {
+        printf("TX IPv4 Checksum Offload Enabled\n");
+        PortConfig.txmode.offloads |= RTE_ETH_TX_OFFLOAD_IPV4_CKSUM;
+        Dpdk->Interface.OffloadStatus.Transmit.NetworkLayerXsum = TRUE;
+    }
+    if (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_UDP_CKSUM) {
+        printf("TX UDP Checksum Offload Enabled\n");
+        PortConfig.txmode.offloads |= RTE_ETH_TX_OFFLOAD_UDP_CKSUM;
+        Dpdk->Interface.OffloadStatus.Transmit.TransportLayerXsum = TRUE;
+    }
+    if (DeviceInfo.rx_offload_capa & RTE_ETH_RX_OFFLOAD_IPV4_CKSUM) {
+        printf("RX IPv4 Checksum Offload Enabled\n");
+        PortConfig.rxmode.offloads |= RTE_ETH_RX_OFFLOAD_IPV4_CKSUM;
+        Dpdk->Interface.OffloadStatus.Receive.NetworkLayerXsum = TRUE;
+    }
+    if (DeviceInfo.rx_offload_capa & RTE_ETH_RX_OFFLOAD_UDP_CKSUM) {
+        printf("RX UDP Checksum Offload Enabled\n");
+        PortConfig.rxmode.offloads |= RTE_ETH_RX_OFFLOAD_UDP_CKSUM;
+        Dpdk->Interface.OffloadStatus.Receive.TransportLayerXsum = TRUE;
+    }
+     */
+
+    // Set Tx L4 checksum offload to TRUE, s.t. the checksum is not calculated
+    // NOTE: this is a q&d fix to test the impact of L4 checksum calculation in software
+    Dpdk->Interface.OffloadStatus.Transmit.TransportLayerXsum = TRUE;
+
+    if (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MT_LOCKFREE) {
+        printf("Lockfree transmission activated\n");
+        PortConfig.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MT_LOCKFREE;
+        Dpdk->Interface.OffloadStatus.Transmit.Lockfree = TRUE;
+    }
+
+    if (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE) {
+        printf("Mbuf fast free offload activated\n");
+        PortConfig.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+        Dpdk->Interface.OffloadStatus.Transmit.Lockfree = TRUE;
+    }
+
+    ret = rte_eth_dev_configure(Port, rx_rings, tx_rings, &PortConfig);
+    if (ret < 0) {
+        QuicTraceEvent(
+                LibraryErrorStatus,
+                "[ lib] ERROR, %u, %s.",
+                ret,
+                "rte_eth_dev_configure");
+        Status = QUIC_STATUS_INTERNAL_ERROR;
+        goto Error;
+    }
+
+    ret = rte_eth_dev_adjust_nb_rx_tx_desc(Port, &Dpdk->NumRxDescriptors, &Dpdk->NumTxDescriptors);
+    if (ret < 0) {
+        QuicTraceEvent(
+                LibraryErrorStatus,
+                "[ lib] ERROR, %u, %s.",
+                ret,
+                "rte_eth_dev_configure");
+        Status = QUIC_STATUS_INTERNAL_ERROR;
+        goto Error;
+    }
+
+    rxconf = DeviceInfo.default_rxconf;
+    for (uint16_t q = 0; q < rx_rings; q++) {
+        ret = rte_eth_rx_queue_setup(Port,
+                                     q,
+                                     Dpdk->NumRxDescriptors,
+                                     rte_eth_dev_socket_id(Port),
+                                     &rxconf,
+                                     Dpdk->Interface.RxMemoryPool);
+        if (ret < 0) {
+            QuicTraceEvent(
+                    LibraryErrorStatus,
+                    "[ lib] ERROR, %u, %s.",
+                    ret,
+                    "rte_eth_rx_queue_setup");
+            Status = QUIC_STATUS_INTERNAL_ERROR;
+            goto Error;
+        }
+    }
+
+    txconf = DeviceInfo.default_txconf;
+    txconf.offloads = PortConfig.txmode.offloads;
+    for (uint16_t q = 0; q < tx_rings; q++) {
+        ret = rte_eth_tx_queue_setup(Port,
+                                     q,
+                                     Dpdk->NumTxDescriptors,
+                                     rte_eth_dev_socket_id(Port),
+                                     &txconf);
+        if (ret < 0) {
+            QuicTraceEvent(
+                    LibraryErrorStatus,
+                    "[ lib] ERROR, %u, %s.",
+                    ret,
+                    "rte_eth_tx_queue_setup");
+            Status = QUIC_STATUS_INTERNAL_ERROR;
+            goto Error;
+        }
+    }
+
+    ret = rte_eth_dev_start(Port);
+    if (ret < 0) {
+        QuicTraceEvent(
+                LibraryErrorStatus,
+                "[ lib] ERROR, %u, %s.",
+                ret,
+                "rte_eth_dev_start");
+        Status = QUIC_STATUS_INTERNAL_ERROR;
+        goto Error;
+    }
+
+    ret = rte_eth_macaddr_get(Port, &addr);
+    if (ret < 0) {
+        QuicTraceEvent(
+                LibraryErrorStatus,
+                "[ lib] ERROR, %u, %s.",
+                ret,
+                "rte_eth_macaddr_get");
+        Status = QUIC_STATUS_INTERNAL_ERROR;
+        goto Error;
+    }
+
+    // Set physical address of the interface
+    CxPlatCopyMemory(Dpdk->Interface.PhysicalAddress, addr.addr_bytes, sizeof(Dpdk->Interface.PhysicalAddress));
+
+    printf(
+            "\nStarting Port %hu on Interface %u, %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx\n",
+            Dpdk->Interface.Port, Dpdk->Interface.IfIndex,
+            addr.addr_bytes[0], addr.addr_bytes[1], addr.addr_bytes[2],
+            addr.addr_bytes[3], addr.addr_bytes[4], addr.addr_bytes[5]);
+
+    // Wait for ports to come up
+    CxPlatCheckAllPortsLinkStatus(1);
+
+    Dpdk->Running = TRUE;
+    CxPlatRefInitialize(&Dpdk->RefCount);
+    if (Dpdk->SeparateRxThread) {
+        ret = rte_eal_remote_launch(CxPlatDpdkRxWorkerThread, Dpdk, 1); // Run RX worker on lcore 1
+        if (ret < 0) {
+            QuicTraceEvent(
+                    LibraryErrorStatus,
+                    "[ lib] ERROR, %u, %s.",
+                    ret,
+                    "rte_eal_remote_launch");
+            Status = QUIC_STATUS_INTERNAL_ERROR;
+            goto Error;
+        }
+    }
+    if (Dpdk->SeparateTxThread) {
+        ret = rte_eal_remote_launch(CxPlatDpdkTxWorkerThread, Dpdk, 2); // Run TX worker on lcore 2
+        if (ret < 0) {
+            QuicTraceEvent(
+                    LibraryErrorStatus,
+                    "[ lib] ERROR, %u, %s.",
+                    ret,
+                    "rte_eal_remote_launch");
+            Status = QUIC_STATUS_INTERNAL_ERROR;
+            goto Error;
+        }
+    }
+
+    Dpdk->StartStatus = Status;
+    CxPlatEventSet(Dpdk->StartComplete);
+
+    if (Dpdk->SeparateRxThread && Dpdk->SeparateTxThread) {
+        // nothing to be executed on main lcore
+    } else if (Dpdk->SeparateRxThread) {
+        CxPlatDpdkTxWorkerThread(Dpdk); // Run only TX worker on the main lcore
+    } else if (Dpdk->SeparateTxThread) {
+        CxPlatDpdkRxWorkerThread(Dpdk); // Run only RX worker on the main lcore
+    } else {
+        CxPlatDpdkRxTxWorkerThread(Dpdk); // Run RX/TX worker on the main lcore
+    }
+
+    rte_eal_mp_wait_lcore(); // Wait on the other cores/threads
+
+    char stats_path[1048];
+	snprintf(stats_path, sizeof(stats_path), "%s/stats.txt", log_path);
+	nic_xstats_display(0, stats_path);
+
+    Error:
+
+    if (QUIC_FAILED(Status)) {
+        Dpdk->StartStatus = Status;
+        CxPlatEventSet(Dpdk->StartComplete);
+    }
+
+    if (Dpdk->Interface.TxRingBuffer) {
+        rte_ring_free(Dpdk->Interface.TxRingBuffer);
+    }
+
+    if (CleanUpRte) {
+        rte_eal_cleanup();
+    }
+
+    CXPLAT_THREAD_RETURN(0);
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+CxPlatDpRawPlumbRulesOnSocket(
+        _In_ CXPLAT_SOCKET_RAW* Socket,
+        _In_ BOOLEAN IsCreated
+)
+{
+    UNREFERENCED_PARAMETER(Socket);
+    UNREFERENCED_PARAMETER(IsCreated);
+    // no-op currently since DPDK simply steals all traffic
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+CxPlatDpRawAssignQueue(
+        _In_ CXPLAT_INTERFACE* Interface,
+        _Inout_ CXPLAT_ROUTE* Route
+)
+{
+    Route->Queue = Interface;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+const CXPLAT_INTERFACE*
+CxPlatDpRawGetInterfaceFromQueue(
+        _In_ const void* Queue
+)
+{
+    return (const CXPLAT_INTERFACE*)Queue;
+}
+
+static
+void
+CxPlatDpdkRx(
+        _In_ DPDK_DATAPATH* Dpdk,
+        _In_ DPDK_INTERFACE* Interface
+)
+{
+    void* Buffers[Dpdk->RxBurstSize];
+    const uint16_t BuffersCount =
+            rte_eth_rx_burst(Interface->Port, 0, (struct rte_mbuf**)Buffers, Dpdk->RxBurstSize);
+    if (unlikely(BuffersCount == 0)) {
+        return;
+    }
+    Dpdk->RxCounter += BuffersCount;
+
+    DPDK_RX_PACKET Packet = {0}; // Working space
+    Packet.RecvData.Route = &Packet.RouteStorage;
+    Packet.RecvData.Route->Queue = Interface;
+
+    uint16_t PacketCount = 0;
+    for (uint16_t i = 0; i < BuffersCount; i++) {
+        struct rte_mbuf* Buffer = (struct rte_mbuf*)Buffers[i];
+        Packet.RecvData.Buffer = NULL;
+        if ((Buffer->ol_flags & (RTE_MBUF_F_RX_IP_CKSUM_BAD | RTE_MBUF_F_RX_L4_CKSUM_BAD)) == 0) {
+            CxPlatDpRawParseEthernet(
+                    (CXPLAT_DATAPATH*)Dpdk,
+                    &Packet.RecvData,
+                    ((uint8_t*)Buffer->buf_addr) + Buffer->data_off,
+                    Buffer->pkt_len);
+            //
+            // The route has been filled in with the packet's src/dst IP and ETH addresses, so
+            // mark it resolved. This allows stateless sends to be issued without performing
+            // a route lookup.
+            //
+            Packet.RecvData.Route->State = RouteResolved;
+        } else {
+            QuicTraceEvent(
+                    LibraryErrorStatus,
+                    "[ lib] ERROR, %u, %s.",
+                    Buffer->ol_flags,
+                    "L3/L4 checksum incorrect");
+            CXPLAT_DBG_ASSERT(
+                    Interface->OffloadStatus.Receive.NetworkLayerXsum != 0 ||
+                    Interface->OffloadStatus.Receive.TransportLayerXsum != 0);
+        }
+
+        DPDK_RX_PACKET* NewPacket;
+        if (likely(Packet.RecvData.Buffer)) {
+            uint32_t RetryCount = 0;
+            do {
+                NewPacket = CxPlatPoolAlloc(&Dpdk->AdditionalInfoPool);
+            } while (NewPacket == NULL && ++RetryCount < 10);
+            if (NewPacket == NULL) {
+                QuicTraceEvent(
+                        AllocFailure,
+                        "Allocation of '%s' failed. (%llu bytes)",
+                        "DPDK_RX_PACKET",
+                        0);
+                goto Exit;
+            }
+
+            CxPlatCopyMemory(NewPacket, &Packet, sizeof(DPDK_RX_PACKET));
+            NewPacket->RecvData.Allocated = TRUE;
+            NewPacket->Mbuf = Buffer;
+            NewPacket->OwnerPool = &Dpdk->AdditionalInfoPool;
+            NewPacket->RecvData.Route = &NewPacket->RouteStorage;
+            NewPacket->RecvData.DatapathType = NewPacket->RecvData.Route->DatapathType = CXPLAT_DATAPATH_TYPE_RAW;
+            Buffers[PacketCount++] = &NewPacket->RecvData;
+        } else {
+            printf("Packet.Buffer not set!\n");
+            Exit:
+            rte_pktmbuf_free(Buffer);
+        }
+    }
+
+    if (likely(PacketCount)) {
+        CxPlatDpRawRxEthernet((CXPLAT_DATAPATH_RAW*)Dpdk, (CXPLAT_RECV_DATA**)Buffers, PacketCount);
+    }
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void
+CxPlatDpRawRxFree(
+        _In_opt_ const CXPLAT_RECV_DATA* PacketChain
+)
+{
+    while (PacketChain) {
+        const DPDK_RX_PACKET* Packet =
+            CXPLAT_CONTAINING_RECORD(PacketChain, DPDK_RX_PACKET, RecvData);
+        PacketChain = PacketChain->Next;
+        rte_pktmbuf_free(Packet->Mbuf);
+        CxPlatPoolFree(Packet->OwnerPool, (void*)Packet);
+    }
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+CXPLAT_SEND_DATA*
+CxPlatDpRawTxAlloc(
+        _In_ CXPLAT_SOCKET_RAW* Socket,
+        _Inout_ CXPLAT_SEND_CONFIG* Config
+)
+{
+    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Socket->RawDatapath;
+    DPDK_TX_PACKET* Packet = CxPlatPoolAlloc(&Dpdk->AdditionalInfoPool);
+    QUIC_ADDRESS_FAMILY Family = QuicAddrGetFamily(&Config->Route->RemoteAddress);
+    DPDK_INTERFACE* Interface = (DPDK_INTERFACE*)Config->Route->Queue;
+
+    if (likely(Packet)) {
+        Packet->Interface = Interface;
+        Packet->Mbuf = rte_pktmbuf_alloc(Interface->TxMemoryPool);
+        if (likely(Packet->Mbuf)) {
+            HEADER_BACKFILL HeaderFill = CxPlatDpRawCalculateHeaderBackFill(Family, Socket->UseTcp);
+            Packet->Dpdk = Dpdk;
+            Packet->Buffer.Length = Config->MaxPacketSize;
+            Packet->Mbuf->data_off = 0;
+            Packet->Buffer.Buffer = ((uint8_t*)Packet->Mbuf->buf_addr) + HeaderFill.AllLayer;
+            Packet->Mbuf->l2_len = HeaderFill.LinkLayer;
+            Packet->Mbuf->l3_len = HeaderFill.NetworkLayer;
+            Packet->DatapathType = Config->Route->DatapathType = CXPLAT_DATAPATH_TYPE_RAW;
+        } else {
+            CxPlatPoolFree(&Dpdk->AdditionalInfoPool, Packet);
+            Packet = NULL;
+            QuicTraceEvent(
+                    LibraryError,
+                    "[ lib] ERROR, %s.",
+                    "Failed to allocate mbuf in TxMemoryPool");
+        }
+    }
+    return (CXPLAT_SEND_DATA*)Packet;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void
+CxPlatDpRawTxFree(
+        _In_ CXPLAT_SEND_DATA* SendData
+)
+{
+    DPDK_TX_PACKET* Packet = (DPDK_TX_PACKET*)SendData;
+    rte_pktmbuf_free(Packet->Mbuf);
+    CxPlatPoolFree(&Packet->Dpdk->AdditionalInfoPool, SendData);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void
+CxPlatDpRawTxEnqueue(
+        _In_ CXPLAT_SEND_DATA* SendData
+)
+{
+    DPDK_TX_PACKET* Packet = (DPDK_TX_PACKET*)SendData;
+    DPDK_INTERFACE* Interface = Packet->Interface;
+    Packet->Mbuf->data_len = (uint16_t)Packet->Buffer.Length;
+    //Packet->Mbuf->ol_flags = RTE_MBUF_F_TX_IPV4 | RTE_MBUF_F_TX_IP_CKSUM | RTE_MBUF_F_TX_UDP_CKSUM;
+
+    DPDK_DATAPATH* Dpdk = Packet->Dpdk;
+    if (unlikely(rte_ring_enqueue(Interface->TxRingBuffer, Packet->Mbuf) != 0)) {
+        rte_pktmbuf_free(Packet->Mbuf);
+        QuicTraceEvent(
+                LibraryError,
+                "[ lib] ERROR, %s.",
+                "No room in DPDK TX ring buffer");
+    } else {
+        QuicTraceEvent(
+                DatapathTxEnqueue,
+                "[data] TX packet (%u bytes) enqueued in ring (now %u entries).",
+                Packet->Mbuf->data_len,
+                rte_ring_count(Interface->TxRingBuffer));
+    }
+    Dpdk->TxEnqueueCounter++; // increase in any case, even if packet was dropped
+
+    CxPlatPoolFree(&Dpdk->AdditionalInfoPool, Packet);
+}
+
+static
+void
+CxPlatDpdkTx(
+        _In_ DPDK_DATAPATH* Dpdk,
+        _In_ DPDK_INTERFACE* Interface
+)
+{
+    struct rte_mbuf* Buffers[Dpdk->TxBurstSize];
+    const uint16_t BufferCount =
+            (uint16_t)rte_ring_dequeue_burst(
+                    Interface->TxRingBuffer, (void**)Buffers, Dpdk->TxBurstSize, NULL);
+    if (unlikely(BufferCount == 0)) {
+        return;
+    }
+
+    QuicTraceEvent(
+            DatapathTxDequeue,
+            "[data] %u packets dequeued from TX ring (now %u entries).",
+            BufferCount,
+            rte_ring_count(Interface->TxRingBuffer));
+
+    if (!Dpdk->Interface.OffloadStatus.Transmit.Lockfree) {
+        CxPlatLockAcquire(&Interface->TxLock);
+    }
+    const uint16_t TxCount = rte_eth_tx_burst(Interface->Port, 0, Buffers, BufferCount);
+    if (!Dpdk->Interface.OffloadStatus.Transmit.Lockfree) {
+        CxPlatLockRelease(&Interface->TxLock);
+    }
+    Dpdk->TxCounter += TxCount;
+    if (unlikely(TxCount < BufferCount)) {
+        for (uint16_t buf = TxCount; buf < BufferCount; buf++) {
+            rte_pktmbuf_free(Buffers[buf]);
+        }
+        QuicTraceEvent(
+                LibraryError,
+                "[ lib] ERROR, %s.",
+                "DPDK: rte_eth_tx_burst() failed to store all packets to send in the NIC's TX descriptors.");
+    }
+}
+
+static
+int
+CxPlatDpdkRxWorkerThread(
+        _In_ void* Context
+)
+{
+    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Context;
+    const uint16_t Core = (uint16_t)rte_lcore_id();
+    CXPLAT_LIST_ENTRY* Entry;
+
+    CxPlatRefIncrement(&Dpdk->RefCount);
+    printf("Core %u worker running...\n", Core);
+    for (Entry = Dpdk->Interfaces.Flink; Entry != &Dpdk->Interfaces; Entry = Entry->Flink) {
+        if (rte_eth_dev_socket_id(Dpdk->Interface.Port) > 0 &&
+            rte_eth_dev_socket_id(Dpdk->Interface.Port) != (int)rte_socket_id()) {
+            printf("\nWARNING, port %u is on remote NUMA node to polling thread.\n"
+                   "\tPerformance will not be optimal.\n\n",
+                   Dpdk->Interface.Port);
+        }
+    }
+
+    while (likely(Dpdk->Running)) {
+        for (Entry = Dpdk->Interfaces.Flink; Entry != &Dpdk->Interfaces; Entry = Entry->Flink) {
+            DPDK_INTERFACE* Interface = CXPLAT_CONTAINING_RECORD(Entry, DPDK_INTERFACE, Link);
+            CxPlatDpdkRx(Dpdk, Interface);
+        }
+    }
+    CxPlatRefDecrement(&Dpdk->RefCount);
+
+    printf("PacketsRecv: %lu\n", Dpdk->RxCounter);
+
+    return 0;
+}
+
+static
+int
+CxPlatDpdkTxWorkerThread(
+        _In_ void* Context
+)
+{
+    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Context;
+    const uint16_t Core = (uint16_t)rte_lcore_id();
+    CXPLAT_LIST_ENTRY* Entry;
+
+    CxPlatRefIncrement(&Dpdk->RefCount);
+    printf("Core %u worker running...\n", Core);
+    for (Entry = Dpdk->Interfaces.Flink; Entry != &Dpdk->Interfaces; Entry = Entry->Flink) {
+        if (rte_eth_dev_socket_id(Dpdk->Interface.Port) > 0 &&
+            rte_eth_dev_socket_id(Dpdk->Interface.Port) != (int)rte_socket_id()) {
+            printf("\nWARNING, port %u is on remote NUMA node to polling thread.\n"
+                   "\tPerformance will not be optimal.\n\n",
+                   Dpdk->Interface.Port);
+        }
+    }
+
+    while (likely(Dpdk->Running)) {
+        for (Entry = Dpdk->Interfaces.Flink; Entry != &Dpdk->Interfaces; Entry = Entry->Flink) {
+            DPDK_INTERFACE* Interface = CXPLAT_CONTAINING_RECORD(Entry, DPDK_INTERFACE, Link);
+            CxPlatDpdkTx(Dpdk, Interface);
+        }
+    }
+    CxPlatRefDecrement(&Dpdk->RefCount);
+
+    printf("PacketsSent: %lu\n", Dpdk->TxCounter);
+    printf("PacketsTriedToSend: %lu\n", Dpdk->TxEnqueueCounter);
+
+    return 0;
+}
+
+static
+int
+CxPlatDpdkRxTxWorkerThread(
+        _In_ void* Context
+)
+{
+    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Context;
+    const uint16_t Core = (uint16_t)rte_lcore_id();
+    CXPLAT_LIST_ENTRY* Entry;
+
+    CxPlatRefIncrement(&Dpdk->RefCount);
+    printf("Core %u worker running...\n", Core);
+    for (Entry = Dpdk->Interfaces.Flink; Entry != &Dpdk->Interfaces; Entry = Entry->Flink) {
+        if (rte_eth_dev_socket_id(Dpdk->Interface.Port) > 0 &&
+            rte_eth_dev_socket_id(Dpdk->Interface.Port) != (int)rte_socket_id()) {
+            printf("\nWARNING, port %u is on remote NUMA node to polling thread.\n"
+                   "\tPerformance will not be optimal.\n\n",
+                   Dpdk->Interface.Port);
+        }
+    }
+
+    while (likely(Dpdk->Running)) {
+        for (Entry = Dpdk->Interfaces.Flink; Entry != &Dpdk->Interfaces; Entry = Entry->Flink) {
+            DPDK_INTERFACE* Interface = CXPLAT_CONTAINING_RECORD(Entry, DPDK_INTERFACE, Link);
+            CxPlatDpdkRx(Dpdk, Interface);
+            CxPlatDpdkTx(Dpdk, Interface);
+        }
+    }
+    CxPlatRefDecrement(&Dpdk->RefCount);
+
+    printf("PacketsRecv: %lu\n", Dpdk->RxCounter);
+    printf("PacketsSent: %lu\n", Dpdk->TxCounter);
+    printf("PacketsTriedToSend: %lu\n", Dpdk->TxEnqueueCounter);
+
+    return 0;
+}
+
+void
+CxPlatDpRawSendArpReply(
+        _In_ const CXPLAT_DATAPATH* Datapath,
+        _In_ const ARP_HEADER* Request
+)
+{
+    const DPDK_DATAPATH* Dpdk = (const DPDK_DATAPATH*)Datapath;
+    const DPDK_INTERFACE* Interface = &Dpdk->Interface;
+    struct rte_mbuf* Buffer;
+    ETHERNET_HEADER* Ethernet;
+    ARP_HEADER* Reply;
+
+    if (Request->TargetProtocolAddr != Interface->LocalIp.Ipv4.sin_addr.s_addr) {
+        QuicTraceEvent(
+                DatapathErrorStatus,
+                "[data][%p] ERROR, %u, %s.",
+                Datapath,
+                0,
+                "ARP request has wrong target protocol address");
+        return;
+    }
+
+    Buffer = rte_pktmbuf_alloc(Interface->TxMemoryPool);
+    if (likely(Buffer)) {
+        Buffer->data_off = 0;
+        Buffer->data_len = sizeof(ETHERNET_HEADER) + sizeof(ARP_HEADER);
+        Buffer->l2_len = sizeof(ETHERNET_HEADER);
+        Buffer->l3_len = sizeof(ARP_HEADER);
+
+        Ethernet = Buffer->buf_addr;
+        Reply = (ARP_HEADER*)Ethernet->Data;
+
+        CxPlatCopyMemory(Ethernet->Destination, Interface->PeerPhysicalAddress, sizeof(Ethernet->Destination));
+        CxPlatCopyMemory(Ethernet->Source, Interface->PhysicalAddress, sizeof(Ethernet->Source));
+        Ethernet->Type = ETHERNET_TYPE_ARP;
+
+        Reply->HardwareType = ARP_HARDWARE_TYPE_ETHERNET;
+        Reply->ProtocolType = ETHERNET_TYPE_IPV4;
+        Reply->HardwareAddrLength = sizeof(Reply->SenderHardwareAddr);
+        Reply->ProtocolAddrLength = sizeof(Reply->SenderProtocolAddr);
+        Reply->Operation = ARP_OPERATION_REPLY;
+        CxPlatCopyMemory(Reply->SenderHardwareAddr, Interface->PhysicalAddress, sizeof(Reply->SenderHardwareAddr));
+        CxPlatCopyMemory(Reply->TargetHardwareAddr, Request->SenderHardwareAddr, sizeof(Reply->TargetHardwareAddr));
+        Reply->SenderProtocolAddr = Interface->LocalIp.Ipv4.sin_addr.s_addr;
+        Reply->TargetProtocolAddr = Request->SenderProtocolAddr;
+
+        const uint16_t TxCount = rte_eth_tx_burst(Interface->Port, 0, &Buffer, 1);
+        if (TxCount != 1) {
+            QuicTraceEvent(
+                    DatapathErrorStatus,
+                    "[data][%p] ERROR, %u, %s.",
+                    Datapath,
+                    0,
+                    "failed to send ARP reply");
+            rte_pktmbuf_free(Buffer);
+            return;
+        }
+    } else {
+        QuicTraceEvent(
+                LibraryError,
+                "[ lib] ERROR, %s.",
+                "Failed to allocate mbuf for ARP reply in TxMemoryPool");
+    }
+}
+
+void
+RawDataPathProcessCqe(
+    _In_ CXPLAT_CQE* Cqe
+)
+{
+    UNREFERENCED_PARAMETER(Cqe);
+}

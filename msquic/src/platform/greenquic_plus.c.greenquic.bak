@@ -1,0 +1,267 @@
+/*++
+
+    GreenQUIC Plus hint storage, v18 single-core/default path.
+
+    Active implementation:
+      - application transfer hints are reference-counted
+      - CUBIC recovery is reference-counted across concurrent connections
+      - ACK, blocked, recovery fallback and ramping expire independently
+
+    The old v17 shared-expiration implementation is retained in #if 0.
+
+--*/
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "greenquic_plus.h"
+
+#include <stdatomic.h>
+#include <stdint.h>
+#include <time.h>
+
+#define GQPLUS_ACK_TTL_NS          (500ull * 1000ull)
+#define GQPLUS_CWND_BLOCKED_TTL_NS (1000ull * 1000ull)
+#define GQPLUS_RECOVERY_PULSE_NS   (2000ull * 1000ull)
+#define GQPLUS_RAMPING_TTL_NS      (2000ull * 1000ull)
+#define GQPLUS_OTHER_TTL_NS        (2000ull * 1000ull)
+#define GQPLUS_TRANSFER_HINTS \
+    (GQPLUS_HINT_SERVER_FILE_TX_ACTIVE | GQPLUS_HINT_CLIENT_FILE_RX_ACTIVE)
+#define GQPLUS_KNOWN_TRANSIENT_HINTS \
+    (GQPLUS_HINT_ACK_PENDING | GQPLUS_HINT_CUBIC_CWND_BLOCKED | \
+     GQPLUS_HINT_CUBIC_RECOVERY | GQPLUS_HINT_CUBIC_RAMPING)
+
+static atomic_uint_fast64_t PersistentHints;
+static atomic_uint_fast64_t AckPendingUntilNs;
+static atomic_uint_fast64_t CwndBlockedUntilNs;
+static atomic_uint_fast64_t RecoveryPulseUntilNs;
+static atomic_uint_fast64_t CubicRampingUntilNs;
+static atomic_uint_fast64_t OtherTransientHints;
+static atomic_uint_fast64_t OtherTransientUntilNs;
+static atomic_uint_fast32_t ServerFileTxActiveCount;
+static atomic_uint_fast32_t ClientFileRxActiveCount;
+static atomic_uint_fast32_t CubicRecoveryActiveCount;
+
+static uint64_t
+CxPlatGreenQuicPlusNowNs(void)
+{
+    struct timespec Ts;
+#if defined(CLOCK_MONOTONIC_RAW)
+    clock_gettime(CLOCK_MONOTONIC_RAW, &Ts);
+#else
+    clock_gettime(CLOCK_MONOTONIC, &Ts);
+#endif
+    return ((uint64_t)Ts.tv_sec * 1000000000ull) + (uint64_t)Ts.tv_nsec;
+}
+
+static void
+CxPlatGreenQuicPlusExtendUntil(
+    atomic_uint_fast64_t* Until,
+    uint64_t Candidate
+    )
+{
+    uint_fast64_t Old = atomic_load_explicit(Until, memory_order_relaxed);
+    while (Old < Candidate &&
+           !atomic_compare_exchange_weak_explicit(
+               Until,
+               &Old,
+               Candidate,
+               memory_order_release,
+               memory_order_relaxed)) {
+    }
+}
+
+static void
+CxPlatGreenQuicPlusIncrementHintCount(
+    atomic_uint_fast32_t* Counter,
+    uint64_t Hint
+    )
+{
+    const uint_fast32_t Old =
+        atomic_fetch_add_explicit(Counter, 1, memory_order_relaxed);
+    if (Old == 0) {
+        atomic_fetch_or_explicit(&PersistentHints, Hint, memory_order_release);
+    }
+}
+
+static void
+CxPlatGreenQuicPlusDecrementHintCount(
+    atomic_uint_fast32_t* Counter,
+    uint64_t Hint
+    )
+{
+    uint_fast32_t Old = atomic_load_explicit(Counter, memory_order_relaxed);
+    while (Old != 0) {
+        if (atomic_compare_exchange_weak_explicit(
+                Counter,
+                &Old,
+                Old - 1,
+                memory_order_acq_rel,
+                memory_order_relaxed)) {
+            if (Old == 1) {
+                atomic_fetch_and_explicit(&PersistentHints, ~Hint, memory_order_release);
+            }
+            return;
+        }
+    }
+}
+
+void
+CxPlatGreenQuicPlusBeginTransfer(uint64_t Hints)
+{
+    if ((Hints & GQPLUS_HINT_SERVER_FILE_TX_ACTIVE) != 0) {
+        CxPlatGreenQuicPlusIncrementHintCount(
+            &ServerFileTxActiveCount,
+            GQPLUS_HINT_SERVER_FILE_TX_ACTIVE);
+    }
+    if ((Hints & GQPLUS_HINT_CLIENT_FILE_RX_ACTIVE) != 0) {
+        CxPlatGreenQuicPlusIncrementHintCount(
+            &ClientFileRxActiveCount,
+            GQPLUS_HINT_CLIENT_FILE_RX_ACTIVE);
+    }
+}
+
+void
+CxPlatGreenQuicPlusEndTransfer(uint64_t Hints)
+{
+    if ((Hints & GQPLUS_HINT_SERVER_FILE_TX_ACTIVE) != 0) {
+        CxPlatGreenQuicPlusDecrementHintCount(
+            &ServerFileTxActiveCount,
+            GQPLUS_HINT_SERVER_FILE_TX_ACTIVE);
+    }
+    if ((Hints & GQPLUS_HINT_CLIENT_FILE_RX_ACTIVE) != 0) {
+        CxPlatGreenQuicPlusDecrementHintCount(
+            &ClientFileRxActiveCount,
+            GQPLUS_HINT_CLIENT_FILE_RX_ACTIVE);
+    }
+}
+
+void
+CxPlatGreenQuicPlusBeginRecovery(void)
+{
+    CxPlatGreenQuicPlusIncrementHintCount(
+        &CubicRecoveryActiveCount,
+        GQPLUS_HINT_CUBIC_RECOVERY);
+}
+
+void
+CxPlatGreenQuicPlusEndRecovery(void)
+{
+    CxPlatGreenQuicPlusDecrementHintCount(
+        &CubicRecoveryActiveCount,
+        GQPLUS_HINT_CUBIC_RECOVERY);
+}
+
+void
+CxPlatGreenQuicPlusSetHints(uint64_t Hints)
+{
+    const uint64_t PlainPersistent =
+        Hints & ~(GQPLUS_TRANSFER_HINTS | GQPLUS_HINT_CUBIC_RECOVERY);
+    atomic_fetch_or_explicit(&PersistentHints, PlainPersistent, memory_order_relaxed);
+    CxPlatGreenQuicPlusBeginTransfer(Hints & GQPLUS_TRANSFER_HINTS);
+    if ((Hints & GQPLUS_HINT_CUBIC_RECOVERY) != 0) {
+        CxPlatGreenQuicPlusBeginRecovery();
+    }
+}
+
+void
+CxPlatGreenQuicPlusClearHints(uint64_t Hints)
+{
+    const uint64_t PlainPersistent =
+        Hints & ~(GQPLUS_TRANSFER_HINTS | GQPLUS_HINT_CUBIC_RECOVERY);
+    atomic_fetch_and_explicit(&PersistentHints, ~PlainPersistent, memory_order_relaxed);
+    CxPlatGreenQuicPlusEndTransfer(Hints & GQPLUS_TRANSFER_HINTS);
+    if ((Hints & GQPLUS_HINT_CUBIC_RECOVERY) != 0) {
+        CxPlatGreenQuicPlusEndRecovery();
+    }
+}
+
+void
+CxPlatGreenQuicPlusPulseHints(uint64_t Hints)
+{
+    const uint64_t Now = CxPlatGreenQuicPlusNowNs();
+
+    if ((Hints & GQPLUS_HINT_ACK_PENDING) != 0) {
+        CxPlatGreenQuicPlusExtendUntil(
+            &AckPendingUntilNs,
+            Now + GQPLUS_ACK_TTL_NS);
+    }
+    if ((Hints & GQPLUS_HINT_CUBIC_CWND_BLOCKED) != 0) {
+        CxPlatGreenQuicPlusExtendUntil(
+            &CwndBlockedUntilNs,
+            Now + GQPLUS_CWND_BLOCKED_TTL_NS);
+    }
+    if ((Hints & GQPLUS_HINT_CUBIC_RECOVERY) != 0) {
+        // Backward-compatible fallback. New CUBIC hooks use Begin/EndRecovery.
+        CxPlatGreenQuicPlusExtendUntil(
+            &RecoveryPulseUntilNs,
+            Now + GQPLUS_RECOVERY_PULSE_NS);
+    }
+    if ((Hints & GQPLUS_HINT_CUBIC_RAMPING) != 0) {
+        CxPlatGreenQuicPlusExtendUntil(
+            &CubicRampingUntilNs,
+            Now + GQPLUS_RAMPING_TTL_NS);
+    }
+
+    const uint64_t Other = Hints & ~GQPLUS_KNOWN_TRANSIENT_HINTS;
+    if (Other != 0) {
+        atomic_fetch_or_explicit(&OtherTransientHints, Other, memory_order_relaxed);
+        CxPlatGreenQuicPlusExtendUntil(
+            &OtherTransientUntilNs,
+            Now + GQPLUS_OTHER_TTL_NS);
+    }
+}
+
+uint64_t
+CxPlatGreenQuicPlusGetHints(void)
+{
+    const uint64_t Now = CxPlatGreenQuicPlusNowNs();
+    uint64_t Hints = atomic_load_explicit(&PersistentHints, memory_order_acquire);
+
+    if (Now <= atomic_load_explicit(&AckPendingUntilNs, memory_order_acquire)) {
+        Hints |= GQPLUS_HINT_ACK_PENDING;
+    }
+    if (Now <= atomic_load_explicit(&CwndBlockedUntilNs, memory_order_acquire)) {
+        Hints |= GQPLUS_HINT_CUBIC_CWND_BLOCKED;
+    }
+    if (Now <= atomic_load_explicit(&RecoveryPulseUntilNs, memory_order_acquire)) {
+        Hints |= GQPLUS_HINT_CUBIC_RECOVERY;
+    }
+    if (Now <= atomic_load_explicit(&CubicRampingUntilNs, memory_order_acquire)) {
+        Hints |= GQPLUS_HINT_CUBIC_RAMPING;
+    }
+    if (Now <= atomic_load_explicit(&OtherTransientUntilNs, memory_order_acquire)) {
+        Hints |= atomic_load_explicit(&OtherTransientHints, memory_order_relaxed);
+    } else {
+        atomic_store_explicit(&OtherTransientHints, 0, memory_order_relaxed);
+    }
+
+    return Hints;
+}
+
+
+uint64_t
+CxPlatGreenQuicPlusGetTxHints(void)
+{
+    // In the single-lcore path the same lcore owns RX and TX.
+    return CxPlatGreenQuicPlusGetHints();
+}
+
+#if 0
+/*
+ * GREENQUIC-OLD-V17: one shared transient bitmask and expiration.
+ * A later pulse extended unrelated older hint bits.
+ */
+#define GQPLUS_TRANSIENT_TTL_NS (2ull * 1000ull * 1000ull)
+static atomic_uint_fast64_t TransientHints;
+static atomic_uint_fast64_t TransientUntilNs;
+
+void CxPlatGreenQuicPlusPulseHints_V17(uint64_t Hints)
+{
+    const uint64_t Now = CxPlatGreenQuicPlusNowNs();
+    atomic_fetch_or_explicit(&TransientHints, Hints, memory_order_relaxed);
+    atomic_store_explicit(
+        &TransientUntilNs,
+        Now + GQPLUS_TRANSIENT_TTL_NS,
+        memory_order_relaxed);
+}
+#endif

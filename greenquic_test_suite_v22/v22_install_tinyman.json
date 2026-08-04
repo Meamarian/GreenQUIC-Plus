@@ -1,0 +1,10 @@
+{
+  "msquic": "/root/mohsen/msquic",
+  "dpdk": "/root/mohsen/msquic/deps/dpdk-install",
+  "expected_v22": "22-private-split-linux-dpdk",
+  "dpdk_version": "21.11.9",
+  "server_binary": "/root/mohsen/msquic/build-greenquic/bin/Release/quicinteropserver",
+  "client_binary": "/root/mohsen/msquic/build-greenquic/bin/Release/quicinterop",
+  "errors": [],
+  "warnings": []
+}

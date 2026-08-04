@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
+source "$HERE/config.env"
+"$HERE/../../../common/bin/run_role.sh" client "$HERE" "off" 0
+energy="$(find "$HERE/results" -maxdepth 1 -type f -name 'client_energy_off_*.json' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
+[[ -n "$energy" && -f "$energy" ]] || { echo 'ERROR: latest client energy/timing JSON not found' >&2; exit 2; }
+stamp="$(date +%Y%m%d_%H%M%S)"
+python3 "$HERE/../../../common/bin/report_goodput.py" \
+  --energy "$energy" --bytes "$PAYLOAD_BYTES" --mode "off" --test-id "$TEST_ID" \
+  --out "$HERE/results/goodput_off_${stamp}.json"

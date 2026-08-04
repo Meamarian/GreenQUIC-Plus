@@ -1,0 +1,4 @@
+T18 — V21 idle mechanism off, DVFS only
+=======================================
+Purpose: prove that `GreenQuicIdleMode=off` suppresses short sleep, pause, monitor and epoll while leaving the ordinary DVFS policy active.
+Required evidence: frequency-down/min action and zero cumulative idle-mechanism counters.

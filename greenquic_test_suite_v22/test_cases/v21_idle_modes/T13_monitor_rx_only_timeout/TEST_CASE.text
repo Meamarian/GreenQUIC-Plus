@@ -1,0 +1,5 @@
+T13 — V21 RX-only PMD descriptor monitor timeout
+================================================
+Purpose: exercise real `rte_power_monitor()` entry on an RX-only lcore and its watchdog timeout path.
+Hardware gate: CPU power-monitor intrinsic and PMD `rte_eth_get_monitor_addr()` support are mandatory; fallback is `fail`.
+Required evidence: RX-only `monitor_rx`, monitor attempts, and at least one watchdog timeout.

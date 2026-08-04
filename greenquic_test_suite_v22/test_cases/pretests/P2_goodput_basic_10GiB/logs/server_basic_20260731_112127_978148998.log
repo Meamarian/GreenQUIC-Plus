@@ -1,0 +1,62 @@
+GreenQUIC: MsQuic worker CPU list from dpdk.ini = 21,22,23,24
+using configuration file dpdk.ini!
+GreenQUIC: installed 4 explicit MsQuic partition -> DPDK lcore mapping entries.
+GreenQUIC idle config: mode=epoll fallback=0 sleep=1 freq=1 work_wait_min_idle_us=20000 work_wait_min_level=1000 watchdog_us=1000000 allow_active_transfer=0 pause_supported=0 monitor_supported=0 rx_interrupt_config_requested=1.
+config params:
+--------------
+MbufCacheSize = 256
+NumRxDescriptors = 4096
+NumTxDescriptors = 4096
+RxMbufPoolSize = 16383
+TxMbufPoolSize = 16383
+RxBurstSize = 32
+TxBurstSize = 32
+TxRingSize = 4096
+
+SeparateRxThread = 0
+SeparateTxThread = 0
+
+Found 5 DpdkInitArgs: secnetperf -l 19 -a 0000:18:00.0 
+--------------
+Log path: /tmp/
+EAL: Detected CPU lcores: 48
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'PA'
+EAL: No available 1048576 kB hugepages reported
+EAL: Probe PCI driver: net_ice (8086:1592) device: 0000:18:00.0 (socket 0)
+ice_load_pkg_type(): Active package is: 1.3.41.0, ICE OS Default Package (single VLAN mode)
+TELEMETRY: No legacy callbacks, legacy socket not created
+GreenQUIC idle: requesting DPDK RX-queue interrupts before port configuration (mode=epoll, rx_queues=1).
+GreenQUIC roles: lcores=1 rx_owners=1 rxq=1 tx_enabled=1 tx_owner=19 tx_owner_also_rx=1
+Mbuf fast free offload activated
+ice_set_rx_function(): Using AVX2 Vector Scattered Rx (port 0).
+
+Starting Port 0 on Interface 0, 6c:fe:54:59:98:b0
+
+Checking link status
+done
+Port 0 Link up at 100 Gbps FDX Autoneg
+POWER: Env isn't set yet!
+POWER: Attempting to initialise ACPI cpufreq power management...
+POWER: Power management governor of lcore 19 has been set to 'userspace' successfully
+POWER: failed to open /sys/devices/system/cpu/cpu%u/cpufreq/scaling_available_frequencies
+POWER: Cannot get available frequencies of lcore 19
+POWER: Attempting to initialise PSTAT power management...
+POWER: Power management governor of lcore 19 has been set to 'performance' successfully
+POWER: Initialized successfully for lcore 19 power management
+Core 19 RX/TX worker running...
+GreenQUIC lcore=19 owns_rx=0 owns_tx=0 mode=basic profile=server_download action=none hardmax=0 rxhard=0 txhard=0 control=0 rxctrl=0 txctrl=0 rxphysctrl=0 txphysctrl=0 rxburstp=0 rxqueuep=0 txburstp=0 txringp=0 rxbursta=0 rxqueuea=0 txbursta=0 txringa=0 rxfloor=0 txfloor=0 rxh=0x0 txh=0x0 txring=0 rxq=0 rx_pkts=0 tx_pkts=0 rx_empty=1 tx_empty=1 rx_full=0 tx_full=0 slept_us=0 cstate_attempt=0 cstate_ok=0 cstate_last_us=0 cstate_total_us=0 idle_mode=epoll monitor_try=0 monitor_wake=0 monitor_timeout=0 epoll_try=0 epoll_wake=0 epoll_timeout=0 wake_signal=0
+Waiting forever.
+
+GreenQUIC lcore=19 owns_rx=1 owns_tx=1 mode=basic profile=server_download action=sleep hardmax=0 rxhard=0 txhard=0 control=0 rxctrl=0 txctrl=0 rxphysctrl=0 txphysctrl=0 rxburstp=0 rxqueuep=0 txburstp=0 txringp=0 rxbursta=0 rxqueuea=0 txbursta=0 txringa=0 rxfloor=0 txfloor=0 rxh=0x0 txh=0x0 txring=0 rxq=0 rx_pkts=0 tx_pkts=0 rx_empty=115439 tx_empty=115439 rx_full=0 tx_full=0 slept_us=15439 cstate_attempt=0 cstate_ok=0 cstate_last_us=0 cstate_total_us=0 idle_mode=epoll monitor_try=0 monitor_wake=0 monitor_timeout=0 epoll_try=0 epoll_wake=0 epoll_timeout=0 wake_signal=0
+GreenQUIC lcore=19 owns_rx=1 owns_tx=1 mode=basic profile=server_download action=sleep hardmax=0 rxhard=0 txhard=0 control=0 rxctrl=0 txctrl=0 rxphysctrl=0 txphysctrl=0 rxburstp=0 rxqueuep=0 txburstp=0 txringp=0 rxbursta=0 rxqueuea=0 txbursta=0 txringa=0 rxfloor=0 txfloor=0 rxh=0x0 txh=0x0 txring=0 rxq=0 rx_pkts=0 tx_pkts=0 rx_empty=131203 tx_empty=131203 rx_full=0 tx_full=0 slept_us=31203 cstate_attempt=0 cstate_ok=0 cstate_last_us=0 cstate_total_us=0 idle_mode=epoll monitor_try=0 monitor_wake=0 monitor_timeout=0 epoll_try=0 epoll_wake=0 epoll_timeout=0 wake_signal=0
+GreenQUIC lcore=19 owns_rx=1 owns_tx=1 mode=basic profile=server_download action=sleep hardmax=0 rxhard=0 txhard=0 control=0 rxctrl=0 txctrl=0 rxphysctrl=0 txphysctrl=0 rxburstp=0 rxqueuep=0 txburstp=0 txringp=0 rxbursta=0 rxqueuea=0 txbursta=0 txringa=0 rxfloor=0 txfloor=0 rxh=0x0 txh=0x0 txring=0 rxq=0 rx_pkts=0 tx_pkts=0 rx_empty=146958 tx_empty=146958 rx_full=0 tx_full=0 slept_us=46958 cstate_attempt=0 cstate_ok=0 cstate_last_us=0 cstate_total_us=0 idle_mode=epoll monitor_try=0 monitor_wake=0 monitor_timeout=0 epoll_try=0 epoll_wake=0 epoll_timeout=0 wake_signal=0
+GreenQUIC lcore=19 owns_rx=1 owns_tx=1 mode=basic profile=server_download action=sleep hardmax=0 rxhard=0 txhard=0 control=0 rxctrl=0 txctrl=0 rxphysctrl=0 txphysctrl=0 rxburstp=0 rxqueuep=0 txburstp=0 txringp=0 rxbursta=0 rxqueuea=0 txbursta=0 txringa=0 rxfloor=0 txfloor=0 rxh=0x0 txh=0x0 txring=0 rxq=0 rx_pkts=0 tx_pkts=0 rx_empty=162674 tx_empty=162674 rx_full=0 tx_full=0 slept_us=62674 cstate_attempt=0 cstate_ok=0 cstate_last_us=0 cstate_total_us=0 idle_mode=epoll monitor_try=0 monitor_wake=0 monitor_timeout=0 epoll_try=0 epoll_wake=0 epoll_timeout=0 wake_signal=0
+GreenQUIC lcore=19 owns_rx=1 owns_tx=1 mode=basic profile=server_download action=sleep hardmax=0 rxhard=0 txhard=0 control=0 rxctrl=0 txctrl=0 rxphysctrl=0 txphysctrl=0 rxburstp=0 rxqueuep=0 txburstp=0 txringp=0 rxbursta=0 rxqueuea=0 txbursta=0 txringa=0 rxfloor=0 txfloor=0 rxh=0x0 txh=0x0 txring=0 rxq=0 rx_pkts=0 tx_pkts=0 rx_empty=178433 tx_empty=178433 rx_full=0 tx_full=0 slept_us=78433 cstate_attempt=0 cstate_ok=0 cstate_last_us=0 cstate_total_us=0 idle_mode=epoll monitor_try=0 monitor_wake=0 monitor_timeout=0 epoll_try=0 epoll_wake=0 epoll_timeout=0 wake_signal=0
+GreenQUIC lcore=19 owns_rx=1 owns_tx=1 mode=basic profile=server_download action=sleep hardmax=0 rxhard=0 txhard=0 control=0 rxctrl=0 txctrl=0 rxphysctrl=0 txphysctrl=0 rxburstp=0 rxqueuep=0 txburstp=0 txringp=0 rxbursta=0 rxqueuea=0 txbursta=0 txringa=0 rxfloor=0 txfloor=0 rxh=0x0 txh=0x0 txring=0 rxq=0 rx_pkts=0 tx_pkts=0 rx_empty=194196 tx_empty=194196 rx_full=0 tx_full=0 slept_us=94196 cstate_attempt=0 cstate_ok=0 cstate_last_us=0 cstate_total_us=0 idle_mode=epoll monitor_try=0 monitor_wake=0 monitor_timeout=0 epoll_try=0 epoll_wake=0 epoll_timeout=0 wake_signal=0
+GreenQUIC lcore=19 owns_rx=1 owns_tx=1 mode=basic profile=server_download action=sleep hardmax=0 rxhard=0 txhard=0 control=0 rxctrl=0 txctrl=0 rxphysctrl=0 txphysctrl=0 rxburstp=0 rxqueuep=0 txburstp=0 txringp=0 rxbursta=0 rxqueuea=0 txbursta=0 txringa=0 rxfloor=0 txfloor=0 rxh=0x0 txh=0x0 txring=0 rxq=0 rx_pkts=0 tx_pkts=0 rx_empty=209792 tx_empty=209792 rx_full=0 tx_full=0 slept_us=119584 cstate_attempt=0 cstate_ok=0 cstate_last_us=0 cstate_total_us=0 idle_mode=epoll monitor_try=0 monitor_wake=0 monitor_timeout=0 epoll_try=0 epoll_wake=0 epoll_timeout=0 wake_signal=0
+GreenQUIC lcore=19 owns_rx=1 owns_tx=1 mode=basic profile=server_download action=sleep hardmax=0 rxhard=0 txhard=0 control=0 rxctrl=0 txctrl=0 rxphysctrl=0 txphysctrl=0 rxburstp=0 rxqueuep=0 txburstp=0 txringp=0 rxbursta=0 rxqueuea=0 txbursta=0 txringa=0 rxfloor=0 txfloor=0 rxh=0x0 txh=0x0 txring=0 rxq=0 rx_pkts=0 tx_pkts=0 rx_empty=225301 tx_empty=225301 rx_full=0 tx_full=0 slept_us=150602 cstate_attempt=0 cstate_ok=0 cstate_last_us=0 cstate_total_us=0 idle_mode=epoll monitor_try=0 monitor_wake=0 monitor_timeout=0 epoll_try=0 epoll_wake=0 epoll_timeout=0 wake_signal=0
+GreenQUIC lcore=19 owns_rx=1 owns_tx=1 mode=basic profile=server_download action=sleep hardmax=0 rxhard=0 txhard=0 control=0 rxctrl=0 txctrl=0 rxphysctrl=0 txphysctrl=0 rxburstp=0 rxqueuep=0 txburstp=0 txringp=0 rxbursta=0 rxqueuea=0 txbursta=0 txringa=0 rxfloor=0 txfloor=0 rxh=0x0 txh=0x0 txring=0 rxq=0 rx_pkts=0 tx_pkts=0 rx_empty=240806 tx_empty=240806 rx_full=0 tx_full=0 slept_us=181612 cstate_attempt=0 cstate_ok=0 cstate_last_us=0 cstate_total_us=0 idle_mode=epoll monitor_try=0 monitor_wake=0 monitor_timeout=0 epoll_try=0 epoll_wake=0 epoll_timeout=0 wake_signal=0
+GreenQUIC lcore=19 owns_rx=1 owns_tx=1 mode=basic profile=server_download action=sleep hardmax=0 rxhard=0 txhard=0 control=0 rxctrl=0 txctrl=0 rxphysctrl=0 txphysctrl=0 rxburstp=0 rxqueuep=0 txburstp=0 txringp=0 rxbursta=0 rxqueuea=0 txbursta=0 txringa=0 rxfloor=0 txfloor=0 rxh=0x0 txh=0x0 txring=0 rxq=0 rx_pkts=0 tx_pkts=0 rx_empty=256311 tx_empty=256311 rx_full=0 tx_full=0 slept_us=212622 cstate_attempt=0 cstate_ok=0 cstate_last_us=0 cstate_total_us=0 idle_mode=epoll monitor_try=0 monitor_wake=0 monitor_timeout=0 epoll_try=0 epoll_wake=0 epoll_timeout=0 wake_signal=0

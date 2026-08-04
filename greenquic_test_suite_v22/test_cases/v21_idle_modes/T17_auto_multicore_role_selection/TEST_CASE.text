@@ -1,0 +1,6 @@
+T17 — V21 auto-mode role selection
+==================================
+Purpose: prove that `auto` chooses descriptor monitor only on the RX-only lcore and eventfd/epoll on the TX-only owner.
+Workload: persistent in-process client, four parallel connections per batch, 50-ms gaps, two DPDK lcores with `TxOwnerAlsoRx=0`.
+Required evidence: owns_rx=1/owns_tx=0 uses `monitor_rx`; owns_rx=0/owns_tx=1 uses `epoll_work_wait` and receives software wake signals.
+Hardware gate: monitor and RX-interrupt APIs must both be supported.

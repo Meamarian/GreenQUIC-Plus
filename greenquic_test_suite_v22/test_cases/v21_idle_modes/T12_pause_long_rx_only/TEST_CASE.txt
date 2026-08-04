@@ -1,0 +1,5 @@
+T12 — V21 long optimized pause on an RX-only lcore
+==================================================
+Purpose: make the non-TX RX lcore reach the 300-us requested pause tier while the TX owner remains capped at 50 us.
+Topology: two DPDK lcores; TX owner is TX-only and the second lcore is RX-only.
+Required evidence on owns_rx=1/owns_tx=0: `optimized_pause_long`, requested duration 300 us, and at least one successful pause.

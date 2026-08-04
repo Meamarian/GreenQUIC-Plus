@@ -1,0 +1,31 @@
+MsQuic execution configuration for T12 (server)
+===============================================
+
+Test title:
+    V21 long optimized pause on RX-only lcore
+
+Native configuration mechanism in the V21 patched repository:
+    The patched quicinterop/quicinteropserver reads the role-local dpdk.ini
+    before RegistrationOpen and builds QUIC_EXECUTION_CONFIG.
+
+Configured keys:
+    GreenQuicQuicWorkerCpus=16,17,18,19
+    GreenQuicQuicProfile=max_throughput
+    GreenQuicProfile=server_download
+
+Configured worker CPUs: 16,17,18,19
+Configured worker count: 4
+Configured partition count: 4
+DPDK multicore enabled: 1
+
+Connection ownership:
+    Every connection has one MsQuic owner partition. Streams remain under that
+    connection owner. RSS independently selects an RX queue; the partition map
+    routes QUIC hints and does not force the NIC's RSS decision.
+
+Final V21 configuration split
+-----------------------------
+dpdk.ini controls mode, endpoint profile, lcores, RX/TX ownership, workers and
+partition mapping. powermng.ini controls separated physical signals, QUIC
+floors, DVFS, bounded short sleep, optimized pause, monitor/epoll selection,
+watchdog, fallback and logging. Both files are read at process startup.

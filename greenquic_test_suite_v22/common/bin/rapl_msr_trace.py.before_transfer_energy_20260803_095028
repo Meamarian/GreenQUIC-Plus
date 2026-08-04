@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Summarize and plot the GreenQUIC C RAPL/MSR sample stream."""
+from __future__ import annotations
+
+import argparse
+import csv
+import html
+import json
+import math
+import os
+import statistics
+from pathlib import Path
+from typing import Any
+
+from gq_plot import write_line_svg
+
+
+def percentile(values: list[float], q: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    position = (len(ordered) - 1) * q
+    low = math.floor(position)
+    high = math.ceil(position)
+    if low == high:
+        return ordered[low]
+    fraction = position - low
+    return ordered[low] * (1.0 - fraction) + ordered[high] * fraction
+
+
+def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    value = int(raw)
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
+def read_csv(path: Path) -> tuple[dict[str, str], list[dict[str, float]]]:
+    metadata: dict[str, str] = {}
+    data_lines: list[str] = []
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if raw.startswith("# ") and "=" in raw:
+            key, value = raw[2:].split("=", 1)
+            metadata[key.strip()] = value.strip()
+        elif raw and not raw.startswith("#"):
+            data_lines.append(raw)
+    if not data_lines:
+        return metadata, []
+    rows: list[dict[str, float]] = []
+    for row in csv.DictReader(data_lines):
+        try:
+            rows.append({key: float(value) for key, value in row.items() if key is not None and value is not None})
+        except ValueError:
+            continue
+    return metadata, rows
+
+
+def histogram_svg(path: Path, values: list[float], role: str) -> None:
+    width = env_int("GQ_MSR_HISTOGRAM_WIDTH_PX", 1800, 800, 20000)
+    height = env_int("GQ_MSR_HISTOGRAM_HEIGHT_PX", 700, 400, 5000)
+    bins = env_int("GQ_MSR_HISTOGRAM_BINS", 60, 5, 500)
+    left, right, top, bottom = 110, 50, 70, 95
+    plot_w, plot_h = width - left - right, height - top - bottom
+    if not values:
+        path.write_text(
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">'
+            '<text x="40" y="60" font-family="sans-serif">No RAPL/MSR samples available.</text></svg>\n',
+            encoding="utf-8",
+        )
+        return
+    low, high = min(values), max(values)
+    if high <= low:
+        high = low + 1.0
+    counts = [0] * bins
+    for value in values:
+        index = min(bins - 1, int((value - low) / (high - low) * bins))
+        counts[index] += 1
+    max_count = max(counts) or 1
+    bar_w = plot_w / bins
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        f'<text x="{width/2:.1f}" y="34" text-anchor="middle" font-family="sans-serif" font-size="24">GreenQUIC {html.escape(role)} RAPL/MSR total-power distribution</text>',
+    ]
+    for index, count in enumerate(counts):
+        x = left + index * bar_w
+        h = count / max_count * plot_h
+        out.append(f'<rect x="{x:.2f}" y="{top + plot_h - h:.2f}" width="{max(1.0, bar_w - 1.0):.2f}" height="{h:.2f}" fill="#1f77b4"/>')
+    out.extend([
+        f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top+plot_h}" stroke="black" stroke-width="2"/>',
+        f'<line x1="{left}" y1="{top+plot_h}" x2="{left+plot_w}" y2="{top+plot_h}" stroke="black" stroke-width="2"/>',
+        f'<text x="{left}" y="{top+plot_h+32}" text-anchor="middle" font-family="monospace" font-size="14">{low:.2f}</text>',
+        f'<text x="{left+plot_w}" y="{top+plot_h+32}" text-anchor="middle" font-family="monospace" font-size="14">{high:.2f}</text>',
+        f'<text x="{width/2:.1f}" y="{height-24}" text-anchor="middle" font-family="sans-serif" font-size="17">Smoothed package + DRAM power [W]</text>',
+        f'<text x="28" y="{height/2:.1f}" text-anchor="middle" font-family="sans-serif" font-size="17" transform="rotate(-90 28 {height/2:.1f})">Sample count</text>',
+        '</svg>',
+    ])
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--csv", type=Path, required=True)
+    parser.add_argument("--json", type=Path, required=True)
+    parser.add_argument("--timeseries-svg", type=Path, required=True)
+    parser.add_argument("--histogram-svg", type=Path, required=True)
+    parser.add_argument("--energy-timeseries-svg", type=Path, required=True)
+    parser.add_argument("--role", choices=("server", "client"), required=True)
+    args = parser.parse_args()
+
+    metadata, rows = read_csv(args.csv)
+    if not rows:
+        raise SystemExit(f"ERROR: no valid RAPL/MSR samples in {args.csv}")
+
+    elapsed_ms = [row["elapsed_ms"] for row in rows]
+    intervals = [row["actual_interval_ms"] for row in rows]
+    package_smooth = [row["package_power_smoothed_w"] for row in rows]
+    dram_smooth = [row["dram_power_smoothed_w"] for row in rows]
+    total_smooth = [row["total_power_smoothed_w"] for row in rows]
+    package_energy = sum(row["package_delta_j"] for row in rows)
+    dram_energy = sum(row["dram_delta_j"] for row in rows)
+    duration_s = elapsed_ms[-1] / 1000.0
+
+    args.timeseries_svg.parent.mkdir(parents=True, exist_ok=True)
+    plot = write_line_svg(
+        args.timeseries_svg,
+        kind="msr",
+        title=f"GreenQUIC {args.role} RAPL/MSR package and DRAM power",
+        y_label="Power [W]",
+        series=[
+            {"label": "Package", "points": list(zip(elapsed_ms, package_smooth))},
+            {"label": "DRAM", "points": list(zip(elapsed_ms, dram_smooth))},
+            {"label": "Package + DRAM", "points": list(zip(elapsed_ms, total_smooth))},
+        ],
+        duration_ms=elapsed_ms[-1],
+        step=False,
+        y_value_format=".2f",
+    )
+    histogram_svg(args.histogram_svg, total_smooth, args.role)
+
+    cumulative_package: list[float] = []
+    cumulative_dram: list[float] = []
+    cumulative_total: list[float] = []
+    package_running = 0.0
+    dram_running = 0.0
+    for row in rows:
+        package_running += row["package_delta_j"]
+        dram_running += row["dram_delta_j"]
+        cumulative_package.append(package_running)
+        cumulative_dram.append(dram_running)
+        cumulative_total.append(package_running + dram_running)
+
+    energy_plot = write_line_svg(
+        args.energy_timeseries_svg,
+        kind="msr",
+        title=f"GreenQUIC {args.role} RAPL/MSR cumulative energy",
+        y_label="Energy [J]",
+        series=[
+            {"label": "Package", "points": list(zip(elapsed_ms, cumulative_package))},
+            {"label": "DRAM", "points": list(zip(elapsed_ms, cumulative_dram))},
+            {"label": "Package + DRAM", "points": list(zip(elapsed_ms, cumulative_total))},
+        ],
+        duration_ms=elapsed_ms[-1],
+        step=False,
+        y_value_format=".3f",
+    )
+
+    requested_interval = float(metadata.get("requested_interval_ms", "nan"))
+    smoothing_samples = int(float(metadata.get("smoothing_samples", "0")))
+    result: dict[str, Any] = {
+        "schema": "greenquic-rapl-msr-summary-v1",
+        "source": "Linux Intel RAPL powercap counters sampled by compiled C helper",
+        "role": args.role,
+        "sample_count": len(rows),
+        "duration_s": duration_s,
+        "requested_interval_ms": requested_interval,
+        "smoothing_samples": smoothing_samples,
+        "nominal_smoothing_window_ms": requested_interval * smoothing_samples,
+        "actual_interval_ms_min": min(intervals),
+        "actual_interval_ms_median": statistics.median(intervals),
+        "actual_interval_ms_p95": percentile(intervals, 0.95),
+        "actual_interval_ms_max": max(intervals),
+        "package_energy_j": package_energy,
+        "dram_energy_j": dram_energy,
+        "total_energy_j": package_energy + dram_energy,
+        "average_package_power_w": package_energy / duration_s if duration_s > 0 else None,
+        "average_dram_power_w": dram_energy / duration_s if duration_s > 0 else None,
+        "average_total_power_w": (package_energy + dram_energy) / duration_s if duration_s > 0 else None,
+        "smoothed_total_power_w_min": min(total_smooth),
+        "smoothed_total_power_w_median": statistics.median(total_smooth),
+        "smoothed_total_power_w_p95": percentile(total_smooth, 0.95),
+        "smoothed_total_power_w_max": max(total_smooth),
+        "power_plot": {
+            "width_px": plot.width,
+            "height_px": plot.height,
+            "x_tick_ms": plot.tick_ms,
+            "x_label_ms": plot.label_ms,
+        },
+        "energy_plot": {
+            "width_px": energy_plot.width,
+            "height_px": energy_plot.height,
+            "x_tick_ms": energy_plot.tick_ms,
+            "x_label_ms": energy_plot.label_ms,
+        },
+    }
+    args.json.parent.mkdir(parents=True, exist_ok=True)
+    args.json.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

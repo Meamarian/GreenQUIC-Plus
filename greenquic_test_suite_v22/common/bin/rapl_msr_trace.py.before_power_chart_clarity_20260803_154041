@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+"""Summarize and plot whole-run plus DPDK-active-window RAPL samples."""
+from __future__ import annotations
+
+import argparse
+import csv
+import html
+import json
+import math
+import os
+import statistics
+from pathlib import Path
+from typing import Any
+
+from gq_plot import write_line_svg
+
+
+def percentile(values: list[float], q: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    position = (len(ordered) - 1) * q
+    low = math.floor(position)
+    high = math.ceil(position)
+    if low == high:
+        return ordered[low]
+    fraction = position - low
+    return ordered[low] * (1.0 - fraction) + ordered[high] * fraction
+
+
+def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    value = int(raw)
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
+def read_csv(path: Path) -> tuple[dict[str, str], list[dict[str, float]]]:
+    metadata: dict[str, str] = {}
+    data_lines: list[str] = []
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if raw.startswith("# ") and "=" in raw:
+            key, value = raw[2:].split("=", 1)
+            metadata[key.strip()] = value.strip()
+        elif raw and not raw.startswith("#"):
+            data_lines.append(raw)
+    if not data_lines:
+        return metadata, []
+    rows: list[dict[str, float]] = []
+    for row in csv.DictReader(data_lines):
+        try:
+            rows.append({
+                key: float(value)
+                for key, value in row.items()
+                if key is not None and value is not None
+            })
+        except ValueError:
+            continue
+    return metadata, rows
+
+
+def histogram_svg(path: Path, values: list[float], role: str, scope: str) -> None:
+    width = env_int("GQ_MSR_HISTOGRAM_WIDTH_PX", 24000, 800, 120000)
+    height = env_int("GQ_MSR_HISTOGRAM_HEIGHT_PX", 3500, 400, 20000)
+    bins = env_int("GQ_MSR_HISTOGRAM_BINS", 100, 5, 1000)
+    left, right, top, bottom = 150, 80, 110, 150
+    plot_w, plot_h = width - left - right, height - top - bottom
+    if not values:
+        path.write_text(
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">'
+            '<text x="40" y="60" font-family="sans-serif">No RAPL samples available.</text></svg>\n',
+            encoding="utf-8",
+        )
+        return
+    low, high = min(values), max(values)
+    if high <= low:
+        high = low + 1.0
+    counts = [0] * bins
+    for value in values:
+        index = min(bins - 1, int((value - low) / (high - low) * bins))
+        counts[index] += 1
+    max_count = max(counts) or 1
+    bar_w = plot_w / bins
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        f'<text x="{width/2:.1f}" y="54" text-anchor="middle" font-family="sans-serif" font-size="34">GreenQUIC {html.escape(role)} RAPL power distribution — {html.escape(scope)}</text>',
+    ]
+    for index, count in enumerate(counts):
+        x = left + index * bar_w
+        h = count / max_count * plot_h
+        out.append(
+            f'<rect x="{x:.2f}" y="{top + plot_h - h:.2f}" width="{max(1.0, bar_w - 1.0):.2f}" height="{h:.2f}" fill="#1f77b4"/>'
+        )
+    out.extend([
+        f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top+plot_h}" stroke="black" stroke-width="2"/>',
+        f'<line x1="{left}" y1="{top+plot_h}" x2="{left+plot_w}" y2="{top+plot_h}" stroke="black" stroke-width="2"/>',
+        f'<text x="{left}" y="{top+plot_h+48}" text-anchor="middle" font-family="monospace" font-size="20">{low:.2f}</text>',
+        f'<text x="{left+plot_w}" y="{top+plot_h+48}" text-anchor="middle" font-family="monospace" font-size="20">{high:.2f}</text>',
+        f'<text x="{width/2:.1f}" y="{height-42}" text-anchor="middle" font-family="sans-serif" font-size="24">Smoothed package + DRAM power [W]</text>',
+        f'<text x="42" y="{height/2:.1f}" text-anchor="middle" font-family="sans-serif" font-size="24" transform="rotate(-90 42 {height/2:.1f})">Sample count</text>',
+        '</svg>',
+    ])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def scope_metrics(rows: list[dict[str, float]], duration_s: float) -> dict[str, Any]:
+    intervals = [row["actual_interval_ms"] for row in rows]
+    total_smooth = [row["total_power_smoothed_w"] for row in rows]
+    package_energy = sum(row["package_delta_j"] for row in rows)
+    dram_energy = sum(row["dram_delta_j"] for row in rows)
+    return {
+        "sample_count": len(rows),
+        "duration_s": duration_s,
+        "actual_interval_ms_min": min(intervals) if intervals else None,
+        "actual_interval_ms_median": statistics.median(intervals) if intervals else None,
+        "actual_interval_ms_p95": percentile(intervals, 0.95),
+        "actual_interval_ms_max": max(intervals) if intervals else None,
+        "package_energy_j": package_energy,
+        "dram_energy_j": dram_energy,
+        "total_energy_j": package_energy + dram_energy,
+        "average_package_power_w": package_energy / duration_s if duration_s > 0 else None,
+        "average_dram_power_w": dram_energy / duration_s if duration_s > 0 else None,
+        "average_total_power_w": (package_energy + dram_energy) / duration_s if duration_s > 0 else None,
+        "smoothed_total_power_w_min": min(total_smooth) if total_smooth else None,
+        "smoothed_total_power_w_median": statistics.median(total_smooth) if total_smooth else None,
+        "smoothed_total_power_w_p95": percentile(total_smooth, 0.95),
+        "smoothed_total_power_w_max": max(total_smooth) if total_smooth else None,
+    }
+
+
+def write_scope_plots(
+    *,
+    rows: list[dict[str, float]],
+    role: str,
+    scope: str,
+    power_svg: Path,
+    energy_svg: Path,
+    histogram: Path,
+    duration_ms: float,
+) -> tuple[Any, Any]:
+    elapsed_ms = [row["elapsed_ms"] for row in rows]
+    package_smooth = [row["package_power_smoothed_w"] for row in rows]
+    dram_smooth = [row["dram_power_smoothed_w"] for row in rows]
+    total_smooth = [row["total_power_smoothed_w"] for row in rows]
+
+    power_plot = write_line_svg(
+        power_svg,
+        kind="msr",
+        title=f"GreenQUIC {role} RAPL package and DRAM power — {scope}",
+        y_label="Power [W]",
+        series=[
+            {"label": "Package", "points": list(zip(elapsed_ms, package_smooth))},
+            {"label": "DRAM", "points": list(zip(elapsed_ms, dram_smooth))},
+            {"label": "Package + DRAM", "points": list(zip(elapsed_ms, total_smooth))},
+        ],
+        duration_ms=duration_ms,
+        step=False,
+        y_value_format=".2f",
+    )
+    histogram_svg(histogram, total_smooth, role, scope)
+
+    cumulative_package: list[float] = []
+    cumulative_dram: list[float] = []
+    cumulative_total: list[float] = []
+    package_running = 0.0
+    dram_running = 0.0
+    for row in rows:
+        package_running += row["package_delta_j"]
+        dram_running += row["dram_delta_j"]
+        cumulative_package.append(package_running)
+        cumulative_dram.append(dram_running)
+        cumulative_total.append(package_running + dram_running)
+
+    energy_plot = write_line_svg(
+        energy_svg,
+        kind="msr",
+        title=f"GreenQUIC {role} RAPL cumulative energy — {scope}",
+        y_label="Energy [J]",
+        series=[
+            {"label": "Package", "points": list(zip(elapsed_ms, cumulative_package))},
+            {"label": "DRAM", "points": list(zip(elapsed_ms, cumulative_dram))},
+            {"label": "Package + DRAM", "points": list(zip(elapsed_ms, cumulative_total))},
+        ],
+        duration_ms=duration_ms,
+        step=False,
+        y_value_format=".3f",
+    )
+    return power_plot, energy_plot
+
+
+def read_window(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.is_file():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not value.get("valid"):
+        return {}
+    start = int(value.get("first_rx_monotonic_ns", 0) or 0)
+    end = int(value.get("window_end_monotonic_ns", 0) or 0)
+    return value if start > 0 and end > start else {}
+
+
+def clip_rows(
+    rows: list[dict[str, float]],
+    start_ns: int,
+    end_ns: int,
+) -> list[dict[str, float]]:
+    clipped: list[dict[str, float]] = []
+    for row in rows:
+        sample_end = int(row.get("sample_monotonic_ns", 0))
+        interval_ns = max(1, int(row["actual_interval_ms"] * 1_000_000.0))
+        sample_start = sample_end - interval_ns
+        overlap_start = max(sample_start, start_ns)
+        overlap_end = min(sample_end, end_ns)
+        if overlap_end <= overlap_start:
+            continue
+        fraction = (overlap_end - overlap_start) / interval_ns
+        item = dict(row)
+        item["elapsed_ms"] = (overlap_end - start_ns) / 1_000_000.0
+        item["actual_interval_ms"] = (overlap_end - overlap_start) / 1_000_000.0
+        item["package_delta_j"] = row["package_delta_j"] * fraction
+        item["dram_delta_j"] = row["dram_delta_j"] * fraction
+        clipped.append(item)
+    return clipped
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--csv", type=Path, required=True)
+    parser.add_argument("--json", type=Path, required=True)
+    parser.add_argument("--timeseries-svg", type=Path, required=True)
+    parser.add_argument("--histogram-svg", type=Path, required=True)
+    parser.add_argument("--energy-timeseries-svg", type=Path, required=True)
+    parser.add_argument("--transfer-window-json", type=Path)
+    parser.add_argument("--transfer-timeseries-svg", type=Path)
+    parser.add_argument("--transfer-histogram-svg", type=Path)
+    parser.add_argument("--transfer-energy-timeseries-svg", type=Path)
+    parser.add_argument("--role", choices=("server", "client"), required=True)
+    args = parser.parse_args()
+
+    metadata, rows = read_csv(args.csv)
+    if not rows:
+        raise SystemExit(f"ERROR: no valid RAPL samples in {args.csv}")
+    if "sample_monotonic_ns" not in rows[0]:
+        raise SystemExit("ERROR: RAPL CSV lacks sample_monotonic_ns; rebuild the helper")
+
+    whole_duration_ms = rows[-1]["elapsed_ms"]
+    whole_power_plot, whole_energy_plot = write_scope_plots(
+        rows=rows,
+        role=args.role,
+        scope="whole run",
+        power_svg=args.timeseries_svg,
+        energy_svg=args.energy_timeseries_svg,
+        histogram=args.histogram_svg,
+        duration_ms=whole_duration_ms,
+    )
+    whole = scope_metrics(rows, whole_duration_ms / 1000.0)
+
+    requested_interval = float(metadata.get("requested_interval_ms", "nan"))
+    smoothing_samples = int(float(metadata.get("smoothing_samples", "0")))
+    result: dict[str, Any] = {
+        "schema": "greenquic-rapl-msr-summary-v2",
+        "source": "Linux Intel RAPL powercap counters sampled by compiled C helper",
+        "role": args.role,
+        "requested_interval_ms": requested_interval,
+        "smoothing_samples": smoothing_samples,
+        "nominal_smoothing_window_ms": requested_interval * smoothing_samples,
+        "whole_run": whole,
+        "transfer_window": None,
+        **whole,
+        "power_plot": {
+            "width_px": whole_power_plot.width,
+            "height_px": whole_power_plot.height,
+            "x_tick_ms": whole_power_plot.tick_ms,
+            "x_label_ms": whole_power_plot.label_ms,
+        },
+        "energy_plot": {
+            "width_px": whole_energy_plot.width,
+            "height_px": whole_energy_plot.height,
+            "x_tick_ms": whole_energy_plot.tick_ms,
+            "x_label_ms": whole_energy_plot.label_ms,
+        },
+    }
+
+    window = read_window(args.transfer_window_json)
+    if window:
+        start_ns = int(window["first_rx_monotonic_ns"])
+        end_ns = int(window["window_end_monotonic_ns"])
+        transfer_rows = clip_rows(rows, start_ns, end_ns)
+        if transfer_rows:
+            transfer_duration_s = (end_ns - start_ns) / 1_000_000_000.0
+            transfer = scope_metrics(transfer_rows, transfer_duration_s)
+            transfer.update({
+                "start_monotonic_ns": start_ns,
+                "end_monotonic_ns": end_ns,
+                "boundary": "first DPDK RX packet to last DPDK TX packet",
+                "rx_packets": window.get("rx_packets"),
+                "tx_packets": window.get("tx_packets"),
+                "interval_boundary_energy_proration": True,
+            })
+            if not all((
+                args.transfer_timeseries_svg,
+                args.transfer_histogram_svg,
+                args.transfer_energy_timeseries_svg,
+            )):
+                raise SystemExit("ERROR: transfer SVG paths are incomplete")
+            transfer_power_plot, transfer_energy_plot = write_scope_plots(
+                rows=transfer_rows,
+                role=args.role,
+                scope="active transfer",
+                power_svg=args.transfer_timeseries_svg,
+                energy_svg=args.transfer_energy_timeseries_svg,
+                histogram=args.transfer_histogram_svg,
+                duration_ms=transfer_duration_s * 1000.0,
+            )
+            transfer["power_plot"] = {
+                "width_px": transfer_power_plot.width,
+                "height_px": transfer_power_plot.height,
+                "x_tick_ms": transfer_power_plot.tick_ms,
+                "x_label_ms": transfer_power_plot.label_ms,
+            }
+            transfer["energy_plot"] = {
+                "width_px": transfer_energy_plot.width,
+                "height_px": transfer_energy_plot.height,
+                "x_tick_ms": transfer_energy_plot.tick_ms,
+                "x_label_ms": transfer_energy_plot.label_ms,
+            }
+            result["transfer_window"] = transfer
+
+    args.json.parent.mkdir(parents=True, exist_ok=True)
+    args.json.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

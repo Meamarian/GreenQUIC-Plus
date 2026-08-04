@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+import argparse, csv, json, os, statistics
+from collections import Counter, defaultdict
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
+
+
+def env_float(name, default):
+    try: return float(os.environ.get(name, default))
+    except Exception: return float(default)
+
+
+def env_int(name, default):
+    try: return int(os.environ.get(name, default))
+    except Exception: return int(default)
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--csv", type=Path, required=True)
+    p.add_argument("--summary", type=Path, required=True)
+    p.add_argument("--timeline-svg", type=Path, required=True)
+    p.add_argument("--histogram-svg", type=Path, required=True)
+    p.add_argument("--role", required=True)
+    a = p.parse_args()
+
+    rows = []
+    with a.csv.open(newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            r["relative_ns"] = int(r["relative_ns"])
+            r["cpu"] = int(r["cpu"])
+            r["state"] = int(r["state"])
+            r["previous_state"] = int(r["previous_state"])
+            r["idle_duration_ns"] = int(r["idle_duration_ns"])
+            rows.append(r)
+    summary = json.loads(a.summary.read_text(encoding="utf-8")) if a.summary.exists() else {}
+
+    width_px = env_int("GQ_CSTATE_PLOT_WIDTH_PX", env_int("GQ_PLOT_WIDTH_PX", 24000))
+    height_px = env_int("GQ_CSTATE_PLOT_HEIGHT_PX", env_int("GQ_PLOT_HEIGHT_PX", 3500))
+    dpi = 100
+    tick_ms = env_float("GQ_CSTATE_PLOT_X_TICK_MS", 10)
+    label_ms = env_float("GQ_CSTATE_PLOT_X_LABEL_MS", 100)
+    cpus = sorted({r["cpu"] for r in rows})
+
+    fig, ax = plt.subplots(figsize=(width_px / dpi, height_px / dpi), dpi=dpi)
+    ymap = {cpu: i for i, cpu in enumerate(cpus)}
+    for r in rows:
+        if r["event"] != "wake" or r["previous_state"] < 0 or r["idle_duration_ns"] <= 0: continue
+        end_ms = r["relative_ns"] / 1e6
+        start_ms = end_ms - r["idle_duration_ns"] / 1e6
+        y = ymap[r["cpu"]]
+        ax.broken_barh([(start_ms, end_ms - start_ms)], (y - .38, .76))
+    ax.set_yticks(list(ymap.values()), [f"CPU {c}" for c in cpus])
+    ax.set_xlabel("Time from first cpu_idle event (ms)")
+    ax.set_ylabel("Traced CPU")
+    ax.set_title(f"GreenQUIC Linux C-state residency — {a.role}")
+    ax.xaxis.set_minor_locator(MultipleLocator(tick_ms))
+    ax.xaxis.set_major_locator(MultipleLocator(label_ms))
+    ax.grid(True, axis="x", which="major")
+    ax.grid(True, axis="x", which="minor", alpha=.2)
+    fig.tight_layout()
+    fig.savefig(a.timeline_svg, format="svg")
+    plt.close(fig)
+
+    durations = defaultdict(list)
+    for r in rows:
+        if r["event"] == "wake" and r["previous_state"] >= 0 and r["idle_duration_ns"] > 0:
+            durations[r["previous_state"]].append(r["idle_duration_ns"] / 1e6)
+    states = sorted(durations)
+    counts = [len(durations[s]) for s in states]
+    fig, ax = plt.subplots(figsize=(max(12, len(states) * 2), 8), dpi=dpi)
+    ax.bar([str(s) for s in states], counts)
+    ax.set_xlabel("Linux cpu_idle state index")
+    ax.set_ylabel("Completed idle intervals / wakeups")
+    ax.set_title(f"GreenQUIC C-state wakeup histogram — {a.role}")
+    ax.grid(True, axis="y", alpha=.3)
+    fig.tight_layout()
+    fig.savefig(a.histogram_svg, format="svg")
+    plt.close(fig)
+
+    # Add plot-friendly aggregate fields without changing raw C timestamps.
+    summary["completed_idle_intervals"] = sum(counts)
+    summary["state_interval_counts"] = {str(s): len(durations[s]) for s in states}
+    summary["state_total_idle_ms"] = {str(s): sum(durations[s]) for s in states}
+    summary["state_median_idle_us"] = {
+        str(s): statistics.median(durations[s]) * 1000.0 for s in states if durations[s]
+    }
+    a.summary.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+
+if __name__ == "__main__": main()
