@@ -266,7 +266,9 @@ cmake -S "$MSQUIC_SRC" -B "$MSQUIC_BUILD" -G Ninja \
     -DQUIC_ENABLE_LOGGING=ON \
     -DQUIC_LOGGING_TYPE=stdout
 
-cmake --build "$MSQUIC_BUILD" --target secnetperf --parallel "$JOBS"
+cmake --build "$MSQUIC_BUILD" \
+    --target secnetperf quicinteropserver quicinterop \
+    --parallel "$JOBS"
 
 SECNETPERF_BIN="$(find "$MSQUIC_BUILD" -type f -name secnetperf -perm -111 -print -quit)"
 [[ -n "$SECNETPERF_BIN" ]] || { echo "ERROR: secnetperf was not produced" >&2; exit 1; }
