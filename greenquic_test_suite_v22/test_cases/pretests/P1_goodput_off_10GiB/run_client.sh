@@ -3,6 +3,11 @@ set -euo pipefail
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 source "$HERE/config.env"
 "$HERE/../../../common/bin/run_role.sh" client "$HERE" "off" 0
+
+# GREENQUIC-ENABLE-RECORD-V1: run_role already printed goodput and removed transient artifacts.
+if [[ "${ENABLE_RECORD:-1}" == 0 ]]; then
+    exit 0
+fi
 # GREENQUIC-V22-DOWNLOAD-CLEANUP-HOTFIX
 manifest="$(find "$HERE/results" -maxdepth 1 -type f -name 'client_download_manifest_off_*.json' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
 [[ -n "$manifest" && -f "$manifest" ]] || { echo 'ERROR: latest client download manifest not found' >&2; exit 2; }

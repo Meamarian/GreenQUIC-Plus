@@ -4,6 +4,34 @@ set -euo pipefail
 GQ_COMMON_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SUITE_ROOT="$(cd -- "$GQ_COMMON_DIR/.." && pwd)"
 
+# GREENQUIC-ENABLE-RECORD-V1: recording/report generation is independent of GQ_LOG_LEVEL.
+: "${ENABLE_RECORD:=1}"
+case "${ENABLE_RECORD,,}" in
+    1|true|yes|on) ENABLE_RECORD=1 ;;
+    0|false|no|off) ENABLE_RECORD=0 ;;
+    *) printf 'ERROR: ENABLE_RECORD must be 0 or 1\n' >&2; return 2 2>/dev/null || exit 2 ;;
+esac
+export ENABLE_RECORD
+
+gq_recording_enabled() { [[ "${ENABLE_RECORD:-1}" == 1 ]]; }
+
+gq_apply_recording_mode() {
+    if gq_recording_enabled; then
+        GQ_ENABLE_ACPI_POWER_TRACE=1
+        GQ_ENABLE_MSR_TRACE=1
+        ENABLE_CSTATE_RECORD=1
+        GQ_ENABLE_FREQ_TRACE=1
+    else
+        GQ_ENABLE_ACPI_POWER_TRACE=0
+        GQ_ENABLE_MSR_TRACE=0
+        ENABLE_CSTATE_RECORD=0
+        GQ_ENABLE_FREQ_TRACE=0
+        GQ_POST_TRANSFER_WAIT_S=0
+    fi
+    export GQ_ENABLE_ACPI_POWER_TRACE GQ_ENABLE_MSR_TRACE
+    export ENABLE_CSTATE_RECORD GQ_ENABLE_FREQ_TRACE GQ_POST_TRANSFER_WAIT_S
+}
+
 
 # GREENQUIC-V22-SUITE-WIDE-DEFAULTS-V1
 # Defaults requested for normal GreenQUIC executions. Any value supplied in the
@@ -52,6 +80,7 @@ export GQ_FREQ_PLOT_X_TICK_MS GQ_FREQ_PLOT_X_LABEL_MS GQ_FREQ_PLOT_Y_TICKS
 
 # shellcheck source=/dev/null
 source "$SUITE_ROOT/suite.env"
+gq_apply_recording_mode
 
 log() { printf '\n[GreenQUIC-Test] %s\n' "$*" >&2; }
 warn() { printf '\n[GreenQUIC-Test:WARN] %s\n' "$*" >&2; }
@@ -113,13 +142,17 @@ load_test() {
     TEST_DIR="$(cd -- "$1" && pwd)"
     # shellcheck source=/dev/null
     source "$TEST_DIR/config.env"
+    gq_apply_recording_mode
     EFFECTIVE_GQ_LOG_LEVEL="${TEST_GQ_LOG_LEVEL:-$GQ_LOG_LEVEL}"
     EFFECTIVE_GQ_STATS_PERIOD_US="${TEST_GQ_STATS_PERIOD_US:-$GQ_STATS_PERIOD_US}"
     GQ_REQUIRE_RAPL="${TEST_GQ_REQUIRE_RAPL:-$GQ_REQUIRE_RAPL}"
     CLIENT_TIMEOUT_MS="${TEST_CLIENT_TIMEOUT_MS:-$CLIENT_TIMEOUT_MS}"
-    EFFECTIVE_IDLE_MODE="${GQ_IDLE_MODE_OVERRIDE:-${IDLE_MODE:-short}}"
-    if [[ -z "${GQ_IDLE_MODE_OVERRIDE:-}" && -z "${IDLE_MODE+x}" && "${ENABLE_SLEEP:-0}" == 0 ]]; then
+    # GREENQUIC-FREQ-ONLY-IDLE-FIX-V1: ENABLE_SLEEP is the authoritative idle master switch.
+    # A mode override selects an idle mechanism only when idle is enabled.
+    if [[ "${ENABLE_SLEEP:-0}" == 0 ]]; then
         EFFECTIVE_IDLE_MODE=off
+    else
+        EFFECTIVE_IDLE_MODE="${GQ_IDLE_MODE_OVERRIDE:-${IDLE_MODE:-short}}"
     fi
     EFFECTIVE_IDLE_FALLBACK="${GQ_IDLE_FALLBACK_OVERRIDE:-${IDLE_FALLBACK:-short}}"
     EFFECTIVE_DOWNLOAD_DIR="${DOWNLOAD_DIR:-$GQ_COMMON_DIR/downloads}"
@@ -529,10 +562,11 @@ GreenQuicEnablePhysicalHardMax=$ENABLE_PHYSICAL_HARDMAX
 
 GreenQuicRxEmptyPollThreshold=$RX_EMPTY_POLLS
 GreenQuicTxEmptyPollThreshold=$TX_EMPTY_POLLS
+# GREENQUIC-RUNTIME-OUTPUT-PACKET-FIX-V1: compatibility value first; specific values win.
+GreenQuicFreqPeriodUs=$FREQ_PERIOD_US
 GreenQuicFreqUpPeriodUs=$FREQ_UP_PERIOD_US
 GreenQuicFreqDownPeriodUs=$FREQ_DOWN_PERIOD_US
 GreenQuicFreqMinIdleUs=$FREQ_MIN_IDLE_US
-GreenQuicFreqPeriodUs=$FREQ_PERIOD_US
 
 GreenQuicSleepShortMinLevel=$SLEEP_SHORT_MIN_LEVEL
 GreenQuicSleepDataMinLevel=$SLEEP_DATA_MIN_LEVEL
@@ -742,6 +776,33 @@ power_trace_stop() {
     return 0
 }
 
+
+
+# GREENQUIC-ENABLE-RECORD-V1: sysfs frequency sampling does not depend on diagnostic log lines.
+frequency_trace_start() {
+    local role="$1" config="$2" output="$3"
+    GQ_FREQ_TRACE_PID=""
+    gq_recording_enabled || return 0
+    [[ "${GQ_ENABLE_FREQ_TRACE:-1}" == 1 ]] || return 0
+    local interval="${GQ_FREQ_SAMPLE_INTERVAL_MS:-10}"
+    python3 "$GQ_COMMON_DIR/bin/frequency_sampler.py"         --config "$config" --output "$output" --interval-ms "$interval"         >"${output%.jsonl}_sampler.log" 2>&1 &
+    GQ_FREQ_TRACE_PID=$!
+    sleep 0.05
+    if ! kill -0 "$GQ_FREQ_TRACE_PID" 2>/dev/null; then
+        local rc=0; wait "$GQ_FREQ_TRACE_PID" || rc=$?
+        GQ_FREQ_TRACE_PID=""
+        warn "CPU-frequency sampler failed to start (rc=$rc)."
+        return 0
+    fi
+    log "Started $role CPU-frequency trace pid=$GQ_FREQ_TRACE_PID interval=${interval}ms"
+}
+
+frequency_trace_stop() {
+    local pid="${1:-}"
+    [[ -n "$pid" ]] || return 0
+    kill -TERM "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+}
 
 prepare_assets() {
     local required=(
@@ -1131,8 +1192,8 @@ run_server() {
     local msr_csv="$TEST_DIR/results/server_msr_${mode}_${stamp}.csv"
     local transfer_window="$TEST_DIR/results/server_transfer_${mode}_${stamp}.json"
     local cstate_prefix="$TEST_DIR/results/server_cstate_${mode}_${stamp}"
-    if [[ "$mode" == off ]]; then
-        # GREENQUIC-STRICT-OFF-V1: no per-burst clock/atomic instrumentation in strict OFF.
+    local freq_samples="$TEST_DIR/results/server_frequency_samples_${mode}_${stamp}.jsonl"
+    if ! gq_recording_enabled || [[ "$mode" == off ]]; then
         unset GQ_TRANSFER_WINDOW_FILE GQ_TRANSFER_ROLE || true
     else
         GQ_TRANSFER_WINDOW_FILE="$transfer_window"
@@ -1148,7 +1209,9 @@ run_server() {
     power_trace_start server "$power_prefix" "$TEST_ID server $mode UNSYNCHRONIZED_LISTENER_LIFETIME"
     msr_trace_start server "$msr_csv"
     cstate_trace_start server "$cstate_prefix"
+    frequency_trace_start server "$runtime/dpdk.ini" "$freq_samples"
     GQ_SERVER_CSTATE_PID="${GQ_CSTATE_TRACE_PID:-}"
+    GQ_SERVER_FREQ_PID="${GQ_FREQ_TRACE_PID:-}"
     GQ_SERVER_MSR_PID="${GQ_MSR_TRACE_PID:-}"
     GQ_SERVER_POWER_PID="${GQ_POWER_TRACE_PID:-}"
     GQ_SERVER_POWER_PREFIX="$power_prefix"
@@ -1167,6 +1230,7 @@ run_server() {
         trap - EXIT INT TERM
         local check_rc=0 energy_rc=0 power_rc=0 msr_rc=0 cstate_rc=0 bundle_rc=0
         cstate_trace_stop "${GQ_SERVER_CSTATE_PID:-}" || cstate_rc=$?
+        frequency_trace_stop "${GQ_SERVER_FREQ_PID:-}"
         msr_trace_stop "${GQ_SERVER_MSR_PID:-}" || msr_rc=$?
         power_trace_stop "${GQ_SERVER_POWER_PID:-}" "$GQ_SERVER_POWER_PREFIX" || power_rc=$?
         validate_runtime_log server "$GQ_SERVER_LOGF" "$GQ_SERVER_MODE" "$GQ_SERVER_STAMP" || check_rc=$?
@@ -1497,8 +1561,8 @@ run_client() {
     local msr_csv="$TEST_DIR/results/client_msr_${mode}_${stamp}.csv"
     local transfer_window="$TEST_DIR/results/client_transfer_${mode}_${stamp}.json"
     local cstate_prefix="$TEST_DIR/results/client_cstate_${mode}_${stamp}"
-    if [[ "$mode" == off ]]; then
-        # GREENQUIC-STRICT-OFF-V1: no per-burst clock/atomic instrumentation in strict OFF.
+    local freq_samples="$TEST_DIR/results/client_frequency_samples_${mode}_${stamp}.jsonl"
+    if ! gq_recording_enabled || [[ "$mode" == off ]]; then
         unset GQ_TRANSFER_WINDOW_FILE GQ_TRANSFER_ROLE || true
     else
         GQ_TRANSFER_WINDOW_FILE="$transfer_window"
@@ -1514,7 +1578,9 @@ run_client() {
     power_trace_start client "$power_prefix" "$TEST_ID client $mode"
     msr_trace_start client "$msr_csv"
     cstate_trace_start client "$cstate_prefix"
+    frequency_trace_start client "$runtime/dpdk.ini" "$freq_samples"
     local cstate_pid="${GQ_CSTATE_TRACE_PID:-}"
+    local freq_pid="${GQ_FREQ_TRACE_PID:-}"
     local msr_pid="${GQ_MSR_TRACE_PID:-}"
     local power_pid="${GQ_POWER_TRACE_PID:-}"
     energy_start "$estart"
@@ -1536,6 +1602,7 @@ run_client() {
         fi
     fi
     cstate_trace_stop "$cstate_pid" || cstate_rc=$?
+    frequency_trace_stop "$freq_pid"
     msr_trace_stop "$msr_pid" || msr_rc=$?
     power_trace_stop "$power_pid" "$power_prefix" || power_rc=$?
     energy_finish "$estart" "$eout" "$TEST_ID client $mode" || energy_rc=$?

@@ -27,3 +27,29 @@ greenquic_test_suite_v22/common/files/payloads/file_10G.bin
 
 # Generated 8 GiB test payload
 greenquic_test_suite_v22/common/files/payloads/file_8G.bin
+
+# GreenQUIC generated test artifacts
+greenquic_test_suite_v22/**/logs/
+greenquic_test_suite_v22/**/results/
+greenquic_test_suite_v22/**/runtime/
+greenquic_test_suite_v22/common/downloads/
+
+# Large generated payloads
+greenquic_test_suite_v22/common/files/server_root/file_8G.bin
+greenquic_test_suite_v22/common/files/server_root/file_10G.bin
+greenquic_test_suite_v22/common/files/server_root/file_*.bin
+
+# Local build/dependency trees
+
+# Local patch installers and backups
+fix_pause_is_sleep_*.sh
+.pause_is_sleep*_backup_*/
+*.before_pause_sync_*
+.enable-record-turbo-backup-*/
+.get-idle-fix-backup-*/
+.runtime-output-packet-fix-backup-*/
+apply_enable_record_and_turbo.sh
+fix_get_and_freq_only_idle.sh
+fix_runtime_logging_and_packet_summary.sh
+*.backup_goodput_*
+*.pause_is_sleep_v*.????????

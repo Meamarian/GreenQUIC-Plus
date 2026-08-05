@@ -8,6 +8,11 @@ cleanup_download() { rm -f -- "$TARGET"; }
 trap cleanup_download EXIT
 rm -f -- "$TARGET"
 GQ_CLEANUP_DOWNLOADED_FILES=0 "$HERE/../../../common/bin/run_role.sh" client "$HERE" off 0
+
+# GREENQUIC-ENABLE-RECORD-V1: run_role already printed goodput and removed transient artifacts.
+if [[ "${ENABLE_RECORD:-1}" == 0 ]]; then
+    exit 0
+fi
 [[ -f "$TARGET" ]] || { echo "ERROR: smoke download file was not created: $TARGET" >&2; exit 2; }
 actual_size="$(stat -c %s "$TARGET")"
 [[ "$actual_size" == "$PAYLOAD_BYTES" ]] || { echo "ERROR: expected $PAYLOAD_BYTES bytes, got $actual_size" >&2; exit 2; }

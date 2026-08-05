@@ -298,6 +298,9 @@ GreenQuicTransferWindowWrite(void)
 #define DEFAULT_GREENQUIC_ENABLE_FREQ            TRUE
 /* GREENQUIC-OLD-V17: DEFAULT_GREENQUIC_ENABLE_SLEEP was FALSE. */
 #define DEFAULT_GREENQUIC_ENABLE_SLEEP           TRUE
+#define DEFAULT_GREENQUIC_ENABLE_PAUSE           TRUE
+#define DEFAULT_GREENQUIC_KEEP_PAUSE_ITERATIONS  1U
+#define DEFAULT_GREENQUIC_SHORT_PAUSE_ITERATIONS 1U
 #define DEFAULT_GREENQUIC_NO_SLEEP_TX_RING       TRUE
 
 #define GREENQUIC_PRESSURE_SCALE                 1000U
@@ -534,6 +537,9 @@ typedef struct DPDK_DATAPATH {
     uint32_t GreenQuicAckPathMaxSleepUs;
     uint32_t GreenQuicDataPathMaxSleepUs;
     uint32_t GreenQuicMaxSleepUs;
+    // GREENQUIC-V23-PAUSE-IS-SLEEP: rte_pause instruction counts per decision.
+    uint32_t GreenQuicKeepPauseIterations;
+    uint32_t GreenQuicShortPauseIterations;
     uint32_t GreenQuicStatsPeriodUs;
     uint32_t GreenQuicLogLevel;      // 0=off, 1=summary, 2=verbose
     char GreenQuicDpdkLcores[64];    // optional EAL -l string, e.g., "8" or "8,9"; no multi-queue magic
@@ -551,6 +557,7 @@ typedef struct DPDK_DATAPATH {
     BOOLEAN GreenQuicEnableTx;
     BOOLEAN GreenQuicEnableFreq;
     BOOLEAN GreenQuicEnableSleep;
+    BOOLEAN GreenQuicEnablePause; // subordinate to GreenQuicEnableSleep
     BOOLEAN GreenQuicNoSleepIfTxRingNotEmpty;
     GREENQUIC_LCORE_STATE GreenQuicLcore[RTE_MAX_LCORE];
     // GREENQUIC-END
@@ -630,6 +637,7 @@ static void GreenQuicFreqMax(_Inout_ DPDK_DATAPATH* Dpdk, _In_ uint16_t Core);
 static void GreenQuicFreqUpStep(_Inout_ DPDK_DATAPATH* Dpdk, _In_ uint16_t Core);
 static void GreenQuicFreqDownStep(_Inout_ DPDK_DATAPATH* Dpdk, _In_ uint16_t Core);
 static void GreenQuicFreqMin(_Inout_ DPDK_DATAPATH* Dpdk, _In_ uint16_t Core);
+static void GreenQuicSoftPause(_In_ const DPDK_DATAPATH* Dpdk, _In_ uint32_t Iterations);
 static void GreenQuicSleepUs(_Inout_ DPDK_DATAPATH* Dpdk, _In_ uint16_t Core, _In_ uint32_t SleepUs);
 static uint32_t GreenQuicGetSleepBudgetUs(_In_ const DPDK_DATAPATH* Dpdk, _In_ const GREENQUIC_LCORE_STATE* S, _In_ uint32_t TxRingCount, _In_ uint64_t RxHints, _In_ uint64_t TxHints, _In_ BOOLEAN OwnsRx, _In_ BOOLEAN OwnsTx);
 static void GreenQuicInitCStateSupport(_Inout_ DPDK_DATAPATH* Dpdk);
@@ -879,6 +887,10 @@ GreenQuicSetDefaults(
     Dpdk->GreenQuicAckPathMaxSleepUs = DEFAULT_GREENQUIC_ACK_SLEEP_US;
     Dpdk->GreenQuicDataPathMaxSleepUs = DEFAULT_GREENQUIC_DATA_SLEEP_US;
     Dpdk->GreenQuicMaxSleepUs = DEFAULT_GREENQUIC_MAX_SLEEP_US;
+    Dpdk->GreenQuicKeepPauseIterations =
+        DEFAULT_GREENQUIC_KEEP_PAUSE_ITERATIONS;
+    Dpdk->GreenQuicShortPauseIterations =
+        DEFAULT_GREENQUIC_SHORT_PAUSE_ITERATIONS;
     Dpdk->GreenQuicStatsPeriodUs = DEFAULT_GREENQUIC_STATS_PERIOD_US;
     Dpdk->GreenQuicLogLevel = DEFAULT_GREENQUIC_LOG_LEVEL;
     Dpdk->GreenQuicDpdkLcores[0] = '\0';
@@ -897,6 +909,7 @@ GreenQuicSetDefaults(
     Dpdk->GreenQuicEnableTx = TRUE;
     Dpdk->GreenQuicEnableFreq = DEFAULT_GREENQUIC_ENABLE_FREQ;
     Dpdk->GreenQuicEnableSleep = DEFAULT_GREENQUIC_ENABLE_SLEEP;
+    Dpdk->GreenQuicEnablePause = DEFAULT_GREENQUIC_ENABLE_PAUSE;
     Dpdk->GreenQuicNoSleepIfTxRingNotEmpty = DEFAULT_GREENQUIC_NO_SLEEP_TX_RING;
     CxPlatZeroMemory(Dpdk->GreenQuicLcore, sizeof(Dpdk->GreenQuicLcore));
 }
@@ -1272,6 +1285,8 @@ GreenQuicPowerInit(
     const int InitRet = rte_power_init(Core);
     if (InitRet == 0) {
         S->PowerAvailable = TRUE;
+        /* GREENQUIC-ENABLE-RECORD-V1: turbo is a separate DPDK power API state. */
+        const int TurboRet = rte_power_freq_enable_turbo(Core);
         const uint32_t BeforeIndex = GreenQuicReadFreqIndex(Core);
         const int Ret = rte_power_freq_max(Core);
         const uint32_t AfterIndex = GreenQuicReadFreqIndex(Core);
@@ -1281,6 +1296,16 @@ GreenQuicPowerInit(
         } else {
             S->PowerAvailable = FALSE;
             S->FreqIsMax = FALSE;
+        }
+        if (Dpdk->GreenQuicLogLevel != 0) {
+            flockfile(stdout);
+            printf(
+                "[CPU %u] GreenQUIC TURBO api=enable_turbo ret=%d status=%d\n\n",
+                Core,
+                TurboRet,
+                rte_power_turbo_status(Core));
+            fflush(stdout);
+            funlockfile(stdout);
         }
         GreenQuicPrintFreqEvent(
             Dpdk,
@@ -1317,6 +1342,20 @@ GreenQuicPowerCleanup(
     )
 {
     GREENQUIC_LCORE_STATE* S = GreenQuicGetLcoreState(Dpdk, Core);
+
+    /*
+     * GREENQUIC-RUNTIME-OUTPUT-PACKET-FIX-V1: S->Rx.Packets and S->Tx.Packets are already maintained by
+     * BASIC/PLUS. This cleanup print adds no new hot-path counter.
+     */
+    flockfile(stdout);
+    printf(
+        "[CPU %u] GreenQUIC PACKETS source=policy_counters "
+        "rx_pkts=%" PRIu64 " tx_pkts=%" PRIu64 "\n",
+        Core,
+        S->Rx.Packets,
+        S->Tx.Packets);
+    fflush(stdout);
+    funlockfile(stdout);
 
     if (S->PowerInitialized && S->PowerAvailable) {
         const uint32_t BeforeIndex = GreenQuicReadFreqIndex(Core);
@@ -1600,6 +1639,32 @@ GreenQuicFreqMin(
             BeforeIndex,
             AfterIndex,
             0U);
+    }
+}
+
+/*******************************************************************************
+ * ** PAUSE IS SLEEP IN GREENQUIC. **
+ *
+ * rte_pause() is the shallow sleep mechanism. rte_delay_us_sleep(),
+ * rte_power_pause(), rte_power_monitor(), and epoll_wait() are deeper waits.
+ *
+ * GreenQuicEnableSleep == FALSE MUST bypass every shallow pause and every
+ * deeper wait. GreenQuicEnablePause may disable only the shallow mechanism.
+ ******************************************************************************/
+static void
+GreenQuicSoftPause(
+    _In_ const DPDK_DATAPATH* Dpdk,
+    _In_ uint32_t Iterations
+    )
+{
+    if (!Dpdk->GreenQuicEnableSleep ||
+        !Dpdk->GreenQuicEnablePause ||
+        Iterations == 0U) {
+        return;
+    }
+
+    for (uint32_t Index = 0; Index < Iterations; ++Index) {
+        rte_pause();
     }
 }
 
@@ -1964,7 +2029,75 @@ GreenQuicReadPowerConfig(
     }
     const char* IdleModeEnv = getenv("GREENQUIC_IDLE_MODE");
     if (IdleModeEnv != NULL && IdleModeEnv[0] != '\0') {
-        Dpdk->GreenQuicIdleMode = GreenQuicParseIdleMode(IdleModeEnv, Dpdk->GreenQuicIdleMode);
+        Dpdk->GreenQuicIdleMode = GreenQuicParseIdleMode(
+            IdleModeEnv, Dpdk->GreenQuicIdleMode);
+    }
+
+    /*
+     * GREENQUIC-V23-PAUSE-IS-SLEEP ENV controls.
+     *
+     * These direct process-environment controls intentionally do not require
+     * test-suite generator changes:
+     *   ENABLE_SLEEP=0|1
+     *   ENABLE_PAUSE=0|1
+     *   KEEP_PAUSE_ITERATIONS=<uint32>
+     *   SHORT_PAUSE_ITERATIONS=<uint32>
+     */
+    const char* SleepEnv = getenv("ENABLE_SLEEP");
+    if (SleepEnv != NULL && SleepEnv[0] != '\0') {
+        Dpdk->GreenQuicEnableSleep =
+            atoi(SleepEnv) != 0 ? TRUE : FALSE;
+    }
+
+    const char* PauseEnv = getenv("ENABLE_PAUSE");
+    if (PauseEnv != NULL && PauseEnv[0] != '\0') {
+        Dpdk->GreenQuicEnablePause =
+            atoi(PauseEnv) != 0 ? TRUE : FALSE;
+    }
+
+    const char* KeepPauseEnv = getenv("KEEP_PAUSE_ITERATIONS");
+    if (KeepPauseEnv != NULL && KeepPauseEnv[0] != '\0') {
+        errno = 0;
+        char* End = NULL;
+        const unsigned long Value = strtoul(KeepPauseEnv, &End, 10);
+        if (errno == 0 && End != KeepPauseEnv && *End == '\0' &&
+            Value <= UINT32_MAX) {
+            Dpdk->GreenQuicKeepPauseIterations = (uint32_t)Value;
+        } else {
+            fprintf(
+                stderr,
+                "GreenQUIC: invalid KEEP_PAUSE_ITERATIONS=%s; keeping %u.\n",
+                KeepPauseEnv,
+                Dpdk->GreenQuicKeepPauseIterations);
+        }
+    }
+
+    const char* ShortPauseEnv = getenv("SHORT_PAUSE_ITERATIONS");
+    if (ShortPauseEnv != NULL && ShortPauseEnv[0] != '\0') {
+        errno = 0;
+        char* End = NULL;
+        const unsigned long Value = strtoul(ShortPauseEnv, &End, 10);
+        if (errno == 0 && End != ShortPauseEnv && *End == '\0' &&
+            Value <= UINT32_MAX) {
+            Dpdk->GreenQuicShortPauseIterations = (uint32_t)Value;
+        } else {
+            fprintf(
+                stderr,
+                "GreenQUIC: invalid SHORT_PAUSE_ITERATIONS=%s; keeping %u.\n",
+                ShortPauseEnv,
+                Dpdk->GreenQuicShortPauseIterations);
+        }
+    }
+
+    /*
+     * ENABLE_SLEEP is the authoritative master gate. It overrides any idle
+     * mode selected in powermng.ini or through GREENQUIC_IDLE_MODE.
+     */
+    if (!Dpdk->GreenQuicEnableSleep) {
+        Dpdk->GreenQuicEnablePause = FALSE;
+        Dpdk->GreenQuicEnableCStateIdle = FALSE;
+        Dpdk->GreenQuicIdleMode = GREENQUIC_IDLE_OFF;
+        Dpdk->GreenQuicIdleFallback = GREENQUIC_IDLE_FALLBACK_OFF;
     }
 
     // GREENQUIC-V19-SAFE-CSTATE-IDLE sanitation. Zero max disables the path.
@@ -2549,6 +2682,11 @@ GreenQuicTrySelectedIdle(
     _In_ BOOLEAN OwnsTx
     )
 {
+    // ENABLE_SLEEP=0 disables shallow pause and every deeper wait.
+    if (!Dpdk->GreenQuicEnableSleep) {
+        return TRUE;
+    }
+
     switch (Dpdk->GreenQuicIdleMode) {
     case GREENQUIC_IDLE_OFF:
         return TRUE; // suppress short sleep; DVFS remains active
@@ -2622,6 +2760,14 @@ GreenQuicInitCStateSupport(
         Intrinsics.power_monitor ? TRUE : FALSE;
 #endif
 #endif
+    /* GREENQUIC-FREQ-ONLY-IDLE-FIX-V1: no idle dispatcher or idle-specific NIC setup when disabled. */
+    if (!Dpdk->GreenQuicEnableSleep) {
+        Dpdk->GreenQuicEnablePause = FALSE;
+        Dpdk->GreenQuicEnableCStateIdle = FALSE;
+        Dpdk->GreenQuicIdleMode = GREENQUIC_IDLE_OFF;
+        Dpdk->GreenQuicIdleFallback = GREENQUIC_IDLE_FALLBACK_OFF;
+    }
+
     // Preserve the old V19 enable knob as a compatibility alias for pause mode.
     if (Dpdk->GreenQuicIdleMode == GREENQUIC_IDLE_PAUSE) {
         Dpdk->GreenQuicEnableCStateIdle = TRUE;
@@ -2642,14 +2788,18 @@ GreenQuicInitCStateSupport(
     }
 
     printf(
-        "GreenQUIC idle config: mode=%s fallback=%u sleep=%u freq=%u "
+        "GreenQUIC idle config: mode=%s fallback=%u sleep=%u pause=%u freq=%u "
+        "keep_pause_iterations=%u short_pause_iterations=%u "
         "work_wait_min_idle_us=%u work_wait_min_level=%u watchdog_us=%u "
         "allow_active_transfer=%u pause_supported=%u monitor_supported=%u "
         "rx_interrupt_config_requested=%u.\n",
         GreenQuicIdleModeToString(Dpdk->GreenQuicIdleMode),
         (unsigned)Dpdk->GreenQuicIdleFallback,
         Dpdk->GreenQuicEnableSleep ? 1U : 0U,
+        Dpdk->GreenQuicEnablePause ? 1U : 0U,
         Dpdk->GreenQuicEnableFreq ? 1U : 0U,
+        Dpdk->GreenQuicKeepPauseIterations,
+        Dpdk->GreenQuicShortPauseIterations,
         Dpdk->GreenQuicWorkWaitMinIdleUs,
         Dpdk->GreenQuicWorkWaitMinLevel,
         Dpdk->GreenQuicIdleWatchdogUs,
@@ -3339,8 +3489,12 @@ GreenQuicApplyPolicy(
         return;
     }
     if (S->PressureAvg >= Dpdk->GreenQuicPressureKeepThreshold) {
-        S->LastAction = "keep_pause";
-        rte_pause();
+        const BOOLEAN PauseEnabled =
+            Dpdk->GreenQuicEnableSleep &&
+            Dpdk->GreenQuicEnablePause &&
+            Dpdk->GreenQuicKeepPauseIterations != 0U;
+        S->LastAction = PauseEnabled ? "keep_pause" : "keep_poll";
+        GreenQuicSoftPause(Dpdk, Dpdk->GreenQuicKeepPauseIterations);
         return;
     }
 
@@ -3351,8 +3505,13 @@ GreenQuicApplyPolicy(
         !OwnsTx ||
         S->Tx.ConsecutiveEmpty >= Dpdk->GreenQuicTxEmptyPollThreshold;
     if (!RxEmptyEnough || !TxEmptyEnough) {
-        S->LastAction = "short_idle_pause";
-        rte_pause();
+        const BOOLEAN PauseEnabled =
+            Dpdk->GreenQuicEnableSleep &&
+            Dpdk->GreenQuicEnablePause &&
+            Dpdk->GreenQuicShortPauseIterations != 0U;
+        S->LastAction = PauseEnabled ?
+            "short_idle_pause" : "short_idle_poll";
+        GreenQuicSoftPause(Dpdk, Dpdk->GreenQuicShortPauseIterations);
         return;
     }
 
@@ -3693,6 +3852,7 @@ GreenQuicConfigureRoles(
     const BOOLEAN NeedRxQueueInterrupts =
         /* GREENQUIC-STRICT-OFF-V1: OFF keeps the original polling NIC configuration. */
         Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF &&
+        Dpdk->GreenQuicEnableSleep &&
         Dpdk->GreenQuicEnableRx &&
         (Dpdk->GreenQuicIdleMode == GREENQUIC_IDLE_EPOLL ||
          Dpdk->GreenQuicIdleMode == GREENQUIC_IDLE_AUTO);
@@ -4968,7 +5128,12 @@ CxPlatDpdkGreenQuicWorkerThread(
             }
             }
             if (!OwnsRx && !OwnsTx) {
-                rte_pause();
+                /*
+                 * No-role lcore pause is also shallow sleep and obeys the same
+                 * ENABLE_SLEEP/ENABLE_PAUSE master gates.
+                 */
+                GreenQuicSoftPause(
+                    Dpdk, Dpdk->GreenQuicShortPauseIterations);
             }
         }
     }

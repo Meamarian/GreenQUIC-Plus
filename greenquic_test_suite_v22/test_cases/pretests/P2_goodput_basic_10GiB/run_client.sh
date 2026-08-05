@@ -16,6 +16,11 @@ export ENABLE_CSTATE_RECORD="${ENABLE_CSTATE_RECORD:-1}"
 
 "$HERE/../../../common/bin/run_role.sh" client "$HERE" "$MODE" 0
 
+# GREENQUIC-ENABLE-RECORD-V1: run_role already printed goodput and removed transient artifacts.
+if [[ "${ENABLE_RECORD:-1}" == 0 ]]; then
+    exit 0
+fi
+
 manifest="$(
     find "$HERE/results" -maxdepth 1 -type f \
         -name "client_download_manifest_${MODE}_*.json" \

@@ -95,6 +95,10 @@ def main() -> int:
     parser.add_argument("--stamp")
     args = parser.parse_args()
 
+    # GREENQUIC-ENABLE-RECORD-V1: no summaries, SVGs or result folders when recording is disabled.
+    if os.environ.get("ENABLE_RECORD", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return 0
+
     test_dir = args.test_dir.resolve()
     result_root = test_dir / "results"
     log_root = test_dir / "logs"
@@ -113,6 +117,8 @@ def main() -> int:
 
     move(log_root / f"{args.role}_{args.mode}_{stamp}.log", details / f"{stem}_log.txt")
     move(log_root / f"{args.role}_{args.mode}_{stamp}_timeline.jsonl", details / f"{stem}_timeline.jsonl")
+    move(result_root / f"{args.role}_frequency_samples_{args.mode}_{stamp}.jsonl", details / f"{stem}_frequency_samples.jsonl")
+    move(result_root / f"{args.role}_frequency_samples_{args.mode}_{stamp}_sampler.log", details / f"{stem}_frequency_sampler.txt")
     move(result_root / f"{args.role}_{args.mode}_{stamp}_v21_stats.csv", details / f"{stem}_stats.csv")
 
     power_prefix = result_root / f"{args.role}_power_{args.mode}_{stamp}"
@@ -169,13 +175,22 @@ def main() -> int:
     )
 
     timeline = details / f"{stem}_timeline.jsonl"
-    if timeline.is_file():
+    frequency_samples = details / f"{stem}_frequency_samples.jsonl"
+    frequency_inputs = [p for p in (timeline, frequency_samples) if p.is_file()]
+    if frequency_inputs:
+        frequency_input = details / f"{stem}_frequency_input.jsonl"
+        with frequency_input.open("w", encoding="utf-8") as output:
+            for source in frequency_inputs:
+                content = source.read_text(encoding="utf-8", errors="replace")
+                output.write(content)
+                if content and not content.endswith("\n"):
+                    output.write("\n")
         frequency_prefix = details / f"{stem}_frequency"
         frequency_env = os.environ.copy()
         frequency_env["GQ_RESULT_MODE"] = args.mode
         subprocess.run([
             "python3", str(Path(__file__).with_name("frequency_trace.py")),
-            "--timeline", str(timeline),
+            "--timeline", str(frequency_input),
             "--prefix", str(frequency_prefix),
             "--role", args.role,
         ], check=True, env=frequency_env)

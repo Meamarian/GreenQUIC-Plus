@@ -14,3 +14,8 @@ for arg in "$@"; do
   esac
 done
 exec "$HERE/../../../common/bin/run_role.sh" client "$HERE" "$MODE" "$APPROX"
+
+# GREENQUIC-ENABLE-RECORD-V1: run_role already printed goodput and removed transient artifacts.
+if [[ "${ENABLE_RECORD:-1}" == 0 ]]; then
+    exit 0
+fi
