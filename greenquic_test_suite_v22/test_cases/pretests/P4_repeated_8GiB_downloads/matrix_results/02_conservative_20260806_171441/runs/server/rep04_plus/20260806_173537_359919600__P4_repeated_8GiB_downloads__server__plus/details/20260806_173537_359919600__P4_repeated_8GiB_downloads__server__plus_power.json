@@ -1,0 +1,32 @@
+{
+  "schema": "greenquic-power1-trace-v2",
+  "label": "P4 server plus UNSYNCHRONIZED_LISTENER_LIFETIME",
+  "role": "server",
+  "sensor_kind": "whole-system power1 (lm-sensors or hwmon)",
+  "source": "unavailable",
+  "source_detail_last": "",
+  "sensor_match": "power1",
+  "sensor_occurrence": "last",
+  "start_wall_ns": 1786030537481782508,
+  "end_wall_ns": 1786030633634858575,
+  "elapsed_s": 96.153071829,
+  "sample_interval_ms_requested": 1000,
+  "sample_count": 0,
+  "time_s_series": [],
+  "power_w_series": [],
+  "cumulative_energy_j_series": [],
+  "samples": [],
+  "estimated_energy_j_trapezoidal": null,
+  "integration_covered_s": 0.0,
+  "average_power_w_time_weighted": null,
+  "power_w_min": null,
+  "power_w_max": null,
+  "power_w_mean_samples": null,
+  "power_w_median": null,
+  "power_w_p95": null,
+  "plot": null,
+  "problems": [
+    "[Errno 2] No such file or directory: 'sensors'; no readable hwmon power1 sensor"
+  ],
+  "measurement_note": "power1 is whole-system/board power, not CPU package RAPL. Energy is trapezoidal integration of timestamped power samples. The 10 ms axis grid is display resolution and does not imply 10 ms power sampling."
+}

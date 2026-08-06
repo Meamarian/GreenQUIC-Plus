@@ -1,0 +1,48 @@
+{
+  "schema": "greenquic-p4-aligned-rapl-window-v1",
+  "host": "idex",
+  "label": "P4 server edge-cooldown window",
+  "role": "server",
+  "mode": "basic",
+  "run_id": "rep02_basic",
+  "start_wall_time_iso": "2026-08-06T15:22:24.794949+00:00",
+  "end_wall_time_iso": "2026-08-06T15:23:44.906825+00:00",
+  "start_wall_time_ns": 1786029744794966215,
+  "end_wall_time_ns": 1786029824906843763,
+  "start_monotonic_ns": 262567806102476,
+  "end_monotonic_ns": 262647917980056,
+  "duration_s": 80.11187758,
+  "package_domain_count": 1,
+  "dram_domain_count": 1,
+  "package_energy_j": 8199.158637,
+  "dram_energy_j": 1618.703739,
+  "total_energy_j": 9817.862376000001,
+  "average_package_power_w": 102.34635468145522,
+  "average_dram_power_w": 20.205539901165803,
+  "average_total_power_w": 122.55189458262103,
+  "valid": true,
+  "domains": [
+    {
+      "kind": "dram",
+      "name": "dram",
+      "domain_path": "/sys/devices/virtual/powercap/intel-rapl/intel-rapl:0/intel-rapl:0:0",
+      "energy_path": "/sys/devices/virtual/powercap/intel-rapl/intel-rapl:0/intel-rapl:0:0/energy_uj",
+      "max_energy_range_uj": 65712999613,
+      "start_energy_uj": 44469768546,
+      "end_energy_uj": 46088472285,
+      "delta_energy_uj": 1618703739,
+      "valid": true
+    },
+    {
+      "kind": "package",
+      "name": "package-0",
+      "domain_path": "/sys/devices/virtual/powercap/intel-rapl/intel-rapl:0",
+      "energy_path": "/sys/devices/virtual/powercap/intel-rapl/intel-rapl:0/energy_uj",
+      "max_energy_range_uj": 262143328850,
+      "start_energy_uj": 70742311452,
+      "end_energy_uj": 78941470089,
+      "delta_energy_uj": 8199158637,
+      "valid": true
+    }
+  ]
+}

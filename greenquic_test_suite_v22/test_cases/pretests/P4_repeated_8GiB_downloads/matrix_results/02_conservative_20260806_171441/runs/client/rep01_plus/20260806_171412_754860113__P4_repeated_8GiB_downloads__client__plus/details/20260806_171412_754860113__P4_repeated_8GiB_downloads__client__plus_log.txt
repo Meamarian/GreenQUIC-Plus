@@ -1,0 +1,84 @@
+EAL: Detected CPU lcores: 48
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'PA'
+EAL: No available 1048576 kB hugepages reported
+EAL: Probe PCI driver: net_ice (8086:1592) device: 0000:18:00.0 (socket 0)
+ice_load_pkg_type(): Active package is: 1.3.41.0, ICE OS Default Package (single VLAN mode)
+TELEMETRY: No legacy callbacks, legacy socket not created
+ice_set_rx_function(): Using AVX2 Vector Scattered Rx (port 0).
+GreenQUIC: MsQuic worker CPU list from dpdk.ini = 21,22,23,24
+using configuration file dpdk.ini!
+GreenQUIC: installed 4 explicit MsQuic partition -> DPDK lcore mapping entries.
+GreenQUIC idle config: mode=epoll fallback=0 sleep=1 pause=1 freq=1 keep_pause_iterations=1 short_pause_iterations=1 work_wait_min_idle_us=50000 work_wait_min_level=32 watchdog_us=1000000 allow_active_transfer=0 pause_supported=0 monitor_supported=0 rx_interrupt_config_requested=1.
+config params:
+--------------
+MbufCacheSize = 256
+NumRxDescriptors = 4096
+NumTxDescriptors = 4096
+RxMbufPoolSize = 16383
+TxMbufPoolSize = 16383
+RxBurstSize = 32
+TxBurstSize = 32
+TxRingSize = 4096
+
+SeparateRxThread = 0
+SeparateTxThread = 0
+
+Found 5 DpdkInitArgs: secnetperf -l 19 -a 0000:18:00.0 
+--------------
+Log path: /tmp/
+GreenQUIC idle: requesting DPDK RX-queue interrupts before port configuration (mode=epoll, rx_queues=1).
+GreenQUIC roles: lcores=1 rx_owners=1 rxq=1 tx_enabled=1 tx_owner=19 tx_owner_also_rx=1
+Mbuf fast free offload activated
+
+Starting Port 0 on Interface 0, 6c:fe:54:59:99:38
+
+Checking link status
+POWER: Env isn't set yet!
+POWER: Attempting to initialise ACPI cpufreq power management...
+POWER: Failed to write /sys/devices/system/cpu/cpu%u/cpufreq/scaling_governor
+POWER: Cannot set governor of lcore 19 to userspace
+POWER: Attempting to initialise PSTAT power management...
+POWER: Initialized successfully for lcore 19 power management
+done
+Port 0 Link up at 100 Gbps FDX Autoneg
+[CPU 19] GreenQUIC WORKER role=rx_tx state=running
+
+using dpdk.ini to set local IP!
+[GreenQUIC-P4] marker=GreenQUIC-P4-SEQUENCE-V1 serial=GreenQUIC-P4-SERIAL-WAIT-V2 downloads=5 gap_us=5000000
+[GreenQUIC-P4] request=1/5 start_us=840178220872 path=/file_8G.bin
+Sending request: GET /file_8G.bin
+file_8G.bin: Completed download! (8383 ms)
+[GreenQUIC-P4] request=1/5 complete_us=840186604919 path=/file_8G.bin duration_us=8384047 success=1
+[GreenQUIC-P4] gap_after=1 requested_us=5000000 actual_us=5000103
+[GreenQUIC-P4] request=2/5 start_us=840191605057 path=/file_8G.bin
+Sending request: GET /file_8G.bin
+file_8G.bin: Completed download! (8136 ms)
+[GreenQUIC-P4] request=2/5 complete_us=840199741877 path=/file_8G.bin duration_us=8136820 success=1
+[GreenQUIC-P4] gap_after=2 requested_us=5000000 actual_us=5000098
+[GreenQUIC-P4] request=3/5 start_us=840204742012 path=/file_8G.bin
+Sending request: GET /file_8G.bin
+file_8G.bin: Completed download! (8122 ms)
+[GreenQUIC-P4] request=3/5 complete_us=840212864392 path=/file_8G.bin duration_us=8122380 success=1
+[GreenQUIC-P4] gap_after=3 requested_us=5000000 actual_us=5000094
+[GreenQUIC-P4] request=4/5 start_us=840217864523 path=/file_8G.bin
+Sending request: GET /file_8G.bin
+file_8G.bin: Completed download! (8127 ms)
+[GreenQUIC-P4] request=4/5 complete_us=840225992764 path=/file_8G.bin duration_us=8128241 success=1
+[GreenQUIC-P4] gap_after=4 requested_us=5000000 actual_us=5000099
+[GreenQUIC-P4] request=5/5 start_us=840230992900 path=/file_8G.bin
+Sending request: GET /file_8G.bin
+file_8G.bin: Completed download! (8156 ms)
+[GreenQUIC-P4] request=5/5 complete_us=840239149725 path=/file_8G.bin duration_us=8156825 success=1
+
+      TARGET  VHDCRZSQUMBGA2E    VERSION   ALPN
+ ============================================
+192.168.100.1  --D------------  0x00000001  hq-interop
+
+Total execution time: 60.954s
+
+transmission time [us]: 60954679
+[CPU 19] GreenQUIC PACKETS source=policy_counters rx_pkts=29845195 tx_pkts=675667
+POWER: Power management of lcore 19 has exited from 'performance' mode and been set back to the original

@@ -1,0 +1,18 @@
+{
+  "schema": "greenquic-goodput-v3",
+  "test_id": "P4",
+  "mode": "off",
+  "definition": "successfully downloaded payload bits divided by client download duration",
+  "payload_bytes": 42949672960,
+  "payload_gib": 40.0,
+  "timing_source": "client transmission timer, microsecond resolution",
+  "primary": {
+    "duration_s": 60.077413,
+    "goodput_bps": 5719243997.4071455,
+    "goodput_mbps_decimal": 5719.243997407146,
+    "goodput_gbps_decimal": 5.719243997407146
+  },
+  "msquic_completion_crosscheck": null,
+  "dpdk_packet_totals": null,
+  "scope_note": "Goodput excludes headers and retransmitted bytes; packet totals include endpoint control traffic."
+}

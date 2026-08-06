@@ -1,0 +1,12 @@
+{
+  "schema": "greenquic-cstate-v1",
+  "clock": "mono_raw",
+  "parsed_events": 3747853,
+  "skipped_lines": 0,
+  "first_timestamp_ns": 262327421576000,
+  "last_timestamp_ns": 262439252295000,
+  "cpus": [19],
+  "per_cpu": {
+    "19": {"entries": 1873926, "wakeups": 1873927, "states": {"0": {"entries": 1139, "total_idle_ns": 12036000}, "1": {"entries": 4429, "total_idle_ns": 91847000}, "2": {"entries": 1868311, "total_idle_ns": 41023494000}, "3": {"entries": 47, "total_idle_ns": 314334000}}, "active": false}
+  }
+}

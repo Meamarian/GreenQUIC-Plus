@@ -1,0 +1,20 @@
+
+=== GreenQUIC P4 Workload Summary ===
+- GreenQUIC mode: plus
+- Client processes: 1
+- QUIC connections: 1
+- Sequential streams/downloads: 5
+- Payload per download: 8.000 GiB
+- Total payload: 40.000 GiB
+- Configured gap: 5.000000 s
+- Configured total gap time: 20.000000 s
+- Observed total gap time: 20.000394 s
+- Sum of download durations: 42.364400 s
+- Average download duration: 8.472880 s
+- Minimum download duration: 8.280042 s
+- Maximum download duration: 8.704480 s
+- Workload elapsed time including gaps: 62.364937 s
+- Aggregate goodput excluding gaps: 8.110522 Gbit/s
+- Aggregate goodput including gaps: 5.509464 Gbit/s
+- Energy comparison rule: use whole-test RAPL across OFF/BASIC/PLUS; the configured inter-download gaps are part of this workload.
+- Packet-window note: BASIC/PLUS first-RX-to-last-TX includes the inter-download gaps; strict OFF intentionally reports that field as N/A.

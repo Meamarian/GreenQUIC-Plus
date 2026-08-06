@@ -1,0 +1,13 @@
+P4 unified result layout
+========================
+Matrix root: /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/matrix_results/02_conservative_20260806_171441
+Server run bundles: /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/matrix_results/02_conservative_20260806_171441/runs/server/
+Client run bundles: /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/matrix_results/02_conservative_20260806_171441/runs/client/
+Per-run effective ENV: /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/matrix_results/02_conservative_20260806_171441/configuration/run_env/
+CPUIdle mappings: /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/matrix_results/02_conservative_20260806_171441/configuration/cpuidle_{server,client}.json
+Tables/charts: /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/matrix_results/02_conservative_20260806_171441/tables/
+
+The P4 run bundles are temporarily created in each endpoint's test results/
+folder, then moved into this matrix directory. The verified tinyman bundle is
+deleted from tinyman after successful transfer, so the matrix directory is the
+single P4 result location for this execution.

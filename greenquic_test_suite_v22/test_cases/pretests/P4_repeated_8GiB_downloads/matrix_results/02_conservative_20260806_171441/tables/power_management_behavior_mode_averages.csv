@@ -1,0 +1,7 @@
+role,mode,run_count,frequency_min_ghz,frequency_max_ghz,frequency_events,epoll_attempts,epoll_wakeups,epoll_timeouts,cstate_idle_entries,cstate_completed_intervals,cstate_total_residency_s,cstate_state_0_intervals,cstate_state_0_residency_s,cstate_state_1_intervals,cstate_state_1_residency_s,cstate_state_2_intervals,cstate_state_2_residency_s,cstate_state_3_intervals,cstate_state_3_residency_s,frequency_action_off_fixed_max
+server,off,5,0.8,3.6,6626.6,0.0,0.0,0.0,72.0,71.0,0.4285282,0.2,9.800000000000001e-06,0.0,0.0,11.6,0.012365200000000002,59.2,0.4161532,1.0
+server,basic,5,,,,,,,,,0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+server,plus,5,,,,,,,,,0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+client,off,5,0.799,3.6,3854.4,0.0,0.0,0.0,162.2,161.2,4.9312936,0.2,1.2e-06,33.0,0.014387399999999998,27.2,0.0360256,100.8,4.8808794,1.0
+client,basic,5,0.7984,3.6,3274.4,0.0,0.0,0.0,625461.0,625460.0,18.2048258,270.4,0.0033144000000000003,1488.8,0.0378418,623612.2,13.1569692,88.6,5.0067004,0.0
+client,plus,5,0.7992,3.6,2797.8,0.0,0.0,0.0,420261.8,420260.8,13.887341,124.8,0.0016434,391.8,0.0143396,419660.6,9.2034096,83.6,4.6679484,0.0
