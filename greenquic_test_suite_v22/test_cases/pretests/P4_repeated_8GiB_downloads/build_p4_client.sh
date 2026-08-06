@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
+REPO_ROOT="$(cd -- "$HERE/../../../.." && pwd)"
+MAIN_MSQUIC="$REPO_ROOT/msquic"
+P4_SOURCE="$REPO_ROOT/msquic-p4-source"
+DPDK="$MAIN_MSQUIC/deps/dpdk-install"
+BUILD="$MAIN_MSQUIC/build-greenquic-p4"
+PATCH="$HERE/interop_p4_sequence.patch"
+SOURCE="$P4_SOURCE/src/tools/interop/interop.cpp"
+
+[[ -d "$MAIN_MSQUIC" ]] || {
+    echo "ERROR: MsQuic source not found: $MAIN_MSQUIC" >&2
+    exit 2
+}
+[[ -d "$DPDK" ]] || {
+    echo "ERROR: DPDK installation not found: $DPDK" >&2
+    exit 2
+}
+[[ -f "$PATCH" ]] || {
+    echo "ERROR: P4 patch not found: $PATCH" >&2
+    exit 2
+}
+
+# Keep the main msquic source and build-greenquic binaries unchanged. Create a
+# separate P4 source copy and a separate P4 build directory.
+rm -rf "$P4_SOURCE" "$BUILD"
+mkdir -p "$P4_SOURCE"
+
+tar -C "$MAIN_MSQUIC" \
+    --exclude='./.git' \
+    --exclude='./build*' \
+    --exclude='./deps/dpdk-install' \
+    -cf - . |
+tar -C "$P4_SOURCE" -xf -
+
+mkdir -p "$P4_SOURCE/deps"
+ln -s "$DPDK" "$P4_SOURCE/deps/dpdk-install"
+
+patch --batch --forward --dry-run -d "$P4_SOURCE" -p2 < "$PATCH"
+patch --batch --forward -d "$P4_SOURCE" -p2 < "$PATCH"
+
+grep -Fq 'GreenQUIC-P4-SEQUENCE-V1' "$SOURCE" || {
+    echo "ERROR: P4 source marker was not added: $SOURCE" >&2
+    exit 2
+}
+
+export PKG_CONFIG_PATH="$DPDK/lib/pkgconfig:$DPDK/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export LIBRARY_PATH="$DPDK/lib:$DPDK/lib/x86_64-linux-gnu${LIBRARY_PATH:+:$LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$DPDK/lib:$DPDK/lib/x86_64-linux-gnu:$DPDK/lib/dpdk/pmds-22.0${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+cmake -S "$P4_SOURCE" -B "$BUILD" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DQUIC_TLS=openssl \
+    -DQUIC_BUILD_SHARED=OFF \
+    -DQUIC_BUILD_TOOLS=ON \
+    -DQUIC_BUILD_TEST=OFF \
+    -DQUIC_BUILD_PERF=OFF \
+    -DQUIC_LINUX_DPDK_ENABLED=ON
+
+cmake --build "$BUILD" \
+    --target quicinterop \
+    --parallel "$(nproc)"
+
+BIN="$BUILD/bin/Release/quicinterop"
+test -x "$BIN"
+grep -aFq -- 'GreenQUIC-P4-SEQUENCE-V1' "$BIN" || {
+    echo "ERROR: built binary does not contain the P4 marker" >&2
+    exit 2
+}
+
+echo
+echo "P4 client binary:"
+echo "NAME: $(basename "$BIN")"
+echo "PATH: $(readlink -f "$BIN")"
+sha256sum "$BIN"
+echo
+echo "Main working binary was not modified:"
+echo "$MAIN_MSQUIC/build-greenquic/bin/Release/quicinterop"

@@ -1,0 +1,26 @@
+{
+  "controller_host": "idex",
+  "client_host": "tinyman",
+  "server_dir": "/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads",
+  "client_dir": "/root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads",
+  "downloads_per_run": 3,
+  "gap_seconds": 3.0,
+  "gap_us": 3000000,
+  "repetitions_per_mode": 3,
+  "modes": [
+    "off",
+    "basic",
+    "plus"
+  ],
+  "environment": [
+    "ENABLE_RECORD=1",
+    "GQ_LOG_LEVEL=0",
+    "ENABLE_SLEEP=1",
+    "ENABLE_PAUSE=1",
+    "KEEP_PAUSE_ITERATIONS=1",
+    "SHORT_PAUSE_ITERATIONS=1",
+    "GQ_IDLE_MODE_OVERRIDE=epoll",
+    "GQ_IDLE_FALLBACK_OVERRIDE=short",
+    "GQ_POST_TRANSFER_WAIT_S=0"
+  ]
+}
