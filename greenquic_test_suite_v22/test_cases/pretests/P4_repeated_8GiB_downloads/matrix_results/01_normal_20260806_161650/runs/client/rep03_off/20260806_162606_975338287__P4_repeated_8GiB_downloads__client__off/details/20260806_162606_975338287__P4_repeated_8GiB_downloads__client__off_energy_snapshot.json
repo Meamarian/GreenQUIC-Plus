@@ -1,0 +1,11 @@
+{
+  "label": "P4 client off",
+  "start_wall_ns": 1786026367459868131,
+  "end_wall_ns": 1786026434022282244,
+  "elapsed_s": 66.562413771,
+  "total_package_j": 0.0,
+  "average_package_w": null,
+  "domains": [],
+  "rapl_available": false,
+  "problems": []
+}

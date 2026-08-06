@@ -1,0 +1,11 @@
+{
+  "label": "P4 server plus UNSYNCHRONIZED_LISTENER_LIFETIME",
+  "start_wall_ns": 1786026290870957789,
+  "end_wall_ns": 1786026392501792837,
+  "elapsed_s": 101.630835104,
+  "total_package_j": 0.0,
+  "average_package_w": null,
+  "domains": [],
+  "rapl_available": false,
+  "problems": []
+}

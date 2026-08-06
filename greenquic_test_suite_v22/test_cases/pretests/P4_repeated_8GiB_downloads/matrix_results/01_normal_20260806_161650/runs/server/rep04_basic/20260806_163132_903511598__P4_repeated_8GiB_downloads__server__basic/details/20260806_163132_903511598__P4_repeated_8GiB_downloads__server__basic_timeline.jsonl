@@ -1,0 +1,59 @@
+{"type": "meta", "start_wall_ns": 1786026693406110502, "start_monotonic_ns": 259516417246765, "clock": "time.monotonic_ns captured when each complete log line reached the wrapper"}
+{"type": "line", "index": 0, "elapsed_s": 0.000120885, "wall_ns": 1786026693406234814, "monotonic_ns": 259516417367650, "line": "GreenQUIC: MsQuic worker CPU list from dpdk.ini = 21,22,23,24"}
+{"type": "line", "index": 1, "elapsed_s": 0.000167558, "wall_ns": 1786026693406281532, "monotonic_ns": 259516417414323, "line": "using configuration file dpdk.ini!"}
+{"type": "line", "index": 2, "elapsed_s": 0.000189867, "wall_ns": 1786026693406303655, "monotonic_ns": 259516417436632, "line": "GreenQUIC idle config: mode=epoll fallback=0 sleep=1 pause=1 freq=1 keep_pause_iterations=1 short_pause_iterations=1 work_wait_min_idle_us=20000 work_wait_min_level=1 watchdog_us=1000000 allow_active_transfer=0 pause_supported=0 monitor_supported=0 rx_interrupt_config_requested=1."}
+{"type": "line", "index": 3, "elapsed_s": 0.000209537, "wall_ns": 1786026693406323289, "monotonic_ns": 259516417456302, "line": "config params:"}
+{"type": "line", "index": 4, "elapsed_s": 0.000225128, "wall_ns": 1786026693406338831, "monotonic_ns": 259516417471893, "line": "--------------"}
+{"type": "line", "index": 5, "elapsed_s": 0.000238276, "wall_ns": 1786026693406352004, "monotonic_ns": 259516417485041, "line": "MbufCacheSize = 256"}
+{"type": "line", "index": 6, "elapsed_s": 0.000250726, "wall_ns": 1786026693406364387, "monotonic_ns": 259516417497491, "line": "NumRxDescriptors = 4096"}
+{"type": "line", "index": 7, "elapsed_s": 0.000262047, "wall_ns": 1786026693406375750, "monotonic_ns": 259516417508812, "line": "NumTxDescriptors = 4096"}
+{"type": "line", "index": 8, "elapsed_s": 0.000273998, "wall_ns": 1786026693406387656, "monotonic_ns": 259516417520763, "line": "RxMbufPoolSize = 16383"}
+{"type": "line", "index": 9, "elapsed_s": 0.00028516, "wall_ns": 1786026693406398851, "monotonic_ns": 259516417531925, "line": "TxMbufPoolSize = 16383"}
+{"type": "line", "index": 10, "elapsed_s": 0.000297047, "wall_ns": 1786026693406410736, "monotonic_ns": 259516417543812, "line": "RxBurstSize = 32"}
+{"type": "line", "index": 11, "elapsed_s": 0.000308278, "wall_ns": 1786026693406421983, "monotonic_ns": 259516417555043, "line": "TxBurstSize = 32"}
+{"type": "line", "index": 12, "elapsed_s": 0.000320189, "wall_ns": 1786026693406433882, "monotonic_ns": 259516417566954, "line": "TxRingSize = 4096"}
+{"type": "line", "index": 13, "elapsed_s": 0.000331376, "wall_ns": 1786026693406445065, "monotonic_ns": 259516417578141, "line": ""}
+{"type": "line", "index": 14, "elapsed_s": 0.000344466, "wall_ns": 1786026693406458185, "monotonic_ns": 259516417591231, "line": "SeparateRxThread = 0"}
+{"type": "line", "index": 15, "elapsed_s": 0.000360061, "wall_ns": 1786026693406473754, "monotonic_ns": 259516417606826, "line": "SeparateTxThread = 0"}
+{"type": "line", "index": 16, "elapsed_s": 0.000375388, "wall_ns": 1786026693406489042, "monotonic_ns": 259516417622153, "line": ""}
+{"type": "line", "index": 17, "elapsed_s": 0.000387028, "wall_ns": 1786026693406500722, "monotonic_ns": 259516417633793, "line": "Found 5 DpdkInitArgs: secnetperf -l 19 -a 0000:18:00.0 "}
+{"type": "line", "index": 18, "elapsed_s": 0.000400141, "wall_ns": 1786026693406513793, "monotonic_ns": 259516417646906, "line": "--------------"}
+{"type": "line", "index": 19, "elapsed_s": 0.000416153, "wall_ns": 1786026693406529875, "monotonic_ns": 259516417662918, "line": "Log path: /tmp/"}
+{"type": "line", "index": 20, "elapsed_s": 0.000429959, "wall_ns": 1786026693406543613, "monotonic_ns": 259516417676724, "line": "EAL: Detected CPU lcores: 48"}
+{"type": "line", "index": 21, "elapsed_s": 0.000442251, "wall_ns": 1786026693406555980, "monotonic_ns": 259516417689016, "line": "EAL: Detected NUMA nodes: 1"}
+{"type": "line", "index": 22, "elapsed_s": 0.00045374, "wall_ns": 1786026693406567431, "monotonic_ns": 259516417700505, "line": "EAL: Detected shared linkage of DPDK"}
+{"type": "line", "index": 23, "elapsed_s": 0.018285657, "wall_ns": 1786026693424400330, "monotonic_ns": 259516435532422, "line": "EAL: Multi-process socket /var/run/dpdk/rte/mp_socket"}
+{"type": "line", "index": 24, "elapsed_s": 0.019287624, "wall_ns": 1786026693425401814, "monotonic_ns": 259516436534389, "line": "EAL: Selected IOVA mode 'VA'"}
+{"type": "line", "index": 25, "elapsed_s": 0.019725228, "wall_ns": 1786026693425839187, "monotonic_ns": 259516436971993, "line": "EAL: No available 1048576 kB hugepages reported"}
+{"type": "line", "index": 26, "elapsed_s": 0.01989864, "wall_ns": 1786026693426012403, "monotonic_ns": 259516437145405, "line": "EAL: VFIO support initialized"}
+{"type": "line", "index": 27, "elapsed_s": 0.021678453, "wall_ns": 1786026693427792248, "monotonic_ns": 259516438925218, "line": "EAL: Using IOMMU type 1 (Type 1)"}
+{"type": "line", "index": 28, "elapsed_s": 0.139290445, "wall_ns": 1786026693545405118, "monotonic_ns": 259516556537210, "line": "EAL: Ignore mapping IO port bar(1)"}
+{"type": "line", "index": 29, "elapsed_s": 0.139420841, "wall_ns": 1786026693545534938, "monotonic_ns": 259516556667606, "line": "EAL: Ignore mapping IO port bar(4)"}
+{"type": "line", "index": 30, "elapsed_s": 0.246963606, "wall_ns": 1786026693653078479, "monotonic_ns": 259516664210371, "line": "EAL: Probe PCI driver: net_ice (8086:1592) device: 0000:18:00.0 (socket 0)"}
+{"type": "line", "index": 31, "elapsed_s": 1.088227614, "wall_ns": 1786026694494342697, "monotonic_ns": 259517505474379, "line": "ice_load_pkg_type(): Active package is: 1.3.41.0, ICE OS Default Package (single VLAN mode)"}
+{"type": "line", "index": 32, "elapsed_s": 1.132841079, "wall_ns": 1786026694538955817, "monotonic_ns": 259517550087844, "line": "TELEMETRY: No legacy callbacks, legacy socket not created"}
+{"type": "line", "index": 33, "elapsed_s": 1.152010914, "wall_ns": 1786026694558125946, "monotonic_ns": 259517569257679, "line": "GreenQUIC idle: requesting DPDK RX-queue interrupts before port configuration (mode=epoll, rx_queues=1)."}
+{"type": "line", "index": 34, "elapsed_s": 1.152144039, "wall_ns": 1786026694558258176, "monotonic_ns": 259517569390804, "line": "GreenQUIC roles: lcores=1 rx_owners=1 rxq=1 tx_enabled=1 tx_owner=19 tx_owner_also_rx=1"}
+{"type": "line", "index": 35, "elapsed_s": 1.152194688, "wall_ns": 1786026694558308761, "monotonic_ns": 259517569441453, "line": "Mbuf fast free offload activated"}
+{"type": "line", "index": 36, "elapsed_s": 1.153689385, "wall_ns": 1786026694559803371, "monotonic_ns": 259517570936150, "line": "ice_set_rx_function(): Using AVX2 Vector Scattered Rx (port 0)."}
+{"type": "line", "index": 37, "elapsed_s": 2.209354888, "wall_ns": 1786026695615469511, "monotonic_ns": 259518626601653, "line": ""}
+{"type": "line", "index": 38, "elapsed_s": 2.209473654, "wall_ns": 1786026695615587805, "monotonic_ns": 259518626720419, "line": "Starting Port 0 on Interface 0, 6c:fe:54:59:98:b0"}
+{"type": "line", "index": 39, "elapsed_s": 2.209524619, "wall_ns": 1786026695615638552, "monotonic_ns": 259518626771384, "line": ""}
+{"type": "line", "index": 40, "elapsed_s": 2.209563704, "wall_ns": 1786026695615677575, "monotonic_ns": 259518626810469, "line": "Checking link status"}
+{"type": "line", "index": 41, "elapsed_s": 2.210191289, "wall_ns": 1786026695616305247, "monotonic_ns": 259518627438054, "line": "done"}
+{"type": "line", "index": 42, "elapsed_s": 2.211096393, "wall_ns": 1786026695617210396, "monotonic_ns": 259518628343158, "line": "Port 0 Link up at 100 Gbps FDX Autoneg"}
+{"type": "line", "index": 43, "elapsed_s": 2.211154304, "wall_ns": 1786026695617268262, "monotonic_ns": 259518628401069, "line": "POWER: Env isn't set yet!"}
+{"type": "line", "index": 44, "elapsed_s": 2.211194563, "wall_ns": 1786026695617308432, "monotonic_ns": 259518628441328, "line": "POWER: Attempting to initialise ACPI cpufreq power management..."}
+{"type": "line", "index": 45, "elapsed_s": 2.211241184, "wall_ns": 1786026695617355161, "monotonic_ns": 259518628487949, "line": "POWER: Failed to write /sys/devices/system/cpu/cpu%u/cpufreq/scaling_governor"}
+{"type": "line", "index": 46, "elapsed_s": 2.211311478, "wall_ns": 1786026695617425506, "monotonic_ns": 259518628558243, "line": "POWER: Cannot set governor of lcore 19 to userspace"}
+{"type": "line", "index": 47, "elapsed_s": 2.211374303, "wall_ns": 1786026695617488276, "monotonic_ns": 259518628621068, "line": "POWER: Attempting to initialise PSTAT power management..."}
+{"type": "line", "index": 48, "elapsed_s": 2.211518793, "wall_ns": 1786026695617632696, "monotonic_ns": 259518628765558, "line": "POWER: Initialized successfully for lcore 19 power management"}
+{"type": "line", "index": 49, "elapsed_s": 2.211588053, "wall_ns": 1786026695617702013, "monotonic_ns": 259518628834818, "line": "[CPU 19] GreenQUIC WORKER role=rx_tx state=running"}
+{"type": "line", "index": 50, "elapsed_s": 2.211626483, "wall_ns": 1786026695617740346, "monotonic_ns": 259518628873248, "line": ""}
+{"type": "line", "index": 51, "elapsed_s": 2.22574783, "wall_ns": 1786026695631861899, "monotonic_ns": 259518642994595, "line": "Waiting forever."}
+{"type": "line", "index": 52, "elapsed_s": 2.225797631, "wall_ns": 1786026695631911473, "monotonic_ns": 259518643044396, "line": ""}
+{"type": "line", "index": 53, "elapsed_s": 13.436760295, "wall_ns": 1786026706842875433, "monotonic_ns": 259529854007060, "line": "[192.168.100.2:56789] GET '/file_8G.bin'"}
+{"type": "line", "index": 54, "elapsed_s": 28.632338768, "wall_ns": 1786026722038453851, "monotonic_ns": 259545049585533, "line": "[192.168.100.2:56789] GET '/file_8G.bin'"}
+{"type": "line", "index": 55, "elapsed_s": 43.369461135, "wall_ns": 1786026736775576363, "monotonic_ns": 259559786707900, "line": "[192.168.100.2:56789] GET '/file_8G.bin'"}
+{"type": "line", "index": 56, "elapsed_s": 58.708158289, "wall_ns": 1786026752114273206, "monotonic_ns": 259575125405054, "line": "[192.168.100.2:56789] GET '/file_8G.bin'"}
+{"type": "line", "index": 57, "elapsed_s": 73.429473167, "wall_ns": 1786026766835588295, "monotonic_ns": 259589846719932, "line": "[192.168.100.2:56789] GET '/file_8G.bin'"}

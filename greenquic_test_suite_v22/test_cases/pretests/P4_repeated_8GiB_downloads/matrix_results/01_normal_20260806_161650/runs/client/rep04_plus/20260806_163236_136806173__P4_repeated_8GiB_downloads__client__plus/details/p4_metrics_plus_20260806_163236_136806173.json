@@ -1,0 +1,102 @@
+{
+  "schema": "greenquic-p4-repeated-downloads-v1",
+  "mode": "plus",
+  "processes": {
+    "client": 1
+  },
+  "quic_connections": 1,
+  "streams": 5,
+  "downloads_configured": 5,
+  "downloads_observed": 5,
+  "payload_bytes_per_download": 8589934592,
+  "payload_bytes_total": 42949672960,
+  "gap_requested_us_each": 5000000,
+  "gap_requested_us_total": 20000000,
+  "gap_actual_us": [
+    5000105,
+    5000100,
+    5000099,
+    5000095
+  ],
+  "gap_actual_us_total": 20000399,
+  "download_duration_us": [
+    9575509,
+    8852119,
+    8740550,
+    8732298,
+    8715147
+  ],
+  "download_duration_us_total": 44615623,
+  "workload_elapsed_us": 64616165,
+  "goodput_active_downloads_gbps": 7.701279519956496,
+  "goodput_workload_including_gaps_gbps": 5.317514335306034,
+  "requests": [
+    {
+      "index": 1,
+      "total": 5,
+      "start_us": 837681620140,
+      "path": "/file_8G.bin",
+      "complete_us": 837691195649,
+      "duration_us": 9575509,
+      "success": 1
+    },
+    {
+      "index": 2,
+      "total": 5,
+      "start_us": 837696195790,
+      "path": "/file_8G.bin",
+      "complete_us": 837705047909,
+      "duration_us": 8852119,
+      "success": 1
+    },
+    {
+      "index": 3,
+      "total": 5,
+      "start_us": 837710048045,
+      "path": "/file_8G.bin",
+      "complete_us": 837718788595,
+      "duration_us": 8740550,
+      "success": 1
+    },
+    {
+      "index": 4,
+      "total": 5,
+      "start_us": 837723788730,
+      "path": "/file_8G.bin",
+      "complete_us": 837732521028,
+      "duration_us": 8732298,
+      "success": 1
+    },
+    {
+      "index": 5,
+      "total": 5,
+      "start_us": 837737521158,
+      "path": "/file_8G.bin",
+      "complete_us": 837746236305,
+      "duration_us": 8715147,
+      "success": 1
+    }
+  ],
+  "gaps": [
+    {
+      "after_request": 1,
+      "requested_us": 5000000,
+      "actual_us": 5000105
+    },
+    {
+      "after_request": 2,
+      "requested_us": 5000000,
+      "actual_us": 5000100
+    },
+    {
+      "after_request": 3,
+      "requested_us": 5000000,
+      "actual_us": 5000099
+    },
+    {
+      "after_request": 4,
+      "requested_us": 5000000,
+      "actual_us": 5000095
+    }
+  ]
+}

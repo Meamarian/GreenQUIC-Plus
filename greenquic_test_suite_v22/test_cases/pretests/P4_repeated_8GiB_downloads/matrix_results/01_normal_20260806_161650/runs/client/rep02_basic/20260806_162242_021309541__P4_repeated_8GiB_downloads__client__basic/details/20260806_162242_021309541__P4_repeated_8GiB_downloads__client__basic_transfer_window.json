@@ -1,0 +1,15 @@
+{
+  "schema": "greenquic-dpdk-transfer-window-v1",
+  "role": "client",
+  "clock": "CLOCK_MONOTONIC",
+  "start_boundary": "first non-empty DPDK RX burst",
+  "end_boundary": "last non-empty DPDK TX burst before process termination",
+  "first_rx_monotonic_ns": 837087407102744,
+  "last_rx_monotonic_ns": 837155973758672,
+  "last_tx_monotonic_ns": 837155973640263,
+  "window_end_monotonic_ns": 837155973640263,
+  "duration_s": 68.566537519,
+  "rx_packets": 29845688,
+  "tx_packets": 719947,
+  "valid": true
+}

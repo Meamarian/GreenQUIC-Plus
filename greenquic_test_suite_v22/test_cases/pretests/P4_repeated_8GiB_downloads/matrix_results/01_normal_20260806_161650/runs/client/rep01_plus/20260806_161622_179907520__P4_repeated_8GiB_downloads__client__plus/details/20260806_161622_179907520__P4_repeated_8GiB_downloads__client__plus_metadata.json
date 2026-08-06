@@ -1,0 +1,13 @@
+{
+  "schema": "greenquic-run-bundle-v4",
+  "test_id": "P4",
+  "test_name": "P4_repeated_8GiB_downloads",
+  "role": "client",
+  "mode": "plus",
+  "stamp": "20260806_161622_179907520",
+  "stem": "20260806_161622_179907520__P4_repeated_8GiB_downloads__client__plus",
+  "layout": {
+    "visuals": ".",
+    "details": "details/"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "schema": "greenquic-p4-aligned-rapl-snapshot-v1",
+  "host": "idex",
+  "pid": 180892,
+  "label": "P4 server edge-cooldown window",
+  "role": "server",
+  "mode": "basic",
+  "run_id": "rep04_basic",
+  "wall_time_iso": "2026-08-06T14:31:38.826737+00:00",
+  "wall_time_ns": 1786026698826755285,
+  "monotonic_ns": 259521837891652,
+  "domains": [
+    {
+      "kind": "dram",
+      "name": "dram",
+      "domain_path": "/sys/devices/virtual/powercap/intel-rapl/intel-rapl:0/intel-rapl:0:0",
+      "energy_path": "/sys/devices/virtual/powercap/intel-rapl/intel-rapl:0/intel-rapl:0:0/energy_uj",
+      "max_energy_range_uj": 65712999613,
+      "energy_uj": 49310638698
+    },
+    {
+      "kind": "package",
+      "name": "package-0",
+      "domain_path": "/sys/devices/virtual/powercap/intel-rapl/intel-rapl:0",
+      "energy_path": "/sys/devices/virtual/powercap/intel-rapl/intel-rapl:0/energy_uj",
+      "max_energy_range_uj": 262143328850,
+      "energy_uj": 33806540957
+    }
+  ]
+}

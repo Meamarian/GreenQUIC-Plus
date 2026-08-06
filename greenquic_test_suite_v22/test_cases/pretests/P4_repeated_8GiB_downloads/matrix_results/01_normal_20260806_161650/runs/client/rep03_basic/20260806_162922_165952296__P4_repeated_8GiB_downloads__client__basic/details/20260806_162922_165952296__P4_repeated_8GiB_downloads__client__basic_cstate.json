@@ -1,0 +1,378 @@
+{
+  "schema": "greenquic-cstate-v1",
+  "clock": "mono_raw",
+  "parsed_events": 11628,
+  "skipped_lines": 0,
+  "first_timestamp_ns": 837486410366000,
+  "last_timestamp_ns": 837562215816000,
+  "cpus": [
+    19
+  ],
+  "per_cpu": {
+    "19": {
+      "entries": 5814,
+      "wakeups": 5814,
+      "states": {
+        "0": {
+          "entries": 9,
+          "total_idle_ns": 108000
+        },
+        "1": {
+          "entries": 340,
+          "total_idle_ns": 170504000
+        },
+        "2": {
+          "entries": 4656,
+          "total_idle_ns": 590799000
+        },
+        "3": {
+          "entries": 809,
+          "total_idle_ns": 23569152000
+        }
+      },
+      "active": true
+    }
+  },
+  "cstate_plots_skipped": false,
+  "csv_rows": 11628,
+  "completed_idle_intervals": 5813,
+  "traced_cpus": [
+    19
+  ],
+  "state_names": {
+    "3": "S3 \u2014 C6",
+    "2": "S2 \u2014 C1E",
+    "0": "S0 \u2014 POLL",
+    "1": "S1 \u2014 C1"
+  },
+  "idle_interval_duration_ms": {
+    "minimum": 0.001,
+    "median": 0.043,
+    "mean": 4.185543265095475,
+    "maximum": 935.689
+  },
+  "kind": "cpuwise_cstate_single_lane_dominant_color_v5",
+  "role": "client",
+  "states": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "compact_scope": "per_cpu",
+  "compact_size_intervals_per_cpu": 500,
+  "lanes_per_cpu": 1,
+  "bar_height": "total idle residency in compact block",
+  "bar_width": "covered trace time from first included idle entry to last included idle exit",
+  "bar_color": "state with greatest residency duration in compact block",
+  "wakeups_display": "mapping_only",
+  "mapping_gap_cm": 1.0,
+  "compaction_validation": {
+    "19": {
+      "passed": true,
+      "raw_interval_count": 5813,
+      "compacted_interval_count": 5813,
+      "compact_block_count": 12,
+      "full_block_size": 500,
+      "last_block_size": 313,
+      "raw_wakeups": 5813,
+      "compacted_wakeups": 5813,
+      "raw_state_counts": {
+        "0": 9,
+        "1": 340,
+        "2": 4656,
+        "3": 808
+      },
+      "compacted_state_counts": {
+        "0": 9,
+        "1": 340,
+        "2": 4656,
+        "3": 808
+      },
+      "raw_state_duration_ns": {
+        "0": 108000,
+        "1": 170504000,
+        "2": 590799000,
+        "3": 23569152000
+      },
+      "compacted_state_duration_ns": {
+        "0": 108000,
+        "1": 170504000,
+        "2": 590799000,
+        "3": 23569152000
+      },
+      "raw_interval_fingerprint_sha256": "b9f9ac9f883d72794b8e542b2569b7831b1f698dd3cacbead946dc9ac7df0b94"
+    }
+  },
+  "compact_blocks_by_cpu": {
+    "19": [
+      {
+        "block": 1,
+        "intervals": 500,
+        "start_ms": 0.016,
+        "end_ms": 11628.444,
+        "covered_ms": 11628.428,
+        "idle_total_ms": 217.834,
+        "wakeups": 500,
+        "dominant_state": 3,
+        "dominant_state_name": "S3 \u2014 C6",
+        "state_interval_counts": {
+          "0": 1,
+          "1": 2,
+          "2": 452,
+          "3": 45
+        },
+        "state_duration_ms": {
+          "0": 0.004,
+          "1": 0.016,
+          "2": 20.611,
+          "3": 197.203
+        }
+      },
+      {
+        "block": 2,
+        "intervals": 500,
+        "start_ms": 11628.452,
+        "end_ms": 12168.0,
+        "covered_ms": 539.548,
+        "idle_total_ms": 523.091,
+        "wakeups": 500,
+        "dominant_state": 3,
+        "dominant_state_name": "S3 \u2014 C6",
+        "state_interval_counts": {
+          "1": 8,
+          "2": 424,
+          "3": 68
+        },
+        "state_duration_ms": {
+          "1": 31.966,
+          "2": 33.577,
+          "3": 457.548
+        }
+      },
+      {
+        "block": 3,
+        "intervals": 500,
+        "start_ms": 12168.016,
+        "end_ms": 26624.37,
+        "covered_ms": 14456.354,
+        "idle_total_ms": 4423.762,
+        "wakeups": 500,
+        "dominant_state": 3,
+        "dominant_state_name": "S3 \u2014 C6",
+        "state_interval_counts": {
+          "1": 1,
+          "2": 209,
+          "3": 290
+        },
+        "state_duration_ms": {
+          "1": 0.01,
+          "2": 9.068,
+          "3": 4414.684
+        }
+      },
+      {
+        "block": 4,
+        "intervals": 500,
+        "start_ms": 26624.378,
+        "end_ms": 26674.638,
+        "covered_ms": 50.26,
+        "idle_total_ms": 23.686,
+        "wakeups": 500,
+        "dominant_state": 2,
+        "dominant_state_name": "S2 \u2014 C1E",
+        "state_interval_counts": {
+          "0": 1,
+          "1": 1,
+          "2": 498
+        },
+        "state_duration_ms": {
+          "0": 0.004,
+          "1": 0.009,
+          "2": 23.673
+        }
+      },
+      {
+        "block": 5,
+        "intervals": 500,
+        "start_ms": 26674.64,
+        "end_ms": 29738.613,
+        "covered_ms": 3063.973,
+        "idle_total_ms": 3041.941,
+        "wakeups": 500,
+        "dominant_state": 3,
+        "dominant_state_name": "S3 \u2014 C6",
+        "state_interval_counts": {
+          "1": 28,
+          "2": 357,
+          "3": 115
+        },
+        "state_duration_ms": {
+          "1": 27.718,
+          "2": 115.219,
+          "3": 2899.004
+        }
+      },
+      {
+        "block": 6,
+        "intervals": 500,
+        "start_ms": 29738.68,
+        "end_ms": 41949.658,
+        "covered_ms": 12210.978,
+        "idle_total_ms": 1872.512,
+        "wakeups": 500,
+        "dominant_state": 3,
+        "dominant_state_name": "S3 \u2014 C6",
+        "state_interval_counts": {
+          "1": 20,
+          "2": 435,
+          "3": 45
+        },
+        "state_duration_ms": {
+          "1": 4.518,
+          "2": 43.515,
+          "3": 1824.479
+        }
+      },
+      {
+        "block": 7,
+        "intervals": 500,
+        "start_ms": 41949.666,
+        "end_ms": 41983.545,
+        "covered_ms": 33.879,
+        "idle_total_ms": 18.384,
+        "wakeups": 500,
+        "dominant_state": 2,
+        "dominant_state_name": "S2 \u2014 C1E",
+        "state_interval_counts": {
+          "2": 500
+        },
+        "state_duration_ms": {
+          "2": 18.384
+        }
+      },
+      {
+        "block": 8,
+        "intervals": 500,
+        "start_ms": 41983.559,
+        "end_ms": 56592.013,
+        "covered_ms": 14608.454,
+        "idle_total_ms": 4904.772,
+        "wakeups": 500,
+        "dominant_state": 3,
+        "dominant_state_name": "S3 \u2014 C6",
+        "state_interval_counts": {
+          "0": 1,
+          "1": 28,
+          "2": 390,
+          "3": 81
+        },
+        "state_duration_ms": {
+          "0": 0.014,
+          "1": 32.554,
+          "2": 66.092,
+          "3": 4806.112
+        }
+      },
+      {
+        "block": 9,
+        "intervals": 500,
+        "start_ms": 56592.021,
+        "end_ms": 56625.052,
+        "covered_ms": 33.031,
+        "idle_total_ms": 20.125,
+        "wakeups": 500,
+        "dominant_state": 2,
+        "dominant_state_name": "S2 \u2014 C1E",
+        "state_interval_counts": {
+          "0": 1,
+          "2": 499
+        },
+        "state_duration_ms": {
+          "0": 0.004,
+          "2": 20.121
+        }
+      },
+      {
+        "block": 10,
+        "intervals": 500,
+        "start_ms": 56625.06,
+        "end_ms": 58736.872,
+        "covered_ms": 2111.812,
+        "idle_total_ms": 2079.18,
+        "wakeups": 500,
+        "dominant_state": 3,
+        "dominant_state_name": "S3 \u2014 C6",
+        "state_interval_counts": {
+          "1": 28,
+          "2": 455,
+          "3": 17
+        },
+        "state_duration_ms": {
+          "1": 60.115,
+          "2": 108.919,
+          "3": 1910.146
+        }
+      },
+      {
+        "block": 11,
+        "intervals": 500,
+        "start_ms": 58736.935,
+        "end_ms": 71777.427,
+        "covered_ms": 13040.492,
+        "idle_total_ms": 3187.457,
+        "wakeups": 500,
+        "dominant_state": 3,
+        "dominant_state_name": "S3 \u2014 C6",
+        "state_interval_counts": {
+          "1": 88,
+          "2": 325,
+          "3": 87
+        },
+        "state_duration_ms": {
+          "1": 6.227,
+          "2": 69.994,
+          "3": 3111.236
+        }
+      },
+      {
+        "block": 12,
+        "intervals": 313,
+        "start_ms": 71777.455,
+        "end_ms": 75805.429,
+        "covered_ms": 4027.974,
+        "idle_total_ms": 4017.819,
+        "wakeups": 313,
+        "dominant_state": 3,
+        "dominant_state_name": "S3 \u2014 C6",
+        "state_interval_counts": {
+          "0": 5,
+          "1": 136,
+          "2": 112,
+          "3": 60
+        },
+        "state_duration_ms": {
+          "0": 0.082,
+          "1": 7.371,
+          "2": 61.626,
+          "3": 3948.74
+        }
+      }
+    ]
+  },
+  "state_interval_counts": {
+    "0": 9,
+    "1": 340,
+    "2": 4656,
+    "3": 808
+  },
+  "state_total_idle_ms": {
+    "0": 0.108,
+    "1": 170.504,
+    "2": 590.799,
+    "3": 23569.152
+  },
+  "idle_entry_events": 5814,
+  "state_switch_events": 0,
+  "wakeup_idle_exit_events": 5814
+}
