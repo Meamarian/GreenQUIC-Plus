@@ -1,0 +1,188 @@
+V22 installation valid: GreenQUIC 22-private-split-linux-dpdk, split Linux backend, DPDK 21.11.9
+
+[GreenQUIC-Test] Raw-DPDK server addressing: LocalIp=192.168.100.1 local-MAC=6c:fe:54:59:98:b0 PeerMac=6c:fe:54:59:99:38 target=192.168.100.1 device=0000:18:00.0
+
+[GreenQUIC-Test] Online CPUs: 0-47; requested DPDK=19,20 QUIC=21,22,23,24
+
+[GreenQUIC-Test] Locked-memory limit: 8192
+WARNING: GreenQuicEnableCStateIdle=1 is ignored when an explicit non-pause GreenQuicIdleMode is selected
+WARNING: work-triggered waiting during active transfer is enabled; treat this as a latency diagnostic until validated
+V22 configuration valid: /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/runtime/server/dpdk.ini + /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/runtime/server/powermng.ini
+
+[GreenQUIC-Test] Starting P4 server mode=plus from /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/runtime/server
+
+[GreenQUIC-Test] Binary: /root/mohsen/msquic/build-greenquic/bin/Release/quicinteropserver
+
+[GreenQUIC-Test:WARN] Server RAPL covers listener startup, waiting time, transfer, and time until Ctrl+C. Do not compare this JSON as transfer energy unless both endpoints are externally synchronized.
+
+[GreenQUIC-Test] Started server whole-system power1 trace pid=198795 interval=1000ms prefix=/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/results/server_power_plus_20260806_164735_097281791
+
+[GreenQUIC-Test] Started server C RAPL powercap trace pid=198798 interval=6ms smoothing=3
+
+[GreenQUIC-Test] Started server Linux cpu_idle trace pid=198806 traced_cpus=19 reader_cpu=1 clock=mono_raw
+
+[GreenQUIC-Test] Started server CPU-frequency trace pid=198808 interval=10ms
+GreenQUIC: MsQuic worker CPU list from dpdk.ini = 21,22,23,24
+using configuration file dpdk.ini!
+GreenQUIC: installed 4 explicit MsQuic partition -> DPDK lcore mapping entries.
+GreenQUIC idle config: mode=epoll fallback=0 sleep=1 pause=1 freq=1 keep_pause_iterations=1 short_pause_iterations=1 work_wait_min_idle_us=5000 work_wait_min_level=1 watchdog_us=100000 allow_active_transfer=1 pause_supported=0 monitor_supported=0 rx_interrupt_config_requested=1.
+config params:
+--------------
+MbufCacheSize = 256
+NumRxDescriptors = 4096
+NumTxDescriptors = 4096
+RxMbufPoolSize = 16383
+TxMbufPoolSize = 16383
+RxBurstSize = 32
+TxBurstSize = 32
+TxRingSize = 4096
+
+SeparateRxThread = 0
+SeparateTxThread = 0
+
+Found 5 DpdkInitArgs: secnetperf -l 19 -a 0000:18:00.0 
+--------------
+Log path: /tmp/
+EAL: Detected CPU lcores: 48
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+EAL: No available 1048576 kB hugepages reported
+EAL: VFIO support initialized
+EAL: Using IOMMU type 1 (Type 1)
+EAL: Ignore mapping IO port bar(1)
+EAL: Ignore mapping IO port bar(4)
+EAL: Probe PCI driver: net_ice (8086:1592) device: 0000:18:00.0 (socket 0)
+ice_load_pkg_type(): Active package is: 1.3.41.0, ICE OS Default Package (single VLAN mode)
+TELEMETRY: No legacy callbacks, legacy socket not created
+GreenQUIC idle: requesting DPDK RX-queue interrupts before port configuration (mode=epoll, rx_queues=1).
+GreenQUIC roles: lcores=1 rx_owners=1 rxq=1 tx_enabled=1 tx_owner=19 tx_owner_also_rx=1
+Mbuf fast free offload activated
+ice_set_rx_function(): Using AVX2 Vector Scattered Rx (port 0).
+
+Starting Port 0 on Interface 0, 6c:fe:54:59:98:b0
+
+Checking link status
+done
+Port 0 Link up at 100 Gbps FDX Autoneg
+POWER: Env isn't set yet!
+POWER: Attempting to initialise ACPI cpufreq power management...
+POWER: Failed to write /sys/devices/system/cpu/cpu%u/cpufreq/scaling_governor
+POWER: Cannot set governor of lcore 19 to userspace
+POWER: Attempting to initialise PSTAT power management...
+POWER: Initialized successfully for lcore 19 power management
+[CPU 19] GreenQUIC WORKER role=rx_tx state=running
+
+Waiting forever.
+
+[192.168.100.2:56789] GET '/file_8G.bin'
+[192.168.100.2:56789] GET '/file_8G.bin'
+[192.168.100.2:56789] GET '/file_8G.bin'
+[192.168.100.2:56789] GET '/file_8G.bin'
+[192.168.100.2:56789] GET '/file_8G.bin'
+Traceback (most recent call last):
+  File "/root/mohsen/greenquic_test_suite_v22/common/bin/timestamp_tee.py", line 60, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/root/mohsen/greenquic_test_suite_v22/common/bin/timestamp_tee.py", line 38, in main
+    for received in sys.stdin:
+                    ^^^^^^^^^
+KeyboardInterrupt
+
+=== GreenQUIC Power and Energy Summary ===
+- Role: server
+- Sensor: power1, whole-system/board power; not package RAPL
+- Samples: 0
+- Actual sample interval requested: 1000 ms
+- Trace duration: unavailable s
+- Estimated cumulative energy: unavailable J
+- Time-weighted average power: unavailable W
+- Power range: unavailable–unavailable W
+- Median / P95: unavailable / unavailable W
+- Note: axis tick spacing does not change the sensor sampling interval
+
+
+[GreenQUIC-Test:WARN] One-shot RAPL snapshot did not report a package counter. The compiled powercap time series will be validated during result bundling and remains the authoritative RAPL source when its final validation is PASS.
+[GreenQUIC-Test] C-state compaction validation PASS: CPU 19: 545 intervals, 2 blocks
+[GreenQUIC-Test] C-state bar charts generated: intervals=545 compact=500 cpus=19
+
+========================================================================
+GreenQUIC Run Summary
+========================================================================
+
+Run
+---
+- Test: P4 — P4_repeated_8GiB_downloads
+- Role: server
+- GreenQUIC mode: plus
+- Timestamp: 20260806_164735_097281791
+
+Goodput — Active Transfer Only
+------------------------------
+- Goodput is reported by the client; server transfer energy is reported below.
+
+RAPL Energy — Active Transfer Only
+----------------------------------
+- Active-transfer RAPL window unavailable for this run.
+
+RAPL Energy — Whole Test
+------------------------
+- Source: Linux Intel RAPL powercap sysfs energy_uj counters sampled by the compiled C helper
+- Scope: CPU package and DRAM RAPL domains; not whole-system board power
+- Package counter: /sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj
+- DRAM counter: /sys/class/powercap/intel-rapl/intel-rapl:0/intel-rapl:0:0/energy_uj
+- Package domain name: package-0
+- DRAM domain name: dram
+- Source validation: PASS
+- Power calculation: watts = wrapped delta energy_uj / actual CLOCK_MONOTONIC sample interval
+- Duration: 101.820094 s
+- Samples: 16970
+- Requested sampling interval: 6.000 ms
+- Smoothing: 3 samples (18.000 ms nominal window)
+- Actual interval median / P95 / maximum: 6.000 / 6.009 / 6.165 ms
+- Package energy: 9910.679 J
+- DRAM energy: 2045.407 J
+- Package + DRAM energy: 11956.086 J
+- Average package + DRAM power: 117.424 W
+
+Whole-System Power and Energy — Whole Test
+------------------------------------------
+- Source backend: unavailable
+- Exact source: 
+- Sensor: power1 from lm-sensors or hwmon sysfs
+- Scope: whole-system/board power, not CPU-package RAPL
+- Samples: 0
+- Requested sampling interval: 1000 ms
+- Estimated cumulative energy: unavailable J
+- Time-weighted average power: unavailable W
+- Minimum / median / P95 / maximum: unavailable / unavailable / unavailable / unavailable W
+
+CPU Frequency
+-------------
+- CPUs observed: 19
+- Timestamped frequency events: 4147
+- Minimum observed frequency: 0.799 GHz
+- Maximum observed frequency: 3.600 GHz
+- Frequency actions: none
+
+Idle and Wake Behavior
+----------------------
+- Idle modes observed: none
+- EPOLL attempts: 0
+- EPOLL wakeups: 0
+- EPOLL timeouts: 0 (configured timeout 100.000 ms each; approximately 0.000 s total)
+
+Linux C-state Trace
+-------------------
+- Trace clock: mono_raw
+- CPUs traced: 19
+- cpu_idle entries: 545
+- Wakeups / idle exits: 546
+- Completed idle intervals: 545
+- Per-state residency: state 2=10 intervals/2.763 ms, state 3=535 intervals/11271.636 ms
+
+
+[GreenQUIC-Test] Run result folder created: /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/results/20260806_164735_097281791__P4_repeated_8GiB_downloads__server__plus
+[GreenQUIC-Test] SVG visuals: /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/results/20260806_164735_097281791__P4_repeated_8GiB_downloads__server__plus
+[GreenQUIC-Test] Logs/configuration/data: /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/results/20260806_164735_097281791__P4_repeated_8GiB_downloads__server__plus/details

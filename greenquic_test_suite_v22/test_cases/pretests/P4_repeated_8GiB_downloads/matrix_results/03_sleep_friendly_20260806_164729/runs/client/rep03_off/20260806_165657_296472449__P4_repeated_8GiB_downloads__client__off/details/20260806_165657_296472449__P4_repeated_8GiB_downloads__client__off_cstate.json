@@ -1,0 +1,135 @@
+{
+  "schema": "greenquic-cstate-v1",
+  "clock": "mono_raw",
+  "parsed_events": 250,
+  "skipped_lines": 0,
+  "first_timestamp_ns": 839141603791000,
+  "last_timestamp_ns": 839206594762000,
+  "cpus": [
+    19
+  ],
+  "per_cpu": {
+    "19": {
+      "entries": 125,
+      "wakeups": 125,
+      "states": {
+        "1": {
+          "entries": 6,
+          "total_idle_ns": 177000
+        },
+        "2": {
+          "entries": 11,
+          "total_idle_ns": 24678000
+        },
+        "3": {
+          "entries": 108,
+          "total_idle_ns": 5211803000
+        }
+      },
+      "active": true
+    }
+  },
+  "cstate_plots_skipped": false,
+  "csv_rows": 250,
+  "completed_idle_intervals": 124,
+  "traced_cpus": [
+    19
+  ],
+  "state_names": {
+    "3": "S3 \u2014 C6",
+    "2": "S2 \u2014 C1E",
+    "1": "S1 \u2014 C1"
+  },
+  "idle_interval_duration_ms": {
+    "minimum": 0.003,
+    "median": 3.97,
+    "mean": 42.23111290322581,
+    "maximum": 999.319
+  },
+  "kind": "cpuwise_cstate_single_lane_dominant_color_v5",
+  "role": "client",
+  "states": [
+    1,
+    2,
+    3
+  ],
+  "compact_scope": "per_cpu",
+  "compact_size_intervals_per_cpu": 500,
+  "lanes_per_cpu": 1,
+  "bar_height": "total idle residency in compact block",
+  "bar_width": "covered trace time from first included idle entry to last included idle exit",
+  "bar_color": "state with greatest residency duration in compact block",
+  "wakeups_display": "mapping_only",
+  "mapping_gap_cm": 1.0,
+  "compaction_validation": {
+    "19": {
+      "passed": true,
+      "raw_interval_count": 124,
+      "compacted_interval_count": 124,
+      "compact_block_count": 1,
+      "full_block_size": 500,
+      "last_block_size": 124,
+      "raw_wakeups": 124,
+      "compacted_wakeups": 124,
+      "raw_state_counts": {
+        "1": 6,
+        "2": 11,
+        "3": 107
+      },
+      "compacted_state_counts": {
+        "1": 6,
+        "2": 11,
+        "3": 107
+      },
+      "raw_state_duration_ns": {
+        "1": 177000,
+        "2": 24678000,
+        "3": 5211803000
+      },
+      "compacted_state_duration_ns": {
+        "1": 177000,
+        "2": 24678000,
+        "3": 5211803000
+      },
+      "raw_interval_fingerprint_sha256": "2e6dc6df322a9a62fca23e5e74cb399283d793497702fa4f45738d47fd6b1f31"
+    }
+  },
+  "compact_blocks_by_cpu": {
+    "19": [
+      {
+        "block": 1,
+        "intervals": 124,
+        "start_ms": 0.009,
+        "end_ms": 64990.969,
+        "covered_ms": 64990.96,
+        "idle_total_ms": 5236.658,
+        "wakeups": 124,
+        "dominant_state": 3,
+        "dominant_state_name": "S3 \u2014 C6",
+        "state_interval_counts": {
+          "1": 6,
+          "2": 11,
+          "3": 107
+        },
+        "state_duration_ms": {
+          "1": 0.177,
+          "2": 24.678,
+          "3": 5211.803
+        }
+      }
+    ]
+  },
+  "state_interval_counts": {
+    "1": 6,
+    "2": 11,
+    "3": 107
+  },
+  "state_total_idle_ms": {
+    "1": 0.177,
+    "2": 24.678,
+    "3": 5211.803
+  },
+  "idle_entry_events": 125,
+  "state_switch_events": 0,
+  "wakeup_idle_exit_events": 125
+}

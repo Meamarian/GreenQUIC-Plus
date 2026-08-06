@@ -1,0 +1,71 @@
+{
+  "schema": "greenquic-rapl-powercap-summary-v3",
+  "source": "Linux Intel RAPL powercap sysfs energy_uj counters sampled by the compiled C helper",
+  "source_scope": "CPU package and DRAM RAPL domains; not whole-system board power",
+  "source_paths": {
+    "package_energy_uj": "/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj",
+    "dram_energy_uj": "/sys/class/powercap/intel-rapl/intel-rapl:0/intel-rapl:0:0/energy_uj"
+  },
+  "source_verification": {
+    "passed": true,
+    "package_counter_readable": true,
+    "dram_counter_readable": true,
+    "package_domain_name": "package-0",
+    "dram_domain_name": "dram",
+    "csv_contains_exact_counter_paths": true,
+    "energy_sum_matches_csv_deltas": true
+  },
+  "power_calculation": "watts = wrapped delta energy_uj / actual CLOCK_MONOTONIC sample interval",
+  "energy_calculation": "joules = sum of per-sample wrapped energy_uj deltas / 1e6",
+  "role": "server",
+  "requested_interval_ms": 6.0,
+  "smoothing_samples": 3,
+  "nominal_smoothing_window_ms": 18.0,
+  "whole_run": {
+    "sample_count": 14041,
+    "duration_s": 84.24608942200001,
+    "actual_interval_ms_min": 5.803851,
+    "actual_interval_ms_median": 5.999939,
+    "actual_interval_ms_p95": 6.008413,
+    "actual_interval_ms_max": 6.201375,
+    "package_energy_j": 8313.244221,
+    "dram_energy_j": 1696.241094,
+    "total_energy_j": 10009.485315000002,
+    "average_package_power_w": 98.67810218890803,
+    "average_dram_power_w": 20.134360011695023,
+    "average_total_power_w": 118.81246220060306,
+    "smoothed_total_power_w_min": 90.109171,
+    "smoothed_total_power_w_median": 118.975996,
+    "smoothed_total_power_w_p95": 129.147168,
+    "smoothed_total_power_w_max": 144.077615
+  },
+  "transfer_window": null,
+  "sample_count": 14041,
+  "duration_s": 84.24608942200001,
+  "actual_interval_ms_min": 5.803851,
+  "actual_interval_ms_median": 5.999939,
+  "actual_interval_ms_p95": 6.008413,
+  "actual_interval_ms_max": 6.201375,
+  "package_energy_j": 8313.244221,
+  "dram_energy_j": 1696.241094,
+  "total_energy_j": 10009.485315000002,
+  "average_package_power_w": 98.67810218890803,
+  "average_dram_power_w": 20.134360011695023,
+  "average_total_power_w": 118.81246220060306,
+  "smoothed_total_power_w_min": 90.109171,
+  "smoothed_total_power_w_median": 118.975996,
+  "smoothed_total_power_w_p95": 129.147168,
+  "smoothed_total_power_w_max": 144.077615,
+  "power_plot": {
+    "width_px": 101300,
+    "height_px": 3500,
+    "x_tick_ms": 10,
+    "x_label_ms": 100
+  },
+  "energy_plot": {
+    "width_px": 101300,
+    "height_px": 3500,
+    "x_tick_ms": 10,
+    "x_label_ms": 100
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "schema": "greenquic-p4-cpuidle-map-v1",
+  "host": "tinyman",
+  "role": "client",
+  "cpu": 19,
+  "sysfs_root": "/sys/devices/system/cpu/cpu19/cpuidle",
+  "states": {
+    "0": {
+      "index": 0,
+      "linux_state": "state0",
+      "name": "POLL",
+      "description": "CPUIDLE CORE POLL IDLE",
+      "exit_latency_us": 0,
+      "target_residency_us": 0
+    },
+    "1": {
+      "index": 1,
+      "linux_state": "state1",
+      "name": "C1",
+      "description": "MWAIT 0x00",
+      "exit_latency_us": 1,
+      "target_residency_us": 1
+    },
+    "2": {
+      "index": 2,
+      "linux_state": "state2",
+      "name": "C1E",
+      "description": "MWAIT 0x01",
+      "exit_latency_us": 4,
+      "target_residency_us": 4
+    },
+    "3": {
+      "index": 3,
+      "linux_state": "state3",
+      "name": "C6",
+      "description": "MWAIT 0x20",
+      "exit_latency_us": 170,
+      "target_residency_us": 600
+    }
+  },
+  "valid": true
+}

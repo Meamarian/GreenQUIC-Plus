@@ -1,0 +1,307 @@
+========================================================================
+GreenQUIC Run Summary
+========================================================================
+
+Run
+---
+- Test: P4 — P4_repeated_8GiB_downloads
+- Role: client
+- GreenQUIC mode: basic
+- Timestamp: 20260806_170808_938987611
+
+Goodput — Active Transfer Only
+------------------------------
+- Timing boundary: first DPDK RX packet → last DPDK TX packet
+- Payload: 40.000 GiB
+- Active-transfer duration: 68.727718600 s
+- Goodput: 4.999400 Gbit/s
+- Goodput: 4999.400 Mbit/s
+- MsQuic timer cross-check: 4.997769 Gbit/s
+
+RAPL Energy — Active Transfer Only
+----------------------------------
+- Boundary: first DPDK RX packet → last DPDK TX packet
+- Duration: 68.727718600 s
+- RAPL samples overlapping window: 11456
+- Package energy: 4918.515237 J
+- DRAM energy: 1242.923856 J
+- Package + DRAM energy: 6161.439093 J
+- Average package power: 71.565 W
+- Average DRAM power: 18.085 W
+- Average package + DRAM power: 89.650 W
+- RX packets observed: 29845187
+- TX packets observed: 720798
+
+RAPL Energy — Whole Test
+------------------------
+- Source: Linux Intel RAPL powercap sysfs energy_uj counters sampled by the compiled C helper
+- Scope: CPU package and DRAM RAPL domains; not whole-system board power
+- Package counter: /sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj
+- DRAM counter: /sys/class/powercap/intel-rapl/intel-rapl:0/intel-rapl:0:0/energy_uj
+- Package domain name: package-0
+- DRAM domain name: dram
+- Source validation: PASS
+- Power calculation: watts = wrapped delta energy_uj / actual CLOCK_MONOTONIC sample interval
+- Duration: 75.060228 s
+- Samples: 12510
+- Requested sampling interval: 6.000 ms
+- Smoothing: 3 samples (18.000 ms nominal window)
+- Actual interval median / P95 / maximum: 6.000 / 6.035 / 6.474 ms
+- Package energy: 5213.872 J
+- DRAM energy: 1339.067 J
+- Package + DRAM energy: 6552.940 J
+- Average package + DRAM power: 87.302 W
+
+Whole-System Power and Energy — Whole Test
+------------------------------------------
+- Source backend: lm-sensors
+- Exact source: power1:      144.00 W  (interval =   1.00 s)
+- Sensor: power1 from lm-sensors or hwmon sysfs
+- Scope: whole-system/board power, not CPU-package RAPL
+- Samples: 77
+- Requested sampling interval: 1000 ms
+- Estimated cumulative energy: 13352.409 J
+- Time-weighted average power: 177.762 W
+- Minimum / median / P95 / maximum: 138.000 / 187.000 / 201.200 / 202.000 W
+
+Power-Source Comparison — Whole Test
+------------------------------------
+- RAPL package + DRAM average: 87.302 W
+- power1 whole-system average: 177.762 W
+- Whole-system minus RAPL: 90.460 W
+- RAPL / whole-system ratio: 0.491
+- Interpretation: the values should not be equal because RAPL covers package + DRAM while power1 covers the board/system. The comparison is a scope cross-check, not an equality test.
+
+CPU Frequency
+-------------
+- CPUs observed: 19
+- Timestamped frequency events: 2650
+- Minimum observed frequency: 0.800 GHz
+- Maximum observed frequency: 3.601 GHz
+- Frequency actions: none
+
+Idle and Wake Behavior
+----------------------
+- Idle modes observed: none
+- EPOLL attempts: 0
+- EPOLL wakeups: 0
+- EPOLL timeouts: 0 (configured timeout 100.000 ms each; approximately 0.000 s total)
+
+Linux C-state Trace
+-------------------
+- Trace clock: mono_raw
+- CPUs traced: 19
+- cpu_idle entries: 839
+- Wakeups / idle exits: 839
+- Completed idle intervals: 838
+- Per-state residency: state 1=3 intervals/4.713 ms, state 2=387 intervals/140.343 ms, state 3=448 intervals/24928.605 ms
+
+Client Storage
+--------------
+- Logical downloaded bytes: 42949672960
+- Regular downloaded payload bytes left on disk: 0
+- /dev/null sinks preserved or restored: 5
+
+Measurement Notes
+-----------------
+- Active-transfer timestamps are captured in the DPDK RX/TX path with CLOCK_MONOTONIC.
+- RAPL boundary intervals are prorated by their exact overlap with the packet window.
+- The end boundary is the final DPDK TX packet; encrypted QUIC packet type is not inferred.
+- The post-transfer wait belongs only to the whole-test report, not active-transfer energy or goodput.
+
+Effective DPDK Configuration
+----------------------------
+- DeviceName=0000:18:00.0
+- LocalIp=192.168.100.2
+- PeerMac=6c:fe:54:59:98:b0
+- DpdkInitArgs=secnetperf -l 19 -a 0000:18:00.0
+- GreenQuicMode=basic
+- GreenQuicProfile=client_download
+- GreenQuicQuicProfile=max_throughput
+- GreenQuicDpdkLcores=19
+- GreenQuicEnableMultiCore=0
+- GreenQuicQuicWorkerCpus=21,22,23,24
+- GreenQuicPartitionDpdkMap=0:19,1:19,2:19,3:19
+- GreenQuicTxOwnerLcore=19
+- GreenQuicTxOwnerAlsoRx=1
+- GreenQuicEnableRx=1
+- GreenQuicEnableTx=1
+
+Effective Power Configuration
+-----------------------------
+- GreenQuicEnableFreq=1
+- GreenQuicEnableSleep=1
+- GreenQuicNoSleepIfTxRingNotEmpty=1
+- GreenQuicTxRingProtectUp=1
+- GreenQuicPressureScale=1000
+- GreenQuicPressureMaxThreshold=900
+- GreenQuicPressureUpThreshold=600
+- GreenQuicPressureKeepThreshold=250
+- GreenQuicRxQueueHigh=64
+- GreenQuicRxQueueSamplePeriod=64
+- GreenQuicTxRingHigh=64
+- GreenQuicRxBurstRiseAlphaPermille=500
+- GreenQuicRxBurstFallAlphaPermille=500
+- GreenQuicRxQueueRiseAlphaPermille=1000
+- GreenQuicRxQueueFallAlphaPermille=250
+- GreenQuicTxBurstRiseAlphaPermille=500
+- GreenQuicTxBurstFallAlphaPermille=500
+- GreenQuicTxRingRiseAlphaPermille=1000
+- GreenQuicTxRingFallAlphaPermille=250
+- GreenQuicFullBurstMaxCount=8
+- GreenQuicFullBurstFloor=0
+- GreenQuicAckClientFloor=600
+- GreenQuicAckOtherFloor=550
+- GreenQuicAckRxHardMaxThreshold=900
+- GreenQuicEnableAckRxHardMax=1
+- GreenQuicAckBlocksSleep=1
+- GreenQuicCwndGrowthNoWorkFloor=550
+- GreenQuicCwndGrowthWorkFloor=600
+- GreenQuicCwndGrowthPhysicalThreshold=250
+- GreenQuicCwndGrowthBlocksSleep=1
+- GreenQuicRecoveryFloor=750
+- GreenQuicRecoveryHardMaxPhysicalThreshold=600
+- GreenQuicEnableRecoveryHardMax=1
+- GreenQuicRecoveryBlocksSleep=1
+- GreenQuicBlockedRxFloor=0
+- GreenQuicBlockedSleepGuardLevel=0
+- GreenQuicActiveTransferSleepMinLevel=2
+- GreenQuicEnablePhysicalHardMax=1
+- GreenQuicRxEmptyPollThreshold=10000
+- GreenQuicTxEmptyPollThreshold=10000
+- GreenQuicFreqPeriodUs=10000
+- GreenQuicFreqUpPeriodUs=500
+- GreenQuicFreqDownPeriodUs=2000
+- GreenQuicFreqMinIdleUs=5000
+- GreenQuicSleepShortMinLevel=2
+- GreenQuicSleepDataMinLevel=4
+- GreenQuicSleepDeepMinLevel=4
+- GreenQuicAckPathMaxSleepUs=1
+- GreenQuicDataPathMaxSleepUs=4
+- GreenQuicMaxSleepUs=8
+- GreenQuicLogLevel=0
+- GreenQuicStatsPeriodUs=100000
+- GreenQuicEnableCStateIdle=1
+- GreenQuicCStateMinIdleUs=5000
+- GreenQuicCStateMinLevel=4
+- GreenQuicCStateDeepMinLevel=8
+- GreenQuicCStateWaitUs=100
+- GreenQuicCStateDeepWaitUs=500
+- GreenQuicCStateMaxWaitUs=500
+- GreenQuicCStateTxOwnerMaxWaitUs=50
+- GreenQuicCStateAllowDuringActiveTransfer=1
+- GreenQuicIdleMode=epoll
+- GreenQuicIdleFallback=short
+- GreenQuicWorkWaitMinIdleUs=5000
+- GreenQuicWorkWaitMinLevel=1
+- GreenQuicIdleWatchdogUs=100000
+- GreenQuicAllowWorkWaitDuringActiveTransfer=1
+- GreenQuicEpollMaxEvents=8
+
+Test Configuration Snapshot
+---------------------------
+- TEST_ID='P4'
+- TEST_TITLE='Repeated 8 GiB downloads in one QUIC connection with idle gaps'
+- WORKLOAD_KIND="${WORKLOAD_KIND:-multi_stream_single_connection}"
+- DEFAULT_MODE="${DEFAULT_MODE:-basic}"
+- SERVER_PROFILE="${SERVER_PROFILE:-server_download}"
+- CLIENT_PROFILE="${CLIENT_PROFILE:-client_download}"
+- MSQUIC_EXECUTION_PROFILE="${MSQUIC_EXECUTION_PROFILE:-max_throughput}"
+- ENABLE_MULTICORE="${ENABLE_MULTICORE:-0}"
+- DOWNLOADS_PER_RUN="${DOWNLOADS_PER_RUN:-5}"
+- GAP_US="${GAP_US:-5000000}"
+- MATRIX_REPETITIONS="${MATRIX_REPETITIONS:-5}"
+- REQUEST_PATH="${REQUEST_PATH:-/file_8G.bin}"
+- REQUEST_PATHS="${REQUEST_PATHS:-$REQUEST_PATH}"
+- PAYLOAD_BYTES="${PAYLOAD_BYTES:-8589934592}"
+- DOWNLOAD_DIR="${DOWNLOAD_DIR:-../../../common/downloads}"
+- GQ_POST_TRANSFER_WAIT_S="${GQ_POST_TRANSFER_WAIT_S:-0}"
+- REPETITIONS="${REPETITIONS:-1}"
+- PARALLEL_CONNECTIONS="${PARALLEL_CONNECTIONS:-1}"
+- PARALLEL_STREAMS="${PARALLEL_STREAMS:-1}"
+- REQUIRES_INPROCESS_CLIENT="${REQUIRES_INPROCESS_CLIENT:-0}"
+- TEST_GQ_REQUIRE_RAPL="${TEST_GQ_REQUIRE_RAPL:-0}"
+- TEST_CLIENT_TIMEOUT_MS="${TEST_CLIENT_TIMEOUT_MS:-600000}"
+- RX_EMPTY_POLLS="${RX_EMPTY_POLLS:-50000}"
+- TX_EMPTY_POLLS="${TX_EMPTY_POLLS:-50000}"
+- RX_QUEUE_HIGH="${RX_QUEUE_HIGH:-64}"
+- RX_QUEUE_SAMPLE_PERIOD="${RX_QUEUE_SAMPLE_PERIOD:-64}"
+- TX_RING_HIGH="${TX_RING_HIGH:-64}"
+- PRESSURE_MAX="${PRESSURE_MAX:-900}"
+- PRESSURE_UP="${PRESSURE_UP:-600}"
+- PRESSURE_KEEP="${PRESSURE_KEEP:-250}"
+- FULL_BURST_COUNT="${FULL_BURST_COUNT:-8}"
+- FREQ_UP_PERIOD_US="${FREQ_UP_PERIOD_US:-500}"
+- FREQ_DOWN_PERIOD_US="${FREQ_DOWN_PERIOD_US:-5000}"
+- FREQ_MIN_IDLE_US="${FREQ_MIN_IDLE_US:-20000}"
+- ENABLE_FREQ="${ENABLE_FREQ:-1}"
+- ENABLE_SLEEP="${ENABLE_SLEEP:-1}"
+- ENABLE_PAUSE="${ENABLE_PAUSE:-1}"
+- KEEP_PAUSE_ITERATIONS="${KEEP_PAUSE_ITERATIONS:-1}"
+- SHORT_PAUSE_ITERATIONS="${SHORT_PAUSE_ITERATIONS:-1}"
+- IDLE_MODE="${IDLE_MODE:-epoll}"
+- IDLE_FALLBACK="${IDLE_FALLBACK:-short}"
+- PRESSURE_SCALE="${PRESSURE_SCALE:-1000}"
+- RX_BURST_RISE_ALPHA_PERMILLE="${RX_BURST_RISE_ALPHA_PERMILLE:-500}"
+- RX_BURST_FALL_ALPHA_PERMILLE="${RX_BURST_FALL_ALPHA_PERMILLE:-500}"
+- RX_QUEUE_RISE_ALPHA_PERMILLE="${RX_QUEUE_RISE_ALPHA_PERMILLE:-1000}"
+- RX_QUEUE_FALL_ALPHA_PERMILLE="${RX_QUEUE_FALL_ALPHA_PERMILLE:-250}"
+- TX_BURST_RISE_ALPHA_PERMILLE="${TX_BURST_RISE_ALPHA_PERMILLE:-500}"
+- TX_BURST_FALL_ALPHA_PERMILLE="${TX_BURST_FALL_ALPHA_PERMILLE:-500}"
+- TX_RING_RISE_ALPHA_PERMILLE="${TX_RING_RISE_ALPHA_PERMILLE:-1000}"
+- TX_RING_FALL_ALPHA_PERMILLE="${TX_RING_FALL_ALPHA_PERMILLE:-250}"
+- FULL_BURST_FLOOR="${FULL_BURST_FLOOR:-0}"
+- ACK_CLIENT_FLOOR="${ACK_CLIENT_FLOOR:-600}"
+- ACK_OTHER_FLOOR="${ACK_OTHER_FLOOR:-550}"
+- ACK_RX_HARDMAX_THRESHOLD="${ACK_RX_HARDMAX_THRESHOLD:-900}"
+- ENABLE_ACK_RX_HARDMAX="${ENABLE_ACK_RX_HARDMAX:-1}"
+- ACK_BLOCKS_SLEEP="${ACK_BLOCKS_SLEEP:-1}"
+- CWND_GROWTH_NO_WORK_FLOOR="${CWND_GROWTH_NO_WORK_FLOOR:-550}"
+- CWND_GROWTH_WORK_FLOOR="${CWND_GROWTH_WORK_FLOOR:-600}"
+- CWND_GROWTH_PHYSICAL_THRESHOLD="${CWND_GROWTH_PHYSICAL_THRESHOLD:-250}"
+- CWND_GROWTH_BLOCKS_SLEEP="${CWND_GROWTH_BLOCKS_SLEEP:-1}"
+- RECOVERY_FLOOR="${RECOVERY_FLOOR:-750}"
+- RECOVERY_HARDMAX_PHYSICAL_THRESHOLD="${RECOVERY_HARDMAX_PHYSICAL_THRESHOLD:-600}"
+- ENABLE_RECOVERY_HARDMAX="${ENABLE_RECOVERY_HARDMAX:-1}"
+- RECOVERY_BLOCKS_SLEEP="${RECOVERY_BLOCKS_SLEEP:-1}"
+- BLOCKED_RX_FLOOR="${BLOCKED_RX_FLOOR:-0}"
+- BLOCKED_SLEEP_GUARD_LEVEL="${BLOCKED_SLEEP_GUARD_LEVEL:-0}"
+- ACTIVE_TRANSFER_SLEEP_MIN_LEVEL="${ACTIVE_TRANSFER_SLEEP_MIN_LEVEL:-4}"
+- ENABLE_PHYSICAL_HARDMAX="${ENABLE_PHYSICAL_HARDMAX:-1}"
+- FREQ_PERIOD_US="${FREQ_PERIOD_US:-100000}"
+- NO_SLEEP_IF_TX_RING_NOT_EMPTY="${NO_SLEEP_IF_TX_RING_NOT_EMPTY:-1}"
+- TX_RING_PROTECT_UP="${TX_RING_PROTECT_UP:-1}"
+- SLEEP_SHORT_MIN_LEVEL="${SLEEP_SHORT_MIN_LEVEL:-2}"
+- SLEEP_DATA_MIN_LEVEL="${SLEEP_DATA_MIN_LEVEL:-4}"
+- SLEEP_DEEP_MIN_LEVEL="${SLEEP_DEEP_MIN_LEVEL:-8}"
+- ACK_SLEEP_US="${ACK_SLEEP_US:-1}"
+- DATA_SLEEP_US="${DATA_SLEEP_US:-2}"
+- MAX_SLEEP_US="${MAX_SLEEP_US:-2}"
+
+Environment Overrides
+---------------------
+- CSTATE_ALLOW_DURING_ACTIVE_TRANSFER=1
+- CSTATE_DEEP_MIN_LEVEL=8
+- CSTATE_DEEP_WAIT_US=500
+- CSTATE_MAX_WAIT_US=500
+- CSTATE_MIN_IDLE_US=5000
+- CSTATE_MIN_LEVEL=4
+- CSTATE_WAIT_US=100
+- ENABLE_CSTATE_IDLE=1
+- ENABLE_SLEEP=1
+- FREQ_DOWN_PERIOD_US=2000
+- FREQ_MIN_IDLE_US=5000
+- GQ_IDLE_FALLBACK_OVERRIDE=short
+- GQ_IDLE_MODE_OVERRIDE=epoll
+- GQ_INTEROP_CLIENT_BIN=/root/greenquic_snapshot/msquic/build-greenquic-p4/bin/Release/quicinterop
+- GQ_INTEROP_P4_SEQUENCE=1
+- GQ_INTEROP_REQUEST_GAP_US=5000000
+- GQ_LOG_LEVEL=0
+- GQ_MODE_OVERRIDE=basic
+- GQ_POST_TRANSFER_WAIT_S=5
+- IDLE_WATCHDOG_US=100000
+- RX_EMPTY_POLLS=10000
+- SLEEP_DEEP_MIN_LEVEL=4
+- TX_EMPTY_POLLS=10000
+- WORK_WAIT_MIN_IDLE_US=5000
+- WORK_WAIT_MIN_LEVEL=1

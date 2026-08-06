@@ -1,0 +1,269 @@
+[2026-08-06T17:07:03.697+02:00][+00000.781s][CLIENT][TEST 13/15][MODE=plus] V22 installation valid: GreenQUIC 22-private-split-linux-dpdk, split Linux backend, DPDK 21.11.9
+[2026-08-06T17:07:03.843+02:00][+00000.927s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:03.843+02:00][+00000.927s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Raw-DPDK client addressing: LocalIp=192.168.100.2 local-MAC=6c:fe:54:59:99:38 PeerMac=6c:fe:54:59:98:b0 target=192.168.100.1 device=0000:18:00.0
+[2026-08-06T17:07:03.848+02:00][+00000.932s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:03.848+02:00][+00000.932s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Online CPUs: 0-47; requested DPDK=19,20 QUIC=21,22,23,24
+[2026-08-06T17:07:03.882+02:00][+00000.966s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:03.882+02:00][+00000.966s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Locked-memory limit: 8192
+[2026-08-06T17:07:03.946+02:00][+00001.030s][CLIENT][TEST 13/15][MODE=plus] V22 configuration valid: /root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/runtime/client/dpdk.ini + /root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/runtime/client/powermng.ini
+[2026-08-06T17:07:03.946+02:00][+00001.030s][CLIENT][TEST 13/15][MODE=plus] WARNING: GreenQuicEnableCStateIdle=1 is ignored when an explicit non-pause GreenQuicIdleMode is selected
+[2026-08-06T17:07:03.946+02:00][+00001.030s][CLIENT][TEST 13/15][MODE=plus] WARNING: work-triggered waiting during active transfer is enabled; treat this as a latency diagnostic until validated
+[2026-08-06T17:07:04.023+02:00][+00001.107s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:04.023+02:00][+00001.108s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Running P4 client mode=plus kind=multi_stream_single_connection
+[2026-08-06T17:07:04.023+02:00][+00001.108s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:04.023+02:00][+00001.108s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Binary: /root/greenquic_snapshot/msquic/build-greenquic-p4/bin/Release/quicinterop
+[2026-08-06T17:07:04.128+02:00][+00001.212s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:04.128+02:00][+00001.212s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Started client whole-system power1 trace pid=312801 interval=1000ms prefix=/root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/results/client_power_plus_20260806_170618_411330441
+[2026-08-06T17:07:04.182+02:00][+00001.266s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:04.182+02:00][+00001.266s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Started client C RAPL powercap trace pid=312804 interval=6ms smoothing=3
+[2026-08-06T17:07:04.332+02:00][+00001.416s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:04.332+02:00][+00001.417s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Started client Linux cpu_idle trace pid=312812 traced_cpus=19 reader_cpu=1 clock=mono_raw
+[2026-08-06T17:07:04.385+02:00][+00001.469s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:04.385+02:00][+00001.469s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Started client CPU-frequency trace pid=312814 interval=10ms
+[2026-08-06T17:07:04.466+02:00][+00001.550s][CLIENT][TEST 13/15][MODE=plus] EAL: Detected CPU lcores: 48
+[2026-08-06T17:07:04.466+02:00][+00001.550s][CLIENT][TEST 13/15][MODE=plus] EAL: Detected NUMA nodes: 1
+[2026-08-06T17:07:04.466+02:00][+00001.550s][CLIENT][TEST 13/15][MODE=plus] EAL: Detected shared linkage of DPDK
+[2026-08-06T17:07:04.491+02:00][+00001.575s][CLIENT][TEST 13/15][MODE=plus] EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+[2026-08-06T17:07:04.492+02:00][+00001.576s][CLIENT][TEST 13/15][MODE=plus] EAL: Selected IOVA mode 'PA'
+[2026-08-06T17:07:04.492+02:00][+00001.577s][CLIENT][TEST 13/15][MODE=plus] EAL: No available 1048576 kB hugepages reported
+[2026-08-06T17:07:04.494+02:00][+00001.579s][CLIENT][TEST 13/15][MODE=plus] EAL: Probe PCI driver: net_ice (8086:1592) device: 0000:18:00.0 (socket 0)
+[2026-08-06T17:07:05.226+02:00][+00002.310s][CLIENT][TEST 13/15][MODE=plus] ice_load_pkg_type(): Active package is: 1.3.41.0, ICE OS Default Package (single VLAN mode)
+[2026-08-06T17:07:05.253+02:00][+00002.338s][CLIENT][TEST 13/15][MODE=plus] TELEMETRY: No legacy callbacks, legacy socket not created
+[2026-08-06T17:07:05.313+02:00][+00002.397s][CLIENT][TEST 13/15][MODE=plus] ice_set_rx_function(): Using AVX2 Vector Scattered Rx (port 0).
+[2026-08-06T17:07:05.331+02:00][+00002.415s][CLIENT][TEST 13/15][MODE=plus] GreenQUIC: MsQuic worker CPU list from dpdk.ini = 21,22,23,24
+[2026-08-06T17:07:05.331+02:00][+00002.415s][CLIENT][TEST 13/15][MODE=plus] using configuration file dpdk.ini!
+[2026-08-06T17:07:05.331+02:00][+00002.415s][CLIENT][TEST 13/15][MODE=plus] GreenQUIC: installed 4 explicit MsQuic partition -> DPDK lcore mapping entries.
+[2026-08-06T17:07:05.331+02:00][+00002.415s][CLIENT][TEST 13/15][MODE=plus] GreenQUIC idle config: mode=epoll fallback=0 sleep=1 pause=1 freq=1 keep_pause_iterations=1 short_pause_iterations=1 work_wait_min_idle_us=5000 work_wait_min_level=1 watchdog_us=100000 allow_active_transfer=1 pause_supported=0 monitor_supported=0 rx_interrupt_config_requested=1.
+[2026-08-06T17:07:05.331+02:00][+00002.415s][CLIENT][TEST 13/15][MODE=plus] config params:
+[2026-08-06T17:07:05.331+02:00][+00002.415s][CLIENT][TEST 13/15][MODE=plus] --------------
+[2026-08-06T17:07:05.331+02:00][+00002.415s][CLIENT][TEST 13/15][MODE=plus] MbufCacheSize = 256
+[2026-08-06T17:07:05.331+02:00][+00002.415s][CLIENT][TEST 13/15][MODE=plus] NumRxDescriptors = 4096
+[2026-08-06T17:07:05.331+02:00][+00002.415s][CLIENT][TEST 13/15][MODE=plus] NumTxDescriptors = 4096
+[2026-08-06T17:07:05.331+02:00][+00002.415s][CLIENT][TEST 13/15][MODE=plus] RxMbufPoolSize = 16383
+[2026-08-06T17:07:05.331+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] TxMbufPoolSize = 16383
+[2026-08-06T17:07:05.331+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] RxBurstSize = 32
+[2026-08-06T17:07:05.331+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] TxBurstSize = 32
+[2026-08-06T17:07:05.331+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] TxRingSize = 4096
+[2026-08-06T17:07:05.331+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:05.331+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] SeparateRxThread = 0
+[2026-08-06T17:07:05.331+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] SeparateTxThread = 0
+[2026-08-06T17:07:05.331+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:05.332+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] Found 5 DpdkInitArgs: secnetperf -l 19 -a 0000:18:00.0 
+[2026-08-06T17:07:05.332+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] --------------
+[2026-08-06T17:07:05.332+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] Log path: /tmp/
+[2026-08-06T17:07:05.332+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] GreenQUIC idle: requesting DPDK RX-queue interrupts before port configuration (mode=epoll, rx_queues=1).
+[2026-08-06T17:07:05.332+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] GreenQUIC roles: lcores=1 rx_owners=1 rxq=1 tx_enabled=1 tx_owner=19 tx_owner_also_rx=1
+[2026-08-06T17:07:05.332+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] Mbuf fast free offload activated
+[2026-08-06T17:07:05.332+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:05.332+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] Starting Port 0 on Interface 0, 6c:fe:54:59:99:38
+[2026-08-06T17:07:05.332+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:05.332+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] Checking link status
+[2026-08-06T17:07:05.332+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] POWER: Env isn't set yet!
+[2026-08-06T17:07:05.332+02:00][+00002.416s][CLIENT][TEST 13/15][MODE=plus] POWER: Attempting to initialise ACPI cpufreq power management...
+[2026-08-06T17:07:05.332+02:00][+00002.417s][CLIENT][TEST 13/15][MODE=plus] POWER: Failed to write /sys/devices/system/cpu/cpu%u/cpufreq/scaling_governor
+[2026-08-06T17:07:05.332+02:00][+00002.417s][CLIENT][TEST 13/15][MODE=plus] POWER: Cannot set governor of lcore 19 to userspace
+[2026-08-06T17:07:05.332+02:00][+00002.417s][CLIENT][TEST 13/15][MODE=plus] POWER: Attempting to initialise PSTAT power management...
+[2026-08-06T17:07:05.332+02:00][+00002.417s][CLIENT][TEST 13/15][MODE=plus] POWER: Initialized successfully for lcore 19 power management
+[2026-08-06T17:07:05.333+02:00][+00002.417s][CLIENT][TEST 13/15][MODE=plus] done
+[2026-08-06T17:07:05.333+02:00][+00002.417s][CLIENT][TEST 13/15][MODE=plus] Port 0 Link up at 100 Gbps FDX Autoneg
+[2026-08-06T17:07:05.333+02:00][+00002.417s][CLIENT][TEST 13/15][MODE=plus] [CPU 19] GreenQUIC WORKER role=rx_tx state=running
+[2026-08-06T17:07:05.333+02:00][+00002.417s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:07:05.355+02:00][+00002.439s][CLIENT][TEST 13/15][MODE=plus] using dpdk.ini to set local IP!
+[2026-08-06T17:07:05.355+02:00][+00002.439s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-P4] marker=GreenQUIC-P4-SEQUENCE-V1 serial=GreenQUIC-P4-SERIAL-WAIT-V2 downloads=5 gap_us=5000000
+[2026-08-06T17:07:05.355+02:00][+00002.439s][CLIENT][TEST 13/15][MODE=plus][DOWNLOAD 1/5 START] [GreenQUIC-P4] request=1/5 start_us=839703801644 path=/file_8G.bin
+[2026-08-06T17:07:14.508+02:00][+00011.592s][CLIENT][TEST 13/15][MODE=plus] Sending request: GET /file_8G.bin
+[2026-08-06T17:07:14.508+02:00][+00011.592s][CLIENT][TEST 13/15][MODE=plus] file_8G.bin: Completed download! (9151 ms)
+[2026-08-06T17:07:14.508+02:00][+00011.592s][CLIENT][TEST 13/15][MODE=plus][DOWNLOAD 1/5 COMPLETE] [GreenQUIC-P4] request=1/5 complete_us=839712953870 path=/file_8G.bin duration_us=9152226 success=1
+[2026-08-06T17:07:19.508+02:00][+00016.592s][CLIENT][TEST 13/15][MODE=plus][GAP AFTER DOWNLOAD 1] [GreenQUIC-P4] gap_after=1 requested_us=5000000 actual_us=5000110
+[2026-08-06T17:07:19.508+02:00][+00016.592s][CLIENT][TEST 13/15][MODE=plus][DOWNLOAD 2/5 START] [GreenQUIC-P4] request=2/5 start_us=839717954020 path=/file_8G.bin
+[2026-08-06T17:07:28.097+02:00][+00025.182s][CLIENT][TEST 13/15][MODE=plus] Sending request: GET /file_8G.bin
+[2026-08-06T17:07:28.097+02:00][+00025.182s][CLIENT][TEST 13/15][MODE=plus] file_8G.bin: Completed download! (8589 ms)
+[2026-08-06T17:07:28.098+02:00][+00025.182s][CLIENT][TEST 13/15][MODE=plus][DOWNLOAD 2/5 COMPLETE] [GreenQUIC-P4] request=2/5 complete_us=839726543603 path=/file_8G.bin duration_us=8589583 success=1
+[2026-08-06T17:07:33.097+02:00][+00030.182s][CLIENT][TEST 13/15][MODE=plus][GAP AFTER DOWNLOAD 2] [GreenQUIC-P4] gap_after=2 requested_us=5000000 actual_us=5000109
+[2026-08-06T17:07:33.098+02:00][+00030.182s][CLIENT][TEST 13/15][MODE=plus][DOWNLOAD 3/5 START] [GreenQUIC-P4] request=3/5 start_us=839731543749 path=/file_8G.bin
+[2026-08-06T17:07:41.837+02:00][+00038.922s][CLIENT][TEST 13/15][MODE=plus] Sending request: GET /file_8G.bin
+[2026-08-06T17:07:41.837+02:00][+00038.922s][CLIENT][TEST 13/15][MODE=plus] file_8G.bin: Completed download! (8739 ms)
+[2026-08-06T17:07:41.837+02:00][+00038.922s][CLIENT][TEST 13/15][MODE=plus][DOWNLOAD 3/5 COMPLETE] [GreenQUIC-P4] request=3/5 complete_us=839740283576 path=/file_8G.bin duration_us=8739827 success=1
+[2026-08-06T17:07:46.837+02:00][+00043.922s][CLIENT][TEST 13/15][MODE=plus][GAP AFTER DOWNLOAD 3] [GreenQUIC-P4] gap_after=3 requested_us=5000000 actual_us=5000108
+[2026-08-06T17:07:46.838+02:00][+00043.922s][CLIENT][TEST 13/15][MODE=plus][DOWNLOAD 4/5 START] [GreenQUIC-P4] request=4/5 start_us=839745283722 path=/file_8G.bin
+[2026-08-06T17:07:55.623+02:00][+00052.707s][CLIENT][TEST 13/15][MODE=plus] Sending request: GET /file_8G.bin
+[2026-08-06T17:07:55.623+02:00][+00052.707s][CLIENT][TEST 13/15][MODE=plus] file_8G.bin: Completed download! (8785 ms)
+[2026-08-06T17:07:55.623+02:00][+00052.707s][CLIENT][TEST 13/15][MODE=plus][DOWNLOAD 4/5 COMPLETE] [GreenQUIC-P4] request=4/5 complete_us=839754069192 path=/file_8G.bin duration_us=8785470 success=1
+[2026-08-06T17:08:00.623+02:00][+00057.707s][CLIENT][TEST 13/15][MODE=plus][GAP AFTER DOWNLOAD 4] [GreenQUIC-P4] gap_after=4 requested_us=5000000 actual_us=5000103
+[2026-08-06T17:08:00.623+02:00][+00057.707s][CLIENT][TEST 13/15][MODE=plus][DOWNLOAD 5/5 START] [GreenQUIC-P4] request=5/5 start_us=839759069333 path=/file_8G.bin
+[2026-08-06T17:08:09.406+02:00][+00066.490s][CLIENT][TEST 13/15][MODE=plus] Sending request: GET /file_8G.bin
+[2026-08-06T17:08:09.406+02:00][+00066.490s][CLIENT][TEST 13/15][MODE=plus] file_8G.bin: Completed download! (8782 ms)
+[2026-08-06T17:08:09.406+02:00][+00066.490s][CLIENT][TEST 13/15][MODE=plus][DOWNLOAD 5/5 COMPLETE] [GreenQUIC-P4] request=5/5 complete_us=839767851844 path=/file_8G.bin duration_us=8782511 success=1
+[2026-08-06T17:08:09.407+02:00][+00066.492s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:09.407+02:00][+00066.492s][CLIENT][TEST 13/15][MODE=plus]       TARGET  VHDCRZSQUMBGA2E    VERSION   ALPN
+[2026-08-06T17:08:09.408+02:00][+00066.492s][CLIENT][TEST 13/15][MODE=plus]  ============================================
+[2026-08-06T17:08:09.408+02:00][+00066.492s][CLIENT][TEST 13/15][MODE=plus] 192.168.100.1  --D------------  0x00000001  hq-interop
+[2026-08-06T17:08:09.408+02:00][+00066.492s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:09.408+02:00][+00066.492s][CLIENT][TEST 13/15][MODE=plus] Total execution time: 64.074s
+[2026-08-06T17:08:09.408+02:00][+00066.492s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:09.408+02:00][+00066.492s][CLIENT][TEST 13/15][MODE=plus] transmission time [us]: 64073896
+[2026-08-06T17:08:09.408+02:00][+00066.492s][CLIENT][TEST 13/15][MODE=plus] [CPU 19] GreenQUIC PACKETS source=policy_counters rx_pkts=29845472 tx_pkts=703497
+[2026-08-06T17:08:09.408+02:00][+00066.492s][CLIENT][TEST 13/15][MODE=plus] POWER: Power management of lcore 19 has exited from 'performance' mode and been set back to the original
+[2026-08-06T17:08:09.426+02:00][+00066.510s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:09.426+02:00][+00066.511s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Client transport finished; keeping whole-test energy samplers active for 5s.
+[2026-08-06T17:08:14.617+02:00][+00071.701s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:14.617+02:00][+00071.701s][CLIENT][TEST 13/15][MODE=plus] === GreenQUIC Power and Energy Summary ===
+[2026-08-06T17:08:14.617+02:00][+00071.701s][CLIENT][TEST 13/15][MODE=plus] - Role: client
+[2026-08-06T17:08:14.617+02:00][+00071.701s][CLIENT][TEST 13/15][MODE=plus] - Sensor: power1, whole-system/board power; not package RAPL
+[2026-08-06T17:08:14.617+02:00][+00071.701s][CLIENT][TEST 13/15][MODE=plus] - Samples: 72
+[2026-08-06T17:08:14.617+02:00][+00071.701s][CLIENT][TEST 13/15][MODE=plus] - Actual sample interval requested: 1000 ms
+[2026-08-06T17:08:14.617+02:00][+00071.701s][CLIENT][TEST 13/15][MODE=plus] - Trace duration: 70.408 s
+[2026-08-06T17:08:14.617+02:00][+00071.701s][CLIENT][TEST 13/15][MODE=plus] - Estimated cumulative energy: 13347.009 J
+[2026-08-06T17:08:14.617+02:00][+00071.702s][CLIENT][TEST 13/15][MODE=plus] - Time-weighted average power: 189.565 W
+[2026-08-06T17:08:14.617+02:00][+00071.702s][CLIENT][TEST 13/15][MODE=plus] - Power range: 142.000–209.000 W
+[2026-08-06T17:08:14.617+02:00][+00071.702s][CLIENT][TEST 13/15][MODE=plus] - Median / P95: 197.000 / 208.000 W
+[2026-08-06T17:08:14.617+02:00][+00071.702s][CLIENT][TEST 13/15][MODE=plus] - Plot size: 24000 × 3500 px
+[2026-08-06T17:08:14.617+02:00][+00071.702s][CLIENT][TEST 13/15][MODE=plus] - X-axis minor tick: 1000 ms
+[2026-08-06T17:08:14.617+02:00][+00071.702s][CLIENT][TEST 13/15][MODE=plus] - X-axis labeled tick: 1000 ms
+[2026-08-06T17:08:14.617+02:00][+00071.702s][CLIENT][TEST 13/15][MODE=plus] - Note: axis tick spacing does not change the sensor sampling interval
+[2026-08-06T17:08:14.618+02:00][+00071.702s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:14.726+02:00][+00071.810s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:14.726+02:00][+00071.810s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test:WARN] One-shot RAPL snapshot did not report a package counter. The compiled powercap time series will be validated during result bundling and remains the authoritative RAPL source when its final validation is PASS.
+[2026-08-06T17:08:14.775+02:00][+00071.859s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Download accounting: completed=5 logical_bytes=42949672960
+[2026-08-06T17:08:14.787+02:00][+00071.871s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:14.787+02:00][+00071.871s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Verified 5 completed QUIC download(s) in the stock-client log.
+[2026-08-06T17:08:14.824+02:00][+00071.908s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Client storage cleanup: removed_files=0 removed_bytes=0 persistent_payload_bytes=0
+[2026-08-06T17:08:14.967+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:14.967+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] === GreenQUIC Goodput Summary ===
+[2026-08-06T17:08:14.968+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] - Test: P4
+[2026-08-06T17:08:14.968+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] - GreenQUIC mode: plus
+[2026-08-06T17:08:14.968+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] - Payload: 40.000 GiB (42949672960 bytes)
+[2026-08-06T17:08:14.968+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] - Download duration: 64.073896 s
+[2026-08-06T17:08:14.968+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] - Goodput: 5.362517 Gbit/s
+[2026-08-06T17:08:14.968+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] - Goodput: 5362.517 Mbit/s
+[2026-08-06T17:08:14.968+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] - Timing source: client transmission timer, microsecond resolution
+[2026-08-06T17:08:14.968+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] - Client DPDK RX packets: 29845472
+[2026-08-06T17:08:14.968+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] - Client DPDK TX packets: 703497
+[2026-08-06T17:08:14.968+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] - Packet-count scope: client process lifetime, including QUIC control traffic
+[2026-08-06T17:08:14.968+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] - Scope: payload bytes only; protocol headers and retransmissions are excluded
+[2026-08-06T17:08:14.968+02:00][+00072.052s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:33.968+02:00][+00091.053s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] C-state compaction validation PASS: CPU 19: 485087 intervals, 971 blocks
+[2026-08-06T17:08:33.969+02:00][+00091.053s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] C-state bar charts generated: intervals=485087 compact=500 cpus=19
+[2026-08-06T17:08:34.172+02:00][+00091.256s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.172+02:00][+00091.256s][CLIENT][TEST 13/15][MODE=plus] ========================================================================
+[2026-08-06T17:08:34.172+02:00][+00091.256s][CLIENT][TEST 13/15][MODE=plus] GreenQUIC Run Summary
+[2026-08-06T17:08:34.172+02:00][+00091.256s][CLIENT][TEST 13/15][MODE=plus] ========================================================================
+[2026-08-06T17:08:34.172+02:00][+00091.256s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.172+02:00][+00091.256s][CLIENT][TEST 13/15][MODE=plus] Run
+[2026-08-06T17:08:34.172+02:00][+00091.256s][CLIENT][TEST 13/15][MODE=plus] ---
+[2026-08-06T17:08:34.172+02:00][+00091.256s][CLIENT][TEST 13/15][MODE=plus] - Test: P4 — P4_repeated_8GiB_downloads
+[2026-08-06T17:08:34.172+02:00][+00091.256s][CLIENT][TEST 13/15][MODE=plus] - Role: client
+[2026-08-06T17:08:34.172+02:00][+00091.256s][CLIENT][TEST 13/15][MODE=plus] - GreenQUIC mode: plus
+[2026-08-06T17:08:34.172+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Timestamp: 20260806_170618_411330441
+[2026-08-06T17:08:34.172+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.172+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] Goodput — Active Transfer Only
+[2026-08-06T17:08:34.172+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] ------------------------------
+[2026-08-06T17:08:34.172+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Timing boundary: first DPDK RX packet → last DPDK TX packet
+[2026-08-06T17:08:34.172+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Payload: 40.000 GiB
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Active-transfer duration: 64.051294246 s
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Goodput: 5.364410 Gbit/s
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Goodput: 5364.410 Mbit/s
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - MsQuic timer cross-check: 5.362517 Gbit/s
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] RAPL Energy — Active Transfer Only
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] ----------------------------------
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Boundary: first DPDK RX packet → last DPDK TX packet
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Duration: 64.051294246 s
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - RAPL samples overlapping window: 10677
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Package energy: 5260.566184 J
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - DRAM energy: 1225.758825 J
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Package + DRAM energy: 6486.325009 J
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Average package power: 82.131 W
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Average DRAM power: 19.137 W
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Average package + DRAM power: 101.268 W
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - RX packets observed: 29845472
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - TX packets observed: 703497
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] RAPL Energy — Whole Test
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] ------------------------
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Source: Linux Intel RAPL powercap sysfs energy_uj counters sampled by the compiled C helper
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Scope: CPU package and DRAM RAPL domains; not whole-system board power
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Package counter: /sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - DRAM counter: /sys/class/powercap/intel-rapl/intel-rapl:0/intel-rapl:0:0/energy_uj
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - Package domain name: package-0
+[2026-08-06T17:08:34.173+02:00][+00091.257s][CLIENT][TEST 13/15][MODE=plus] - DRAM domain name: dram
+[2026-08-06T17:08:34.173+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Source validation: PASS
+[2026-08-06T17:08:34.173+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Power calculation: watts = wrapped delta energy_uj / actual CLOCK_MONOTONIC sample interval
+[2026-08-06T17:08:34.173+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Duration: 70.320453 s
+[2026-08-06T17:08:34.173+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Samples: 11720
+[2026-08-06T17:08:34.173+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Requested sampling interval: 6.000 ms
+[2026-08-06T17:08:34.173+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Smoothing: 3 samples (18.000 ms nominal window)
+[2026-08-06T17:08:34.173+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Actual interval median / P95 / maximum: 6.000 / 6.014 / 6.344 ms
+[2026-08-06T17:08:34.173+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Package energy: 5586.206 J
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - DRAM energy: 1319.811 J
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Package + DRAM energy: 6906.017 J
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Average package + DRAM power: 98.208 W
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] Whole-System Power and Energy — Whole Test
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] ------------------------------------------
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Source backend: lm-sensors
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Exact source: power1:      142.00 W  (interval =   1.00 s)
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Sensor: power1 from lm-sensors or hwmon sysfs
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Scope: whole-system/board power, not CPU-package RAPL
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Samples: 72
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Requested sampling interval: 1000 ms
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Estimated cumulative energy: 13347.009 J
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Time-weighted average power: 189.565 W
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Minimum / median / P95 / maximum: 142.000 / 197.000 / 208.000 / 209.000 W
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] Power-Source Comparison — Whole Test
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] ------------------------------------
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - RAPL package + DRAM average: 98.208 W
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - power1 whole-system average: 189.565 W
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Whole-system minus RAPL: 91.358 W
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - RAPL / whole-system ratio: 0.518
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - Interpretation: the values should not be equal because RAPL covers package + DRAM while power1 covers the board/system. The comparison is a scope cross-check, not an equality test.
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] CPU Frequency
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] -------------
+[2026-08-06T17:08:34.174+02:00][+00091.258s][CLIENT][TEST 13/15][MODE=plus] - CPUs observed: 19
+[2026-08-06T17:08:34.174+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - Timestamped frequency events: 3198
+[2026-08-06T17:08:34.174+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - Minimum observed frequency: 0.792 GHz
+[2026-08-06T17:08:34.174+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - Maximum observed frequency: 3.602 GHz
+[2026-08-06T17:08:34.174+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - Frequency actions: none
+[2026-08-06T17:08:34.174+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.174+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] Idle and Wake Behavior
+[2026-08-06T17:08:34.174+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] ----------------------
+[2026-08-06T17:08:34.174+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - Idle modes observed: none
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - EPOLL attempts: 0
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - EPOLL wakeups: 0
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - EPOLL timeouts: 0 (configured timeout 100.000 ms each; approximately 0.000 s total)
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] Linux C-state Trace
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] -------------------
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - Trace clock: mono_raw
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - CPUs traced: 19
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - cpu_idle entries: 485089
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - Wakeups / idle exits: 485089
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - Completed idle intervals: 485087
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] - Per-state residency: state 0=141 intervals/1.613 ms, state 1=888 intervals/49.589 ms, state 2=483928 intervals/11675.315 ms, state 3=130 intervals/5109.070 ms
+[2026-08-06T17:08:34.175+02:00][+00091.259s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.179+02:00][+00091.263s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.179+02:00][+00091.263s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Run result folder created: /root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/results/20260806_170618_411330441__P4_repeated_8GiB_downloads__client__plus
+[2026-08-06T17:08:34.179+02:00][+00091.263s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] SVG visuals: /root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/results/20260806_170618_411330441__P4_repeated_8GiB_downloads__client__plus
+[2026-08-06T17:08:34.179+02:00][+00091.263s][CLIENT][TEST 13/15][MODE=plus] [GreenQUIC-Test] Logs/configuration/data: /root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/results/20260806_170618_411330441__P4_repeated_8GiB_downloads__client__plus/details
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] 
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] === GreenQUIC P4 Workload Summary ===
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - GreenQUIC mode: plus
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Client processes: 1
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - QUIC connections: 1
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Sequential streams/downloads: 5
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Payload per download: 8.000 GiB
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Total payload: 40.000 GiB
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Configured gap: 5.000000 s
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Configured total gap time: 20.000000 s
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Observed total gap time: 20.000430 s
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Sum of download durations: 44.049617 s
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Average download duration: 8.809923 s
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Minimum download duration: 8.589583 s
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Maximum download duration: 9.152226 s
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Workload elapsed time including gaps: 64.050200 s
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Aggregate goodput excluding gaps: 7.800235 Gbit/s
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Aggregate goodput including gaps: 5.364501 Gbit/s
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Energy comparison rule: use whole-test RAPL across OFF/BASIC/PLUS; the configured inter-download gaps are part of this workload.
+[2026-08-06T17:08:34.207+02:00][+00091.291s][CLIENT][TEST 13/15][MODE=plus] - Packet-window note: BASIC/PLUS first-RX-to-last-TX includes the inter-download gaps; strict OFF intentionally reports that field as N/A.

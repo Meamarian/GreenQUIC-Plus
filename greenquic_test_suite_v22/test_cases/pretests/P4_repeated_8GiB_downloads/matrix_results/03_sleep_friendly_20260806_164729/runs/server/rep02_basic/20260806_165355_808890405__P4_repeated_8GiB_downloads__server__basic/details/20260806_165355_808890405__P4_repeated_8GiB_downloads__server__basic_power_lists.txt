@@ -1,0 +1,3 @@
+time_s = []
+power_w = []
+cumulative_energy_j = []

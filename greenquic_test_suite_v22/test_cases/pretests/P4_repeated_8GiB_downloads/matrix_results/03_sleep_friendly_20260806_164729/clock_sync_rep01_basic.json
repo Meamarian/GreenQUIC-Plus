@@ -1,0 +1,54 @@
+{
+  "schema": "greenquic-p4-clock-sync-v1",
+  "controller_host": "idex",
+  "client_host": "tinyman",
+  "method": "SSH midpoint estimate; best minimum-RTT sample",
+  "sample_count": 5,
+  "client_minus_controller_offset_ns": -45332209416,
+  "round_trip_ns": 429618813,
+  "uncertainty_ns": 214809406,
+  "offset_spread_ns": 11229219,
+  "median_offset_ns": -45329148294,
+  "samples": [
+    {
+      "controller_send_wall_ns": 1786027856376586847,
+      "controller_receive_wall_ns": 1786027856806205660,
+      "controller_midpoint_wall_ns": 1786027856591396253,
+      "client_wall_ns": 1786027811259186837,
+      "round_trip_ns": 429618813,
+      "client_minus_controller_offset_ns": -45332209416
+    },
+    {
+      "controller_send_wall_ns": 1786027856806227810,
+      "controller_receive_wall_ns": 1786027857241995078,
+      "controller_midpoint_wall_ns": 1786027857024111444,
+      "client_wall_ns": 1786027811694963150,
+      "round_trip_ns": 435767268,
+      "client_minus_controller_offset_ns": -45329148294
+    },
+    {
+      "controller_send_wall_ns": 1786027857242015048,
+      "controller_receive_wall_ns": 1786027857695515139,
+      "controller_midpoint_wall_ns": 1786027857468765093,
+      "client_wall_ns": 1786027812147784896,
+      "round_trip_ns": 453500091,
+      "client_minus_controller_offset_ns": -45320980197
+    },
+    {
+      "controller_send_wall_ns": 1786027857695532453,
+      "controller_receive_wall_ns": 1786027858130028436,
+      "controller_midpoint_wall_ns": 1786027857912780444,
+      "client_wall_ns": 1786027812583102155,
+      "round_trip_ns": 434495983,
+      "client_minus_controller_offset_ns": -45329678289
+    },
+    {
+      "controller_send_wall_ns": 1786027858130045476,
+      "controller_receive_wall_ns": 1786027858580545235,
+      "controller_midpoint_wall_ns": 1786027858355295355,
+      "client_wall_ns": 1786027813033608691,
+      "round_trip_ns": 450499759,
+      "client_minus_controller_offset_ns": -45321686664
+    }
+  ]
+}

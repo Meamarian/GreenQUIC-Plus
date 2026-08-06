@@ -1,0 +1,10 @@
+GreenQUIC C RAPL/MSR sampler finished
+requested_interval_ms=6.000000
+smoothing_samples=3
+samples=10886
+measured_duration_s=65.318794
+package_energy_j=5771.535091
+dram_energy_j=1276.821796
+average_package_w=88.359487
+average_dram_w=19.547541
+average_total_w=107.907028

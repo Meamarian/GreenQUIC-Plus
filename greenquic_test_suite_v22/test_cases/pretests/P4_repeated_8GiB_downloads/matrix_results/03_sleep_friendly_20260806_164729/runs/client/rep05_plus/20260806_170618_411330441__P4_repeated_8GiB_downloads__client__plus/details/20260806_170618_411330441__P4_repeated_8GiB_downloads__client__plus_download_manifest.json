@@ -1,0 +1,68 @@
+{
+  "schema": "greenquic-client-download-manifest-v2-logical-bytes",
+  "test_id": "P4",
+  "workload_kind": "multi_stream_single_connection",
+  "download_root": "/root/greenquic_snapshot/greenquic_test_suite_v22/common/downloads",
+  "start_wall_ns": 1786028778473558079,
+  "file_count": 5,
+  "total_bytes": 42949672960,
+  "files": [
+    {
+      "basename": "file_8G.bin",
+      "reported_name": "file_8G.bin",
+      "duration_ms": 9151,
+      "logical_size_bytes": 8589934592,
+      "source_path": "/root/greenquic_snapshot/greenquic_test_suite_v22/common/files/server_root/file_8G.bin",
+      "sink_path": "/root/greenquic_snapshot/greenquic_test_suite_v22/common/downloads/file_8G.bin",
+      "sink_kind_before_cleanup": "symlink",
+      "sink_target_before_cleanup": "/dev/null"
+    },
+    {
+      "basename": "file_8G.bin",
+      "reported_name": "file_8G.bin",
+      "duration_ms": 8589,
+      "logical_size_bytes": 8589934592,
+      "source_path": "/root/greenquic_snapshot/greenquic_test_suite_v22/common/files/server_root/file_8G.bin",
+      "sink_path": "/root/greenquic_snapshot/greenquic_test_suite_v22/common/downloads/file_8G.bin",
+      "sink_kind_before_cleanup": "symlink",
+      "sink_target_before_cleanup": "/dev/null"
+    },
+    {
+      "basename": "file_8G.bin",
+      "reported_name": "file_8G.bin",
+      "duration_ms": 8739,
+      "logical_size_bytes": 8589934592,
+      "source_path": "/root/greenquic_snapshot/greenquic_test_suite_v22/common/files/server_root/file_8G.bin",
+      "sink_path": "/root/greenquic_snapshot/greenquic_test_suite_v22/common/downloads/file_8G.bin",
+      "sink_kind_before_cleanup": "symlink",
+      "sink_target_before_cleanup": "/dev/null"
+    },
+    {
+      "basename": "file_8G.bin",
+      "reported_name": "file_8G.bin",
+      "duration_ms": 8785,
+      "logical_size_bytes": 8589934592,
+      "source_path": "/root/greenquic_snapshot/greenquic_test_suite_v22/common/files/server_root/file_8G.bin",
+      "sink_path": "/root/greenquic_snapshot/greenquic_test_suite_v22/common/downloads/file_8G.bin",
+      "sink_kind_before_cleanup": "symlink",
+      "sink_target_before_cleanup": "/dev/null"
+    },
+    {
+      "basename": "file_8G.bin",
+      "reported_name": "file_8G.bin",
+      "duration_ms": 8782,
+      "logical_size_bytes": 8589934592,
+      "source_path": "/root/greenquic_snapshot/greenquic_test_suite_v22/common/files/server_root/file_8G.bin",
+      "sink_path": "/root/greenquic_snapshot/greenquic_test_suite_v22/common/downloads/file_8G.bin",
+      "sink_kind_before_cleanup": "symlink",
+      "sink_target_before_cleanup": "/dev/null"
+    }
+  ],
+  "cleanup": {
+    "removed_regular_files": 0,
+    "removed_regular_bytes": 0,
+    "regular_bytes_remaining": 0,
+    "sinks_ready": 5,
+    "strategy": "preserve or restore each client output as a /dev/null symlink"
+  }
+}

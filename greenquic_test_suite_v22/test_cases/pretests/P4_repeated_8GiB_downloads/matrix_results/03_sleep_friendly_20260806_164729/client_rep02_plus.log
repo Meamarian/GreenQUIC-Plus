@@ -1,0 +1,269 @@
+V22 installation valid: GreenQUIC 22-private-split-linux-dpdk, split Linux backend, DPDK 21.11.9
+
+[GreenQUIC-Test] Raw-DPDK client addressing: LocalIp=192.168.100.2 local-MAC=6c:fe:54:59:99:38 PeerMac=6c:fe:54:59:98:b0 target=192.168.100.1 device=0000:18:00.0
+
+[GreenQUIC-Test] Online CPUs: 0-47; requested DPDK=19,20 QUIC=21,22,23,24
+
+[GreenQUIC-Test] Locked-memory limit: 8192
+V22 configuration valid: /root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/runtime/client/dpdk.ini + /root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/runtime/client/powermng.ini
+WARNING: GreenQuicEnableCStateIdle=1 is ignored when an explicit non-pause GreenQuicIdleMode is selected
+WARNING: work-triggered waiting during active transfer is enabled; treat this as a latency diagnostic until validated
+
+[GreenQUIC-Test] Running P4 client mode=plus kind=multi_stream_single_connection
+
+[GreenQUIC-Test] Binary: /root/greenquic_snapshot/msquic/build-greenquic-p4/bin/Release/quicinterop
+
+[GreenQUIC-Test] Started client whole-system power1 trace pid=309854 interval=1000ms prefix=/root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/results/client_power_plus_20260806_165507_457791123
+
+[GreenQUIC-Test] Started client C RAPL powercap trace pid=309857 interval=6ms smoothing=3
+
+[GreenQUIC-Test] Started client Linux cpu_idle trace pid=309865 traced_cpus=19 reader_cpu=1 clock=mono_raw
+
+[GreenQUIC-Test] Started client CPU-frequency trace pid=309867 interval=10ms
+EAL: Detected CPU lcores: 48
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'PA'
+EAL: No available 1048576 kB hugepages reported
+EAL: Probe PCI driver: net_ice (8086:1592) device: 0000:18:00.0 (socket 0)
+ice_load_pkg_type(): Active package is: 1.3.41.0, ICE OS Default Package (single VLAN mode)
+TELEMETRY: No legacy callbacks, legacy socket not created
+ice_set_rx_function(): Using AVX2 Vector Scattered Rx (port 0).
+GreenQUIC: MsQuic worker CPU list from dpdk.ini = 21,22,23,24
+using configuration file dpdk.ini!
+GreenQUIC: installed 4 explicit MsQuic partition -> DPDK lcore mapping entries.
+GreenQUIC idle config: mode=epoll fallback=0 sleep=1 pause=1 freq=1 keep_pause_iterations=1 short_pause_iterations=1 work_wait_min_idle_us=5000 work_wait_min_level=1 watchdog_us=100000 allow_active_transfer=1 pause_supported=0 monitor_supported=0 rx_interrupt_config_requested=1.
+config params:
+--------------
+MbufCacheSize = 256
+NumRxDescriptors = 4096
+NumTxDescriptors = 4096
+RxMbufPoolSize = 16383
+TxMbufPoolSize = 16383
+RxBurstSize = 32
+TxBurstSize = 32
+TxRingSize = 4096
+
+SeparateRxThread = 0
+SeparateTxThread = 0
+
+Found 5 DpdkInitArgs: secnetperf -l 19 -a 0000:18:00.0 
+--------------
+Log path: /tmp/
+GreenQUIC idle: requesting DPDK RX-queue interrupts before port configuration (mode=epoll, rx_queues=1).
+GreenQUIC roles: lcores=1 rx_owners=1 rxq=1 tx_enabled=1 tx_owner=19 tx_owner_also_rx=1
+Mbuf fast free offload activated
+
+Starting Port 0 on Interface 0, 6c:fe:54:59:99:38
+
+Checking link status
+POWER: Env isn't set yet!
+POWER: Attempting to initialise ACPI cpufreq power management...
+POWER: Failed to write /sys/devices/system/cpu/cpu%u/cpufreq/scaling_governor
+POWER: Cannot set governor of lcore 19 to userspace
+POWER: Attempting to initialise PSTAT power management...
+POWER: Initialized successfully for lcore 19 power management
+done
+Port 0 Link up at 100 Gbps FDX Autoneg
+[CPU 19] GreenQUIC WORKER role=rx_tx state=running
+
+using dpdk.ini to set local IP!
+[GreenQUIC-P4] marker=GreenQUIC-P4-SEQUENCE-V1 serial=GreenQUIC-P4-SERIAL-WAIT-V2 downloads=5 gap_us=5000000
+[GreenQUIC-P4] request=1/5 start_us=839032888901 path=/file_8G.bin
+Sending request: GET /file_8G.bin
+file_8G.bin: Completed download! (8939 ms)
+[GreenQUIC-P4] request=1/5 complete_us=839041828895 path=/file_8G.bin duration_us=8939994 success=1
+[GreenQUIC-P4] gap_after=1 requested_us=5000000 actual_us=5000116
+[GreenQUIC-P4] request=2/5 start_us=839046829050 path=/file_8G.bin
+Sending request: GET /file_8G.bin
+file_8G.bin: Completed download! (8557 ms)
+[GreenQUIC-P4] request=2/5 complete_us=839055386343 path=/file_8G.bin duration_us=8557293 success=1
+[GreenQUIC-P4] gap_after=2 requested_us=5000000 actual_us=5000107
+[GreenQUIC-P4] request=3/5 start_us=839060386489 path=/file_8G.bin
+Sending request: GET /file_8G.bin
+file_8G.bin: Completed download! (8527 ms)
+[GreenQUIC-P4] request=3/5 complete_us=839068914126 path=/file_8G.bin duration_us=8527637 success=1
+[GreenQUIC-P4] gap_after=3 requested_us=5000000 actual_us=5000110
+[GreenQUIC-P4] request=4/5 start_us=839073914275 path=/file_8G.bin
+Sending request: GET /file_8G.bin
+file_8G.bin: Completed download! (8536 ms)
+[GreenQUIC-P4] request=4/5 complete_us=839082450679 path=/file_8G.bin duration_us=8536404 success=1
+[GreenQUIC-P4] gap_after=4 requested_us=5000000 actual_us=5000107
+[GreenQUIC-P4] request=5/5 start_us=839087450824 path=/file_8G.bin
+Sending request: GET /file_8G.bin
+file_8G.bin: Completed download! (8564 ms)
+[GreenQUIC-P4] request=5/5 complete_us=839096016020 path=/file_8G.bin duration_us=8565196 success=1
+
+      TARGET  VHDCRZSQUMBGA2E    VERSION   ALPN
+ ============================================
+192.168.100.1  --D------------  0x00000001  hq-interop
+
+Total execution time: 63.153s
+
+transmission time [us]: 63153335
+[CPU 19] GreenQUIC PACKETS source=policy_counters rx_pkts=29845502 tx_pkts=691239
+POWER: Power management of lcore 19 has exited from 'performance' mode and been set back to the original
+
+[GreenQUIC-Test] Client transport finished; keeping whole-test energy samplers active for 5s.
+
+=== GreenQUIC Power and Energy Summary ===
+- Role: client
+- Sensor: power1, whole-system/board power; not package RAPL
+- Samples: 71
+- Actual sample interval requested: 1000 ms
+- Trace duration: 69.516 s
+- Estimated cumulative energy: 13181.736 J
+- Time-weighted average power: 189.622 W
+- Power range: 141.000–209.000 W
+- Median / P95: 192.000 / 208.000 W
+- Plot size: 24000 × 3500 px
+- X-axis minor tick: 1000 ms
+- X-axis labeled tick: 1000 ms
+- Note: axis tick spacing does not change the sensor sampling interval
+
+
+[GreenQUIC-Test:WARN] One-shot RAPL snapshot did not report a package counter. The compiled powercap time series will be validated during result bundling and remains the authoritative RAPL source when its final validation is PASS.
+[GreenQUIC-Test] Download accounting: completed=5 logical_bytes=42949672960
+
+[GreenQUIC-Test] Verified 5 completed QUIC download(s) in the stock-client log.
+[GreenQUIC-Test] Client storage cleanup: removed_files=0 removed_bytes=0 persistent_payload_bytes=0
+
+=== GreenQUIC Goodput Summary ===
+- Test: P4
+- GreenQUIC mode: plus
+- Payload: 40.000 GiB (42949672960 bytes)
+- Download duration: 63.153335 s
+- Goodput: 5.440685 Gbit/s
+- Goodput: 5440.685 Mbit/s
+- Timing source: client transmission timer, microsecond resolution
+- Client DPDK RX packets: 29845502
+- Client DPDK TX packets: 691239
+- Packet-count scope: client process lifetime, including QUIC control traffic
+- Scope: payload bytes only; protocol headers and retransmissions are excluded
+
+[GreenQUIC-Test] C-state compaction validation PASS: CPU 19: 484299 intervals, 969 blocks
+[GreenQUIC-Test] C-state bar charts generated: intervals=484299 compact=500 cpus=19
+
+========================================================================
+GreenQUIC Run Summary
+========================================================================
+
+Run
+---
+- Test: P4 — P4_repeated_8GiB_downloads
+- Role: client
+- GreenQUIC mode: plus
+- Timestamp: 20260806_165507_457791123
+
+Goodput — Active Transfer Only
+------------------------------
+- Timing boundary: first DPDK RX packet → last DPDK TX packet
+- Payload: 40.000 GiB
+- Active-transfer duration: 63.128221032 s
+- Goodput: 5.442849 Gbit/s
+- Goodput: 5442.849 Mbit/s
+- MsQuic timer cross-check: 5.440685 Gbit/s
+
+RAPL Energy — Active Transfer Only
+----------------------------------
+- Boundary: first DPDK RX packet → last DPDK TX packet
+- Duration: 63.128221032 s
+- RAPL samples overlapping window: 10522
+- Package energy: 5242.850072 J
+- DRAM energy: 1207.699572 J
+- Package + DRAM energy: 6450.549644 J
+- Average package power: 83.051 W
+- Average DRAM power: 19.131 W
+- Average package + DRAM power: 102.182 W
+- RX packets observed: 29845502
+- TX packets observed: 691239
+
+RAPL Energy — Whole Test
+------------------------
+- Source: Linux Intel RAPL powercap sysfs energy_uj counters sampled by the compiled C helper
+- Scope: CPU package and DRAM RAPL domains; not whole-system board power
+- Package counter: /sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj
+- DRAM counter: /sys/class/powercap/intel-rapl/intel-rapl:0/intel-rapl:0:0/energy_uj
+- Package domain name: package-0
+- DRAM domain name: dram
+- Source validation: PASS
+- Power calculation: watts = wrapped delta energy_uj / actual CLOCK_MONOTONIC sample interval
+- Duration: 69.438110 s
+- Samples: 11573
+- Requested sampling interval: 6.000 ms
+- Smoothing: 3 samples (18.000 ms nominal window)
+- Actual interval median / P95 / maximum: 6.000 / 6.008 / 6.399 ms
+- Package energy: 5531.140 J
+- DRAM energy: 1300.915 J
+- Package + DRAM energy: 6832.055 J
+- Average package + DRAM power: 98.391 W
+
+Whole-System Power and Energy — Whole Test
+------------------------------------------
+- Source backend: lm-sensors
+- Exact source: power1:      141.00 W  (interval =   1.00 s)
+- Sensor: power1 from lm-sensors or hwmon sysfs
+- Scope: whole-system/board power, not CPU-package RAPL
+- Samples: 71
+- Requested sampling interval: 1000 ms
+- Estimated cumulative energy: 13181.736 J
+- Time-weighted average power: 189.622 W
+- Minimum / median / P95 / maximum: 141.000 / 192.000 / 208.000 / 209.000 W
+
+Power-Source Comparison — Whole Test
+------------------------------------
+- RAPL package + DRAM average: 98.391 W
+- power1 whole-system average: 189.622 W
+- Whole-system minus RAPL: 91.231 W
+- RAPL / whole-system ratio: 0.519
+- Interpretation: the values should not be equal because RAPL covers package + DRAM while power1 covers the board/system. The comparison is a scope cross-check, not an equality test.
+
+CPU Frequency
+-------------
+- CPUs observed: 19
+- Timestamped frequency events: 3070
+- Minimum observed frequency: 0.795 GHz
+- Maximum observed frequency: 3.600 GHz
+- Frequency actions: none
+
+Idle and Wake Behavior
+----------------------
+- Idle modes observed: none
+- EPOLL attempts: 0
+- EPOLL wakeups: 0
+- EPOLL timeouts: 0 (configured timeout 100.000 ms each; approximately 0.000 s total)
+
+Linux C-state Trace
+-------------------
+- Trace clock: mono_raw
+- CPUs traced: 19
+- cpu_idle entries: 484300
+- Wakeups / idle exits: 484300
+- Completed idle intervals: 484299
+- Per-state residency: state 0=170 intervals/1.960 ms, state 1=852 intervals/25.768 ms, state 2=483210 intervals/11679.784 ms, state 3=67 intervals/4799.241 ms
+
+
+[GreenQUIC-Test] Run result folder created: /root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/results/20260806_165507_457791123__P4_repeated_8GiB_downloads__client__plus
+[GreenQUIC-Test] SVG visuals: /root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/results/20260806_165507_457791123__P4_repeated_8GiB_downloads__client__plus
+[GreenQUIC-Test] Logs/configuration/data: /root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/results/20260806_165507_457791123__P4_repeated_8GiB_downloads__client__plus/details
+
+=== GreenQUIC P4 Workload Summary ===
+- GreenQUIC mode: plus
+- Client processes: 1
+- QUIC connections: 1
+- Sequential streams/downloads: 5
+- Payload per download: 8.000 GiB
+- Total payload: 40.000 GiB
+- Configured gap: 5.000000 s
+- Configured total gap time: 20.000000 s
+- Observed total gap time: 20.000440 s
+- Sum of download durations: 43.126524 s
+- Average download duration: 8.625305 s
+- Minimum download duration: 8.527637 s
+- Maximum download duration: 8.939994 s
+- Workload elapsed time including gaps: 63.127119 s
+- Aggregate goodput excluding gaps: 7.967194 Gbit/s
+- Aggregate goodput including gaps: 5.442944 Gbit/s
+- Energy comparison rule: use whole-test RAPL across OFF/BASIC/PLUS; the configured inter-download gaps are part of this workload.
+- Packet-window note: BASIC/PLUS first-RX-to-last-TX includes the inter-download gaps; strict OFF intentionally reports that field as N/A.

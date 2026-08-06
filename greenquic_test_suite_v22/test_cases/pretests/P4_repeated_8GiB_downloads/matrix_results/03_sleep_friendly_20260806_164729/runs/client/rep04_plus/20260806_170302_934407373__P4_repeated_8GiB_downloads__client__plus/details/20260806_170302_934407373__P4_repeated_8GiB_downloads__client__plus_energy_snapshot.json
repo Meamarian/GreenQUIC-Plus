@@ -1,0 +1,11 @@
+{
+  "label": "P4 client plus",
+  "start_wall_ns": 1786028583402919700,
+  "end_wall_ns": 1786028652344036674,
+  "elapsed_s": 68.941117781,
+  "total_package_j": 0.0,
+  "average_package_w": null,
+  "domains": [],
+  "rapl_available": false,
+  "problems": []
+}
