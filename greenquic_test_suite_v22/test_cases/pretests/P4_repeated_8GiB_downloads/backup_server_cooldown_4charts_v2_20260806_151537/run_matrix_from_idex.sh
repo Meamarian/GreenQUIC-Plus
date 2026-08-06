@@ -9,9 +9,7 @@ DOWNLOADS=5
 GAP_SECONDS=5
 RUNS=5
 BETWEEN_TESTS_SECONDS=5
-SERVER_COOLDOWN_SECONDS=5
 READY_TIMEOUT_SECONDS=90
-P4_CSTATE_CPU=19
 OUTPUT_DIR=""
 MODE_ORDER="balanced"
 SEED=""
@@ -31,7 +29,6 @@ Options:
   --runs N                     independent repetitions per mode (default 5)
   --between-tests-seconds N    cooldown after every independent workload (default 5)
   --between-runs-seconds N     backward-compatible alias for --between-tests-seconds
-  --server-cooldown-seconds N  measured idle time before first and after last download (default 5)
   --mode-order balanced        randomized six-permutation balanced schedule (default)
   --mode-order random          independently shuffle OFF/BASIC/PLUS each repetition
   --mode-order LIST            fixed comma list, for example plus,off,basic
@@ -39,7 +36,6 @@ Options:
   --client-host HOST           SSH host/alias for tinyman (default tinyman)
   --client-dir PATH            P4 folder on tinyman
   --client-bin PATH            separate P4 quicinterop binary on tinyman
-  --cstate-cpu N              CPU/lcore whose cpuidle state names are recorded (default 19)
   --output-dir PATH            result folder on idex
   --env KEY=VALUE              apply an ENV override to every server/client run
                                repeat this option for multiple variables
@@ -63,13 +59,11 @@ while (($#)); do
         --gap-seconds) GAP_SECONDS="${2:?missing value}"; shift 2 ;;
         --runs) RUNS="${2:?missing value}"; shift 2 ;;
         --between-tests-seconds|--between-runs-seconds) BETWEEN_TESTS_SECONDS="${2:?missing value}"; shift 2 ;;
-        --server-cooldown-seconds) SERVER_COOLDOWN_SECONDS="${2:?missing value}"; shift 2 ;;
         --mode-order) MODE_ORDER="${2:?missing value}"; shift 2 ;;
         --seed) SEED="${2:?missing value}"; shift 2 ;;
         --client-host) CLIENT_HOST="${2:?missing value}"; shift 2 ;;
         --client-dir) CLIENT_DIR="${2:?missing value}"; shift 2 ;;
         --client-bin) P4_CLIENT_BIN="${2:?missing value}"; shift 2 ;;
-        --cstate-cpu) P4_CSTATE_CPU="${2:?missing value}"; shift 2 ;;
         --output-dir) OUTPUT_DIR="${2:?missing value}"; shift 2 ;;
         --env)
             [[ "${2:-}" =~ ^[A-Za-z_][A-Za-z0-9_]*=.*$ ]] || {
@@ -87,10 +81,8 @@ done
 [[ "$DOWNLOADS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: invalid --downloads" >&2; exit 2; }
 [[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: invalid --runs" >&2; exit 2; }
 [[ "$GAP_SECONDS" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "ERROR: invalid --gap-seconds" >&2; exit 2; }
-[[ "$BETWEEN_TESTS_SECONDS" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "ERROR: invalid between-test cooldown" >&2; exit 2; }
-[[ "$SERVER_COOLDOWN_SECONDS" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "ERROR: invalid --server-cooldown-seconds" >&2; exit 2; }
+[[ "$BETWEEN_TESTS_SECONDS" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "ERROR: invalid cooldown" >&2; exit 2; }
 [[ -z "$SEED" || "$SEED" =~ ^[0-9]+$ ]] || { echo "ERROR: --seed must be an integer" >&2; exit 2; }
-[[ "$P4_CSTATE_CPU" =~ ^[0-9]+$ ]] || { echo "ERROR: --cstate-cpu must be a non-negative integer" >&2; exit 2; }
 
 GAP_US="$(python3 - "$GAP_SECONDS" <<'PY'
 from decimal import Decimal
@@ -213,141 +205,6 @@ if [[ "$ALIGNED_RAPL_ENABLED" == 1 ]]; then
     }
 fi
 
-# P4-UNIFIED-RESULTS-CPUIDLE-ENV-V1
-CONFIG_DIR="$OUTPUT_DIR/configuration"
-RUN_BUNDLE_DIR="$OUTPUT_DIR/runs"
-mkdir -p \
-    "$CONFIG_DIR/run_env" \
-    "$RUN_BUNDLE_DIR/server" \
-    "$RUN_BUNDLE_DIR/client"
-
-capture_matrix_configuration() {
-    cp -a "$HERE/config.env" "$CONFIG_DIR/server_test_config.env"
-    cp -a "$HERE/../../../suite.env" "$CONFIG_DIR/server_suite.env"
-
-    ssh -n "root@$CLIENT_HOST" "cat $(quote "$CLIENT_DIR/config.env")" \
-        > "$CONFIG_DIR/client_test_config.env"
-    ssh -n "root@$CLIENT_HOST" \
-        "cat $(quote "$CLIENT_DIR/../../../suite.env")" \
-        > "$CONFIG_DIR/client_suite.env"
-
-    python3 "$HERE/capture_cpuidle_map.py" \
-        --cpu "$P4_CSTATE_CPU" --role server \
-        --out "$CONFIG_DIR/cpuidle_server.json"
-
-    ssh -n "root@$CLIENT_HOST" \
-        "cd $(quote "$CLIENT_DIR") && python3 ./capture_cpuidle_map.py --cpu $(quote "$P4_CSTATE_CPU") --role client" \
-        > "$CONFIG_DIR/cpuidle_client.json"
-
-    {
-        printf 'DOWNLOADS_PER_RUN=%s\n' "$DOWNLOADS"
-        printf 'GAP_SECONDS=%s\n' "$GAP_SECONDS"
-        printf 'GAP_US=%s\n' "$GAP_US"
-        printf 'RUNS=%s\n' "$RUNS"
-        printf 'BETWEEN_TESTS_SECONDS=%s\n' "$BETWEEN_TESTS_SECONDS"
-        printf 'P4_CSTATE_CPU=%s\n' "$P4_CSTATE_CPU"
-        if [[ -n "${SERVER_COOLDOWN_SECONDS:-}" ]]; then
-            printf 'SERVER_COOLDOWN_SECONDS=%s\n' "$SERVER_COOLDOWN_SECONDS"
-        fi
-        printf 'MODE_ORDER=%s\n' "$MODE_ORDER"
-        printf 'SEED=%s\n' "$SEED"
-        printf 'CLIENT_HOST=%s\n' "$CLIENT_HOST"
-        printf 'CLIENT_DIR=%s\n' "$CLIENT_DIR"
-        printf 'CLIENT_BIN=%s\n' "$CLIENT_BIN_EFFECTIVE"
-        printf '%s\n' "${ENV_OVERRIDES[@]}"
-    } | LC_ALL=C sort -u > "$CONFIG_DIR/matrix_effective_settings.env"
-
-    git -C "$HERE/../../../.." rev-parse HEAD \
-        > "$CONFIG_DIR/server_git_commit.txt" 2>/dev/null || true
-    ssh -n "root@$CLIENT_HOST" \
-        "git -C $(quote "$CLIENT_DIR/../../../..") rev-parse HEAD 2>/dev/null || true" \
-        > "$CONFIG_DIR/client_git_commit.txt"
-
-    cat > "$CONFIG_DIR/result_layout.txt" <<EOF
-P4 unified result layout
-========================
-Matrix root: $OUTPUT_DIR
-Server run bundles: $OUTPUT_DIR/runs/server/
-Client run bundles: $OUTPUT_DIR/runs/client/
-Per-run effective ENV: $OUTPUT_DIR/configuration/run_env/
-CPUIdle mappings: $OUTPUT_DIR/configuration/cpuidle_{server,client}.json
-Tables/charts: $OUTPUT_DIR/tables/
-
-The P4 run bundles are temporarily created in each endpoint's test results/
-folder, then moved into this matrix directory. The verified tinyman bundle is
-deleted from tinyman after successful transfer, so the matrix directory is the
-single P4 result location for this execution.
-EOF
-}
-
-snapshot_run_environment() {
-    local run_id="$1"
-    local server_words="$2"
-    local client_words="$3"
-
-    (
-        cd "$HERE"
-        # shellcheck disable=SC2086
-        env $server_words ./snapshot_effective_env.sh
-    ) > "$CONFIG_DIR/run_env/${run_id}_server_effective.env"
-
-    ssh -n "root@$CLIENT_HOST" \
-        "cd $(quote "$CLIENT_DIR") && env $client_words ./snapshot_effective_env.sh" \
-        > "$CONFIG_DIR/run_env/${run_id}_client_effective.env"
-}
-
-consolidate_run_bundles() {
-    local mode="$1"
-    local run_id="$2"
-    local server_marker="$3"
-    local client_marker="$4"
-    local server_source=""
-    local client_source=""
-    local client_name=""
-    local server_destination="$RUN_BUNDLE_DIR/server/$run_id"
-    local client_destination="$RUN_BUNDLE_DIR/client/$run_id"
-
-    mkdir -p "$server_destination" "$client_destination"
-
-    server_source="$(
-        find "$HERE/results" -mindepth 1 -maxdepth 1 -type d \
-            -name "*__server__${mode}*" -newer "$server_marker" \
-            -printf '%T@ %p\n' 2>/dev/null |
-        sort -nr | head -n1 | cut -d' ' -f2-
-    )"
-    [[ -n "$server_source" && -d "$server_source" ]] || {
-        echo "ERROR: cannot find server run bundle for $run_id" >&2
-        return 1
-    }
-    mv "$server_source" "$server_destination/"
-
-    client_source="$(
-        ssh -n "root@$CLIENT_HOST" \
-            "find $(quote "$CLIENT_DIR/results") -mindepth 1 -maxdepth 1 -type d -name $(quote "*__client__${mode}*") -newer $(quote "$client_marker") -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2-"
-    )"
-    [[ -n "$client_source" ]] || {
-        echo "ERROR: cannot find tinyman client run bundle for $run_id" >&2
-        return 1
-    }
-    client_name="$(basename "$client_source")"
-
-    ssh -n "root@$CLIENT_HOST" \
-        "tar -C $(quote "$CLIENT_DIR/results") -czf - $(quote "$client_name")" |
-        tar -xzf - -C "$client_destination"
-
-    [[ -d "$client_destination/$client_name/details" ]] || {
-        echo "ERROR: transferred client bundle failed validation: $run_id" >&2
-        return 1
-    }
-
-    ssh -n "root@$CLIENT_HOST" \
-        "rm -rf $(quote "$client_source") $(quote "$client_marker")"
-
-    notice "TEST $(printf '%02d' "$TEST_INDEX")/$TOTAL_TESTS mode=$mode unified bundles saved under matrix_results/runs"
-}
-
-capture_matrix_configuration
-
 SCHEDULE="$OUTPUT_DIR/schedule.tsv"
 python3 - "$SCHEDULE" "$RUNS" "$MODE_ORDER" "$SEED" <<'PY'
 from __future__ import annotations
@@ -427,7 +284,7 @@ path.write_text(json.dumps({
     "schedule_seed": int(sys.argv[10]),
     "schedule": schedule,
     "environment": sys.argv[12:],
-    "aligned_rapl_scope": "pre-cooldown + P4 downloads/gaps + post-cooldown; reporting tail excluded",
+    "aligned_rapl_scope": "server and client snapshots around the same client command window",
 }, indent=2) + "\n", encoding="utf-8")
 PY
 
@@ -443,29 +300,23 @@ while IFS=$'\t' read -r TEST_INDEX rep position mode <&9; do
     marker="$HERE/results/.matrix_${run_id}_$(date +%s%N).marker"
     SERVER_PIDFILE="$HERE/runtime/server/.matrix_${run_id}.pid"
     mkdir -p "$HERE/results" "$HERE/runtime/server"
-    client_result_marker="/tmp/p4_matrix_${run_id}_$$_${TEST_INDEX}.marker"
     : > "$marker"
-    ssh -n "root@$CLIENT_HOST" "touch $(quote "$client_result_marker")"
     rm -f "$SERVER_PIDFILE" "$server_log" "$client_log" "$server_live_log" "$client_live_log"
 
     echo
     notice "=========================================================================="
-    notice "TEST $(printf '%02d' "$TEST_INDEX")/$(printf '%02d' "$TOTAL_TESTS") | REPETITION $rep/$RUNS | POSITION $position/3 | MODE=$mode | DOWNLOADS=$DOWNLOADS | GAP=${GAP_SECONDS}s | EDGE_COOLDOWN=${SERVER_COOLDOWN_SECONDS}s"
+    notice "TEST $(printf '%02d' "$TEST_INDEX")/$(printf '%02d' "$TOTAL_TESTS") | REPETITION $rep/$RUNS | POSITION $position/3 | MODE=$mode | DOWNLOADS=$DOWNLOADS | GAP=${GAP_SECONDS}s"
     notice "=========================================================================="
 
     COMMON_RUN_ENV=()
     for item in "${ENV_OVERRIDES[@]}"; do
-        case "${item%%=*}" in
-            GQ_INTEROP_CLIENT_BIN|GQ_POST_TRANSFER_WAIT_S) continue ;;
-        esac
+        [[ "${item%%=*}" == "GQ_INTEROP_CLIENT_BIN" ]] && continue
         COMMON_RUN_ENV+=("$item")
     done
     COMMON_RUN_ENV+=(
         "DOWNLOADS_PER_RUN=$DOWNLOADS"
         "GAP_US=$GAP_US"
         "GQ_MODE_OVERRIDE=$mode"
-        "GQ_POST_TRANSFER_WAIT_S=$SERVER_COOLDOWN_SECONDS"
-        "P4_SERVER_COOLDOWN_SECONDS=$SERVER_COOLDOWN_SECONDS"
     )
 
     server_env_words=""
@@ -481,8 +332,6 @@ while IFS=$'\t' read -r TEST_INDEX rep position mode <&9; do
     for item in "${CLIENT_RUN_ENV[@]}"; do
         client_env_words+="$(quote "$item") "
     done
-
-    snapshot_run_environment "$run_id" "$server_env_words" "$client_env_words"
 
     server_inner="cd $(quote "$HERE") && echo \$\$ > $(quote "$SERVER_PIDFILE") && exec env $server_env_words ./run_server.sh"
     (
@@ -515,7 +364,7 @@ while IFS=$'\t' read -r TEST_INDEX rep position mode <&9; do
         sleep 1
     done
     [[ "$ready" == 1 ]] || { echo "ERROR: server was not ready within ${READY_TIMEOUT_SECONDS}s" >&2; stop_server; exit 1; }
-    notice "TEST $(printf '%02d' "$TEST_INDEX")/$TOTAL_TESTS mode=$mode server ready"
+    notice "TEST $(printf '%02d' "$TEST_INDEX")/$TOTAL_TESTS mode=$mode server ready; starting tinyman client"
 
     server_aligned_state="$OUTPUT_DIR/aligned_server_${run_id}.start.json"
     server_aligned_result="$OUTPUT_DIR/aligned_server_${run_id}.json"
@@ -524,100 +373,46 @@ while IFS=$'\t' read -r TEST_INDEX rep position mode <&9; do
     client_remote_state="/tmp/p4_aligned_client_${run_id}_$$.start.json"
     client_remote_result="/tmp/p4_aligned_client_${run_id}_$$.json"
 
-    # P4-SERVER-COOLDOWN-V2
-    # Both endpoint counters start before the deterministic pre-cooldown. They
-    # are stopped after the last successful download plus the deterministic
-    # post-cooldown. Client/server report generation is outside this window.
-    client_rapl_started=0
     if [[ "$ALIGNED_RAPL_ENABLED" == 1 ]]; then
         python3 "$HERE/clock_sync.py" \
             --host "$CLIENT_HOST" --out "$clock_sync_result" --samples 5
         python3 "$HERE/rapl_window.py" start \
-            --state "$server_aligned_state" --label "P4 server edge-cooldown window" \
+            --state "$server_aligned_state" --label "P4 aligned server window" \
             --role server --mode "$mode" --run-id "$run_id"
-        if ssh -n "root@$CLIENT_HOST" \
-            "cd $(quote "$CLIENT_DIR") && python3 ./rapl_window.py start --state $(quote "$client_remote_state") --label $(quote 'P4 client edge-cooldown window') --role client --mode $(quote "$mode") --run-id $(quote "$run_id")"; then
-            client_rapl_started=1
-        else
-            warn "client aligned RAPL start failed for $run_id; client and combined energy will be N/A"
-        fi
     fi
 
-    notice "TEST $(printf '%02d' "$TEST_INDEX")/$TOTAL_TESTS mode=$mode PRE-COOLDOWN ${SERVER_COOLDOWN_SECONDS}s (server running; no download yet)"
-    sleep "$SERVER_COOLDOWN_SECONDS"
-    notice "TEST $(printf '%02d' "$TEST_INDEX")/$TOTAL_TESTS mode=$mode starting tinyman client"
-
-    client_inner="set -uo pipefail; cd $(quote "$CLIENT_DIR"); client_rc=0; set +e; env $client_env_words ./run_client.sh; client_rc=\$?; set -e; exit \$client_rc"
-
-    client_status_file="$OUTPUT_DIR/.client_${run_id}.pipeline_status"
-    rm -f "$client_status_file"
-    (
-        set +e
-        ssh -n "root@$CLIENT_HOST" "bash -lc $(quote "$client_inner")" 2>&1 |
-            tee "$client_log" |
-            python3 -u "$HERE/live_prefix.py" \
-                --role client --test-index "$TEST_INDEX" --total-tests "$TOTAL_TESTS" \
-                --mode "$mode" --downloads "$DOWNLOADS" |
-            tee "$client_live_log"
-        pipeline_statuses=("${PIPESTATUS[@]}")
-        printf '%s\n' "${pipeline_statuses[*]}" > "$client_status_file"
-        exit 0
-    ) &
-    client_pipeline_pid=$!
-
-    final_download_pattern="[GreenQUIC-P4] request=${DOWNLOADS}/${DOWNLOADS} complete_us="
-    workload_complete=0
-    while kill -0 "$client_pipeline_pid" 2>/dev/null; do
-        if grep -F "$final_download_pattern" "$client_log" 2>/dev/null | tail -n1 | grep -Fq 'success=1'; then
-            workload_complete=1
-            break
-        fi
-        sleep 0.1
-    done
-    if [[ "$workload_complete" == 0 ]] && \
-       grep -F "$final_download_pattern" "$client_log" 2>/dev/null | tail -n1 | grep -Fq 'success=1'; then
-        workload_complete=1
+    client_inner="set -uo pipefail; cd $(quote "$CLIENT_DIR"); client_rc=0; rapl_started=0;"
+    if [[ "$ALIGNED_RAPL_ENABLED" == 1 ]]; then
+        client_inner+=" if python3 ./rapl_window.py start --state $(quote "$client_remote_state") --label $(quote 'P4 aligned client window') --role client --mode $(quote "$mode") --run-id $(quote "$run_id"); then rapl_started=1; else echo '[P4:WARN] client aligned RAPL start failed; continuing with N/A'; fi;"
     fi
-
-    if [[ "$workload_complete" == 1 ]]; then
-        notice "TEST $(printf '%02d' "$TEST_INDEX")/$TOTAL_TESTS mode=$mode FINAL DOWNLOAD COMPLETE; POST-COOLDOWN ${SERVER_COOLDOWN_SECONDS}s"
-        # run_role.sh receives the same GQ_POST_TRANSFER_WAIT_S, so the client
-        # and server stay in the post-transfer idle period while this runs.
-        sleep "$SERVER_COOLDOWN_SECONDS"
-    else
-        warn "final successful download marker was not observed for $run_id; closing RAPL window immediately"
+    client_inner+=" set +e; env $client_env_words ./run_client.sh; client_rc=\$?; set -e;"
+    if [[ "$ALIGNED_RAPL_ENABLED" == 1 ]]; then
+        client_inner+=" if [[ \$rapl_started == 1 ]]; then python3 ./rapl_window.py finish --state $(quote "$client_remote_state") --out $(quote "$client_remote_result") || echo '[P4:WARN] client aligned RAPL finish failed; continuing with N/A'; fi;"
     fi
+    client_inner+=" exit \$client_rc"
+
+    set +e
+    ssh -n "root@$CLIENT_HOST" "bash -lc $(quote "$client_inner")" 2>&1 |
+        tee "$client_log" |
+        python3 -u "$HERE/live_prefix.py" \
+            --role client --test-index "$TEST_INDEX" --total-tests "$TOTAL_TESTS" \
+            --mode "$mode" --downloads "$DOWNLOADS" |
+        tee "$client_live_log"
+    statuses=("${PIPESTATUS[@]}")
+    set -e
+    client_rc="${statuses[0]}"
 
     if [[ "$ALIGNED_RAPL_ENABLED" == 1 ]]; then
         server_rapl_rc=0
         python3 "$HERE/rapl_window.py" finish \
             --state "$server_aligned_state" --out "$server_aligned_result" || server_rapl_rc=$?
-
-        if [[ "$client_rapl_started" == 1 ]]; then
-            if ! ssh -n "root@$CLIENT_HOST" \
-                "cd $(quote "$CLIENT_DIR") && python3 ./rapl_window.py finish --state $(quote "$client_remote_state") --out $(quote "$client_remote_result")"; then
-                warn "client aligned RAPL finish failed for $run_id"
-            fi
-            if ! ssh -n "root@$CLIENT_HOST" "cat $(quote "$client_remote_result")" > "$client_aligned_result"; then
-                warn "failed to retrieve client aligned RAPL JSON for $run_id"
-                rm -f "$client_aligned_result"
-            fi
-        else
+        if ! ssh -n "root@$CLIENT_HOST" "cat $(quote "$client_remote_result")" > "$client_aligned_result"; then
+            warn "failed to retrieve client aligned RAPL JSON for $run_id"
             rm -f "$client_aligned_result"
         fi
         ssh -n "root@$CLIENT_HOST" "rm -f $(quote "$client_remote_state") $(quote "$client_remote_result")" || true
         [[ "$server_rapl_rc" == 0 ]] || warn "server aligned RAPL unavailable for $run_id"
     fi
-
-    wait "$client_pipeline_pid" || true
-    [[ -s "$client_status_file" ]] || {
-        echo "ERROR: client pipeline status was not written for $run_id" >&2
-        stop_server
-        exit 1
-    }
-    read -r -a statuses < "$client_status_file"
-    rm -f "$client_status_file"
-    client_rc="${statuses[0]:-1}"
 
     stop_server
 
@@ -626,7 +421,6 @@ while IFS=$'\t' read -r TEST_INDEX rep position mode <&9; do
         printf '\n' >> "$server_log"
         cat "$server_summary" >> "$server_log"
     fi
-    consolidate_run_bundles         "$mode" "$run_id" "$marker" "$client_result_marker"
     rm -f "$marker"
 
     if [[ "$client_rc" != 0 ]]; then
@@ -648,7 +442,6 @@ if [[ "$COMPLETED_TESTS" -ne "$TOTAL_TESTS" ]]; then
 fi
 
 python3 "$HERE/aggregate_p4_matrix.py" --input "$OUTPUT_DIR" --runs "$RUNS"
-python3 "$HERE/p4_finalize_matrix.py" --matrix "$OUTPUT_DIR"
 
 echo
 notice "SUCCESS: all $COMPLETED_TESTS/$TOTAL_TESTS P4 workloads completed"
