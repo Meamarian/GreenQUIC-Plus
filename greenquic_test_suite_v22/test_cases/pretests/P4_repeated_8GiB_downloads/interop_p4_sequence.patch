@@ -1,0 +1,122 @@
+diff --git a/msquic/src/tools/interop/interop.cpp b/msquic/src/tools/interop/interop.cpp
+--- a/msquic/src/tools/interop/interop.cpp
++++ b/msquic/src/tools/interop/interop.cpp
+@@ -14,6 +14,7 @@
+ #include <cstdio>
+ #include <string>
+ #include <fstream>
++#include <thread>
+ 
+ namespace fs = std::filesystem;
+ 
+@@ -265,6 +266,43 @@
+ bool CustomUrlPath = false;
+ std::vector<std::string> Urls;
+ 
++// GreenQUIC-P4-SEQUENCE-V1
++// Optional tool-only sequencing for repeated downloads in one process and one
++// QUIC connection. It is inactive unless GQ_INTEROP_P4_SEQUENCE is enabled.
++static const char* const GreenQuicP4SequenceMarker =
++    "GreenQUIC-P4-SEQUENCE-V1";
++
++static bool
++GreenQuicP4SequenceEnabled()
++{
++    const char* Value = getenv("GQ_INTEROP_P4_SEQUENCE");
++    return Value != nullptr && Value[0] != '\0' && strcmp(Value, "0") != 0;
++}
++
++static uint64_t
++GreenQuicP4RequestGapUs()
++{
++    const char* Value = getenv("GQ_INTEROP_REQUEST_GAP_US");
++    if (Value == nullptr || Value[0] == '\0') {
++        return 0;
++    }
++    char* End = nullptr;
++    const unsigned long long Parsed = strtoull(Value, &End, 10);
++    if (End == Value || *End != '\0') {
++        printf("GreenQUIC-P4: invalid GQ_INTEROP_REQUEST_GAP_US=%s\n", Value);
++        return 0;
++    }
++    return (uint64_t)Parsed;
++}
++
++static uint64_t
++GreenQuicP4MonotonicUs()
++{
++    const auto Now = std::chrono::steady_clock::now().time_since_epoch();
++    return (uint64_t)
++        std::chrono::duration_cast<std::chrono::microseconds>(Now).count();
++}
++
+ const char* SslKeyLogFileParam = nullptr;
+ const char* DownloadDirectory = nullptr;
+ const char* LogDirectory = nullptr;
+@@ -683,12 +721,65 @@
+         return CxPlatEventWaitWithTimeout(ShutdownComplete, WaitTimeoutMs);
+     }
+     bool SendHttpRequests(bool WaitForResponse = true) {
++        const bool P4Sequence = GreenQuicP4SequenceEnabled();
++        const uint64_t GapUs = P4Sequence ? GreenQuicP4RequestGapUs() : 0;
++        size_t RequestIndex = 0;
++        if (P4Sequence) {
++            printf(
++                "[GreenQUIC-P4] marker=%s downloads=%zu gap_us=%llu\n",
++                GreenQuicP4SequenceMarker,
++                Urls.size(),
++                (unsigned long long)GapUs);
++            fflush(stdout);
++        }
+         for (auto& Url : Urls) {
++            ++RequestIndex;
++            const uint64_t StartUs = GreenQuicP4MonotonicUs();
++            if (P4Sequence) {
++                printf(
++                    "[GreenQUIC-P4] request=%zu/%zu start_us=%llu path=%s\n",
++                    RequestIndex,
++                    Urls.size(),
++                    (unsigned long long)StartUs,
++                    Url.c_str());
++                fflush(stdout);
++            }
++
+             InteropStream* Stream = new InteropStream(Connection, Url.c_str());
+             Streams.push_back(Stream);
+-            if (!Stream->SendHttpRequest(WaitForResponse)) {
++            const bool Success = Stream->SendHttpRequest(WaitForResponse);
++            const uint64_t CompleteUs = GreenQuicP4MonotonicUs();
++
++            if (P4Sequence) {
++                printf(
++                    "[GreenQUIC-P4] request=%zu/%zu complete_us=%llu path=%s "
++                    "duration_us=%llu success=%d\n",
++                    RequestIndex,
++                    Urls.size(),
++                    (unsigned long long)CompleteUs,
++                    Url.c_str(),
++                    (unsigned long long)(CompleteUs - StartUs),
++                    Success ? 1 : 0);
++                fflush(stdout);
++            }
++
++            if (!Success) {
+                 return false;
+             }
++
++            if (P4Sequence && WaitForResponse &&
++                GapUs > 0 && RequestIndex < Urls.size()) {
++                const uint64_t GapStartUs = GreenQuicP4MonotonicUs();
++                std::this_thread::sleep_for(
++                    std::chrono::microseconds((long long)GapUs));
++                const uint64_t GapEndUs = GreenQuicP4MonotonicUs();
++                printf(
++                    "[GreenQUIC-P4] gap_after=%zu requested_us=%llu actual_us=%llu\n",
++                    RequestIndex,
++                    (unsigned long long)GapUs,
++                    (unsigned long long)(GapEndUs - GapStartUs));
++                fflush(stdout);
++            }
+         }
+         return !WaitForResponse || WaitForHttpResponses();
+     }

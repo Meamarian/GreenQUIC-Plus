@@ -1,0 +1,3 @@
+ERROR: the selected quicinterop does not contain the P4 sequence marker
+Binary: /root/greenquic_snapshot/msquic/build-greenquic/bin/Release/quicinterop
+Build the separate build-greenquic-p4 client before running P4.

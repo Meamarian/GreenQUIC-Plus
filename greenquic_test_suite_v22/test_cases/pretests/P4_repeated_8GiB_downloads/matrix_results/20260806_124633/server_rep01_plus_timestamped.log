@@ -1,0 +1,1 @@
+[2026-08-06T12:46:35.699+02:00][+00000.396s][SERVER][TEST 01/15][MODE=plus] ERROR: client binary missing or not executable: /root/greenquic_snapshot/msquic/build-greenquic-p4/bin/Release/quicinterop

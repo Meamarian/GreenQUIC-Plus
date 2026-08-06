@@ -1,0 +1,4 @@
+role,mode,derived_comparison__rapl_energy_saving_vs_off,derived_comparison__rapl_average_power_reduction_vs_off,derived_comparison__board_energy_saving_vs_off,derived_comparison__goodput_reduction_vs_off_excluding_gaps,derived_comparison__goodput_reduction_vs_off_including_gaps,derived_comparison__workload_time_increase_vs_off
+client,off,N/A,N/A,N/A,N/A,N/A,N/A
+client,basic,N/A,N/A,N/A,N/A,N/A,N/A
+client,plus,N/A,N/A,N/A,N/A,N/A,N/A

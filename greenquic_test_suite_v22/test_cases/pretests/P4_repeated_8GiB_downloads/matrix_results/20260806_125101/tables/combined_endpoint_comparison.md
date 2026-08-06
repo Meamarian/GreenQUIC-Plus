@@ -1,0 +1,5 @@
+| Mode  | N | Goodput excl. gaps | Goodput cost | Goodput incl. gaps | Client RAPL J | Client saving | Server RAPL J | Server saving | Combined RAPL J | Combined saving | Combined J/GiB | Workload s | Start skew ms | End skew ms |
+| ----- | - | ------------------ | ------------ | ------------------ | ------------- | ------------- | ------------- | ------------- | --------------- | --------------- | -------------- | ---------- | ------------- | ----------- |
+| OFF   | 0 | N/A                | N/A          | N/A                | N/A           | N/A           | N/A           | N/A           | N/A             | N/A             | N/A            | N/A        | N/A           | N/A         |
+| BASIC | 0 | N/A                | N/A          | N/A                | N/A           | N/A           | N/A           | N/A           | N/A             | N/A             | N/A            | N/A        | N/A           | N/A         |
+| PLUS  | 1 | 7.817              | N/A          | 5.372              | N/A           | N/A           | N/A           | N/A           | N/A             | N/A             | N/A            | 63.955     | 44938.452     | 45529.493   |

@@ -1,0 +1,2 @@
+role,repetition,mode,log
+client,1,off,/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads/matrix_results/20260806_120407/client_rep01_off.log
