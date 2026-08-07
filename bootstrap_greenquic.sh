@@ -16,6 +16,10 @@ HUGEPAGES_2M=""
 HUGEPAGE_MOUNT="/mnt/huge"
 BOUND_DPDK_DRIVER=""
 HUGEPAGE_NUMA_NODE=""
+ICE_FIRMWARE=1
+ICE_FIRMWARE_PACKAGE="firmware-intel-misc"
+ICE_FIRMWARE_PATH=""
+ICE_FIRMWARE_STATUS="pending"
 
 usage() {
     cat <<'EOF_USAGE'
@@ -36,13 +40,19 @@ Options:
   --bind-dpdk          Bind --pci to a DPDK userspace driver after all builds finish
   --dpdk-driver NAME   Driver for --bind-dpdk: auto, igb_uio, uio_pci_generic, or vfio-pci
                        (default: auto; prefer igb_uio, fall back to uio_pci_generic)
+  --ice-firmware       Ensure Intel ICE/E810 DDP firmware is installed (default)
+  --skip-ice-firmware  Do not check/install Intel ICE DDP firmware
   -h, --help           Show this help
 
 For machine-specific dpdk.ini generation, provide --pci, --local-ip,
 --peer-mac and --lcores together.
 
-Host preparation is opt-in. For example, 32 GiB of 2 MiB hugepages plus
-DPDK NIC binding can be requested with:
+Intel ICE DDP firmware setup is enabled by default. On Debian ICE/E810 hosts,
+the bootstrap verifies intel/ice/ddp/ice.pkg and installs firmware-intel-misc
+from non-free-firmware when it is missing.
+
+Host hugepage/NIC preparation is opt-in. For example, 32 GiB of 2 MiB
+hugepages plus DPDK NIC binding can be requested with:
   --pci 0000:18:00.0 --hugepages 16384 --bind-dpdk
 EOF_USAGE
 }
@@ -100,6 +110,14 @@ while (($#)); do
             DPDK_BIND_DRIVER="$2"
             BIND_DPDK=1
             shift 2
+            ;;
+        --ice-firmware)
+            ICE_FIRMWARE=1
+            shift
+            ;;
+        --skip-ice-firmware)
+            ICE_FIRMWARE=0
+            shift
             ;;
         -h|--help)
             usage
@@ -264,7 +282,7 @@ else
     echo "All required Debian build packages are already installed."
 fi
 
-for command_name in gcc g++ cmake meson ninja pkg-config python3 perl make tar patch ip modprobe mount mountpoint findmnt pgrep; do
+for command_name in gcc g++ cmake meson ninja pkg-config python3 perl make tar patch ip modprobe mount mountpoint findmnt pgrep lspci apt-get apt-cache; do
     command -v "$command_name" >/dev/null 2>&1 || {
         echo "ERROR: required command is unavailable after dependency check: $command_name" >&2
         exit 1
@@ -278,6 +296,153 @@ normalize_pci() {
     else
         printf '%s\n' "$pci"
     fi
+}
+
+find_ice_firmware() {
+    local candidate
+    for candidate in \
+        /lib/firmware/intel/ice/ddp/ice.pkg \
+        /usr/lib/firmware/intel/ice/ddp/ice.pkg; do
+        if [[ -e "$candidate" ]]; then
+            readlink -f "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+host_uses_intel_ice() {
+    local pci_full info
+
+    if [[ -n "$DPDK_PCI" ]]; then
+        pci_full="$(normalize_pci "$DPDK_PCI")"
+        [[ -e "/sys/bus/pci/devices/$pci_full" ]] || return 1
+        info="$(lspci -Dk -s "$pci_full" 2>/dev/null || true)"
+        grep -Eqi 'E810|Kernel driver in use:[[:space:]]*ice|Kernel modules:[[:space:]].*\bice\b' <<< "$info"
+        return $?
+    fi
+
+    lspci -Dk 2>/dev/null | grep -Eqi 'E810|Kernel driver in use:[[:space:]]*ice|Kernel modules:[[:space:]].*\bice\b'
+}
+
+debian_non_free_firmware_source() {
+    local os_id codename primary_uri security_uri source_file
+
+    [[ -r /etc/os-release ]] || {
+        echo "ERROR: cannot identify Linux distribution for ICE firmware setup" >&2
+        exit 1
+    }
+
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    os_id="${ID:-}"
+    codename="${VERSION_CODENAME:-}"
+
+    [[ "$os_id" == "debian" && -n "$codename" ]] || {
+        echo "ERROR: automatic ICE firmware repository repair is implemented only for Debian." >&2
+        echo "Disable it with --skip-ice-firmware or install intel/ice/ddp/ice.pkg manually." >&2
+        exit 1
+    }
+
+    primary_uri="$(
+        grep -RhsE '^URIs:[[:space:]]+' /etc/apt/sources.list.d 2>/dev/null |
+            awk '{for (i=2; i<=NF; i++) if ($i !~ /security/) {print $i; exit}}'
+    )"
+    if [[ -z "$primary_uri" ]]; then
+        primary_uri="$(
+            grep -RhsE '^[[:space:]]*deb[[:space:]]+' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null |
+                awk '$2 !~ /security/ {print $2; exit}'
+        )"
+    fi
+    [[ -n "$primary_uri" ]] || primary_uri="http://deb.debian.org/debian"
+
+    security_uri="$(
+        grep -RhsE '^URIs:[[:space:]]+' /etc/apt/sources.list.d 2>/dev/null |
+            awk '{for (i=2; i<=NF; i++) if ($i ~ /security/) {print $i; exit}}'
+    )"
+    if [[ -z "$security_uri" ]]; then
+        security_uri="$(
+            grep -RhsE '^[[:space:]]*deb[[:space:]]+' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null |
+                awk '$2 ~ /security/ {print $2; exit}'
+        )"
+    fi
+    [[ -n "$security_uri" ]] || security_uri="http://security.debian.org/debian-security"
+
+    source_file="/etc/apt/sources.list.d/greenquic-non-free-firmware.sources"
+    cat > "$source_file" <<EOF_APT
+Types: deb
+URIs: $primary_uri
+Suites: $codename ${codename}-updates
+Components: non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb
+URIs: $security_uri
+Suites: ${codename}-security
+Components: non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF_APT
+
+    echo "Enabled Debian non-free-firmware source: $source_file"
+}
+
+ensure_ice_firmware() {
+    if ((ICE_FIRMWARE == 0)); then
+        ICE_FIRMWARE_STATUS="disabled"
+        echo "Intel ICE DDP firmware check disabled by --skip-ice-firmware."
+        return 0
+    fi
+
+    if ! host_uses_intel_ice; then
+        ICE_FIRMWARE_STATUS="not-needed"
+        echo "Intel ICE/E810 device not detected; ICE DDP firmware repair not needed."
+        return 0
+    fi
+
+    if ICE_FIRMWARE_PATH="$(find_ice_firmware)"; then
+        ICE_FIRMWARE_STATUS="ready"
+        echo "Intel ICE DDP firmware already present: $ICE_FIRMWARE_PATH"
+        return 0
+    fi
+
+    ((EUID == 0)) || {
+        echo "ERROR: Intel ICE DDP firmware is missing and installing it requires root." >&2
+        echo "Rerun as root or use --skip-ice-firmware only if you intentionally manage firmware yourself." >&2
+        exit 1
+    }
+
+    echo
+    echo "Intel ICE/E810 detected but intel/ice/ddp/ice.pkg is missing."
+    echo "Installing $ICE_FIRMWARE_PACKAGE..."
+
+    candidate="$(apt-cache policy "$ICE_FIRMWARE_PACKAGE" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+    if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then
+        debian_non_free_firmware_source
+        apt-get update
+        candidate="$(apt-cache policy "$ICE_FIRMWARE_PACKAGE" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+    fi
+
+    [[ -n "$candidate" && "$candidate" != "(none)" ]] || {
+        echo "ERROR: $ICE_FIRMWARE_PACKAGE is still unavailable after enabling non-free-firmware" >&2
+        exit 1
+    }
+
+    export DEBIAN_FRONTEND=noninteractive
+    if dpkg-query -W -f='${Status}' "$ICE_FIRMWARE_PACKAGE" 2>/dev/null | grep -q 'install ok installed'; then
+        apt-get -y --no-remove --no-upgrade --reinstall install "$ICE_FIRMWARE_PACKAGE"
+    else
+        apt-get -y --no-remove --no-upgrade install "$ICE_FIRMWARE_PACKAGE"
+    fi
+
+    ICE_FIRMWARE_PATH="$(find_ice_firmware || true)"
+    [[ -n "$ICE_FIRMWARE_PATH" && -e "$ICE_FIRMWARE_PATH" ]] || {
+        echo "ERROR: $ICE_FIRMWARE_PACKAGE installed but intel/ice/ddp/ice.pkg is still missing" >&2
+        dpkg -L "$ICE_FIRMWARE_PACKAGE" | grep -E '/intel/ice/ddp/.*\.pkg$' >&2 || true
+        exit 1
+    }
+
+    ICE_FIRMWARE_STATUS="ready"
+    echo "Intel ICE DDP firmware ready: $ICE_FIRMWARE_PATH"
 }
 
 ensure_no_greenquic_processes() {
@@ -466,6 +631,8 @@ bind_dpdk_pci() {
     BOUND_DPDK_DRIVER="$actual_driver"
     echo "DPDK binding ready: $pci_full -> $BOUND_DPDK_DRIVER"
 }
+
+ensure_ice_firmware
 
 if ((REBUILD)); then
     echo "Removing generated build/install directories only:"
@@ -788,6 +955,13 @@ Interop client:
 P4 pretest client:
   $P4_CLIENT_BIN
 EOF_SUMMARY
+
+cat <<EOF_ICE
+
+Intel ICE DDP firmware:
+  status: $ICE_FIRMWARE_STATUS
+  path: ${ICE_FIRMWARE_PATH:-n/a}
+EOF_ICE
 
 if [[ -n "$HUGEPAGES_2M" ]]; then
     cat <<EOF_HUGE
