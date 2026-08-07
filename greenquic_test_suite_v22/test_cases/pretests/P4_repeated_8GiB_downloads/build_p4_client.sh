@@ -7,7 +7,7 @@ MAIN_MSQUIC="$REPO_ROOT/msquic"
 P4_SOURCE="$REPO_ROOT/msquic-p4-source"
 DPDK="$MAIN_MSQUIC/deps/dpdk-install"
 BUILD="$MAIN_MSQUIC/build-greenquic-p4"
-PATCH="$HERE/interop_p4_sequence.patch"
+TRANSFORM="$HERE/apply_p4_sequence.py"
 SOURCE="$P4_SOURCE/src/tools/interop/interop.cpp"
 
 [[ -d "$MAIN_MSQUIC" ]] || {
@@ -18,8 +18,8 @@ SOURCE="$P4_SOURCE/src/tools/interop/interop.cpp"
     echo "ERROR: DPDK installation not found: $DPDK" >&2
     exit 2
 }
-[[ -f "$PATCH" ]] || {
-    echo "ERROR: P4 patch not found: $PATCH" >&2
+[[ -f "$TRANSFORM" ]] || {
+    echo "ERROR: P4 source transformer not found: $TRANSFORM" >&2
     exit 2
 }
 
@@ -38,11 +38,18 @@ tar -C "$P4_SOURCE" -xf -
 mkdir -p "$P4_SOURCE/deps"
 ln -s "$DPDK" "$P4_SOURCE/deps/dpdk-install"
 
-patch --batch --forward --dry-run -d "$P4_SOURCE" -p2 < "$PATCH"
-patch --batch --forward -d "$P4_SOURCE" -p2 < "$PATCH"
+python3 "$TRANSFORM" "$SOURCE"
 
-grep -Fq 'GreenQUIC-P4-SEQUENCE-V1' "$SOURCE" || {
-    echo "ERROR: P4 source marker was not added: $SOURCE" >&2
+grep -Fq 'GreenQUIC-P4-SEQUENCE-V2' "$SOURCE" || {
+    echo "ERROR: P4 V2 source marker was not added: $SOURCE" >&2
+    exit 2
+}
+grep -Fq 'SendHttpRequestsP4Sequential' "$SOURCE" || {
+    echo "ERROR: sequential P4 request method was not added: $SOURCE" >&2
+    exit 2
+}
+grep -Fq 'Feature == StreamData && GreenQuicP4SequenceEnabled()' "$SOURCE" || {
+    echo "ERROR: P4 StreamData execution hook was not added: $SOURCE" >&2
     exit 2
 }
 
@@ -65,8 +72,12 @@ cmake --build "$BUILD" \
 
 BIN="$BUILD/bin/Release/quicinterop"
 test -x "$BIN"
-grep -aFq -- 'GreenQUIC-P4-SEQUENCE-V1' "$BIN" || {
-    echo "ERROR: built binary does not contain the P4 marker" >&2
+grep -aFq -- 'GreenQUIC-P4-SEQUENCE-V2' "$BIN" || {
+    echo "ERROR: built binary does not contain the P4 V2 marker" >&2
+    exit 2
+}
+grep -aFq -- 'ready_for_start_gate_us=' "$BIN" || {
+    echo "ERROR: built binary does not contain the P4 start-gate marker" >&2
     exit 2
 }
 
