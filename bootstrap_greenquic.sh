@@ -10,9 +10,15 @@ DPDK_PCI=""
 LOCAL_IP=""
 PEER_MAC=""
 LCORES=""
+BIND_DPDK=0
+DPDK_BIND_DRIVER="auto"
+HUGEPAGES_2M=""
+HUGEPAGE_MOUNT="/mnt/huge"
+BOUND_DPDK_DRIVER=""
+HUGEPAGE_NUMA_NODE=""
 
 usage() {
-    cat <<'EOF'
+    cat <<'EOF_USAGE'
 Usage:
   ./bootstrap_greenquic.sh [options]
 
@@ -25,11 +31,20 @@ Options:
   --local-ip IPv4      Logical local DPDK IPv4 address, for example 192.168.100.1
   --peer-mac MAC       Peer DPDK-port MAC address
   --lcores LIST        DPDK EAL lcore list, for example 8 or 8,9
+  --hugepages N        Allocate N x 2 MiB hugepages on the DPDK PCI NUMA node
+                       (example: 16384 = 32 GiB); also mounts /mnt/huge as 2 MiB hugetlbfs
+  --bind-dpdk          Bind --pci to a DPDK userspace driver after all builds finish
+  --dpdk-driver NAME   Driver for --bind-dpdk: auto, igb_uio, uio_pci_generic, or vfio-pci
+                       (default: auto; prefer igb_uio, fall back to uio_pci_generic)
   -h, --help           Show this help
 
-For a completely ready server configuration, provide --pci, --local-ip,
+For machine-specific dpdk.ini generation, provide --pci, --local-ip,
 --peer-mac and --lcores together.
-EOF
+
+Host preparation is opt-in. For example, 32 GiB of 2 MiB hugepages plus
+DPDK NIC binding can be requested with:
+  --pci 0000:18:00.0 --hugepages 16384 --bind-dpdk
+EOF_USAGE
 }
 
 while (($#)); do
@@ -71,6 +86,21 @@ while (($#)); do
             LCORES="$2"
             shift 2
             ;;
+        --hugepages)
+            [[ $# -ge 2 ]] || { echo "ERROR: --hugepages needs a value" >&2; exit 2; }
+            HUGEPAGES_2M="$2"
+            shift 2
+            ;;
+        --bind-dpdk)
+            BIND_DPDK=1
+            shift
+            ;;
+        --dpdk-driver)
+            [[ $# -ge 2 ]] || { echo "ERROR: --dpdk-driver needs a value" >&2; exit 2; }
+            DPDK_BIND_DRIVER="$2"
+            BIND_DPDK=1
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -84,6 +114,29 @@ while (($#)); do
 done
 
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: --jobs must be a positive integer" >&2; exit 2; }
+if [[ -n "$HUGEPAGES_2M" ]]; then
+    [[ "$HUGEPAGES_2M" =~ ^[1-9][0-9]*$ ]] || {
+        echo "ERROR: --hugepages must be a positive number of 2 MiB pages" >&2
+        exit 2
+    }
+fi
+case "$DPDK_BIND_DRIVER" in
+    auto|igb_uio|uio_pci_generic|vfio-pci) ;;
+    *)
+        echo "ERROR: --dpdk-driver must be auto, igb_uio, uio_pci_generic, or vfio-pci" >&2
+        exit 2
+        ;;
+esac
+if ((BIND_DPDK)) || [[ -n "$HUGEPAGES_2M" ]]; then
+    [[ -n "$DPDK_PCI" ]] || {
+        echo "ERROR: --bind-dpdk and --hugepages require --pci" >&2
+        exit 2
+    }
+    ((EUID == 0)) || {
+        echo "ERROR: --bind-dpdk and --hugepages require running the bootstrap as root" >&2
+        exit 1
+    }
+fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
@@ -98,6 +151,7 @@ POWER_INI="$MSQUIC_SRC/powermng.ini"
 P4_TEST_DIR="$ROOT_DIR/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads"
 P4_BUILD_SCRIPT="$P4_TEST_DIR/build_p4_client.sh"
 P4_BUILD="$MSQUIC_SRC/build-greenquic-p4"
+DPDK_DEVBIND="$DPDK_SRC/usertools/dpdk-devbind.py"
 
 printf 'GreenQUIC root: %s\n' "$ROOT_DIR"
 printf 'Build jobs:      %s\n' "$JOBS"
@@ -108,8 +162,8 @@ printf 'Build jobs:      %s\n' "$JOBS"
 [[ -d "$DPDK_SRC/drivers" && -d "$DPDK_SRC/lib" ]] || { echo "ERROR: incomplete DPDK source tree" >&2; exit 1; }
 [[ -f "$MSQUIC_SRC/submodules/CMakeLists.txt" ]] || { echo "ERROR: missing MsQuic dependency build file" >&2; exit 1; }
 [[ -f "$P4_BUILD_SCRIPT" ]] || { echo "ERROR: missing P4 build script: $P4_BUILD_SCRIPT" >&2; exit 1; }
+[[ -f "$DPDK_DEVBIND" ]] || { echo "ERROR: missing DPDK device-binding tool: $DPDK_DEVBIND" >&2; exit 1; }
 
-# A fresh flattened snapshot must contain the OpenSSL source itself.
 if [[ ! -f "$MSQUIC_SRC/submodules/openssl/Configure" ]]; then
     echo "ERROR: bundled OpenSSL source is missing." >&2
     echo "The GitHub snapshot is incomplete; do not try to repair this by downloading a different version." >&2
@@ -165,6 +219,10 @@ DEBIAN_PACKAGES=(
     numactl
     hwloc
     rsync
+    iproute2
+    kmod
+    procps
+    util-linux
 )
 
 missing_packages=()
@@ -206,12 +264,208 @@ else
     echo "All required Debian build packages are already installed."
 fi
 
-for command_name in gcc g++ cmake meson ninja pkg-config python3 perl make tar patch; do
+for command_name in gcc g++ cmake meson ninja pkg-config python3 perl make tar patch ip modprobe mount mountpoint findmnt pgrep; do
     command -v "$command_name" >/dev/null 2>&1 || {
         echo "ERROR: required command is unavailable after dependency check: $command_name" >&2
         exit 1
     }
 done
+
+normalize_pci() {
+    local pci="$1"
+    if [[ "$pci" =~ ^[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$ ]]; then
+        printf '0000:%s\n' "$pci"
+    else
+        printf '%s\n' "$pci"
+    fi
+}
+
+ensure_no_greenquic_processes() {
+    if pgrep -af 'quicinteropserver|quicinterop|secnetperf' >/dev/null 2>&1; then
+        echo "ERROR: a GreenQUIC/DPDK application is running; host preparation is unsafe:" >&2
+        pgrep -af 'quicinteropserver|quicinterop|secnetperf' >&2 || true
+        exit 1
+    fi
+}
+
+pci_numa_node() {
+    local pci_full
+    pci_full="$(normalize_pci "$DPDK_PCI")"
+    [[ -e "/sys/bus/pci/devices/$pci_full" ]] || {
+        echo "ERROR: PCI device $pci_full does not exist" >&2
+        exit 1
+    }
+    local numa
+    numa="$(cat "/sys/bus/pci/devices/$pci_full/numa_node")"
+    [[ "$numa" != "-1" ]] || numa=0
+    printf '%s\n' "$numa"
+}
+
+configure_2m_hugepages() {
+    [[ -n "$HUGEPAGES_2M" ]] || return 0
+
+    ensure_no_greenquic_processes
+
+    local numa hpdir allocated total_2m node f value mount_fstype mount_opts
+    numa="$(pci_numa_node)"
+    HUGEPAGE_NUMA_NODE="$numa"
+    hpdir="/sys/devices/system/node/node${numa}/hugepages/hugepages-2048kB"
+
+    [[ -d "$hpdir" ]] || {
+        echo "ERROR: 2 MiB hugepages are not available on NUMA node $numa" >&2
+        exit 1
+    }
+
+    echo
+    echo "Configuring $HUGEPAGES_2M x 2 MiB hugepages on NUMA node $numa..."
+
+    for node in /sys/devices/system/node/node*; do
+        f="$node/hugepages/hugepages-1048576kB/nr_hugepages"
+        if [[ -e "$f" ]]; then
+            echo 0 > "$f"
+            value="$(cat "$f")"
+            [[ "$value" == "0" ]] || {
+                echo "ERROR: could not clear 1 GiB hugepages at $f (still $value)" >&2
+                exit 1
+            }
+        fi
+    done
+
+    for node in /sys/devices/system/node/node*; do
+        f="$node/hugepages/hugepages-2048kB/nr_hugepages"
+        if [[ -e "$f" ]]; then
+            echo 0 > "$f"
+        fi
+    done
+
+    echo "$HUGEPAGES_2M" > "$hpdir/nr_hugepages"
+    allocated="$(cat "$hpdir/nr_hugepages")"
+    [[ "$allocated" == "$HUGEPAGES_2M" ]] || {
+        echo "ERROR: requested $HUGEPAGES_2M x 2 MiB hugepages, but only $allocated were allocated" >&2
+        free -h >&2 || true
+        exit 1
+    }
+
+    total_2m=0
+    for node in /sys/devices/system/node/node*; do
+        f="$node/hugepages/hugepages-2048kB/nr_hugepages"
+        [[ -e "$f" ]] || continue
+        value="$(cat "$f")"
+        total_2m=$((total_2m + value))
+    done
+    [[ "$total_2m" == "$HUGEPAGES_2M" ]] || {
+        echo "ERROR: total 2 MiB hugepages are $total_2m, expected $HUGEPAGES_2M" >&2
+        exit 1
+    }
+
+    mkdir -p "$HUGEPAGE_MOUNT"
+    if mountpoint -q "$HUGEPAGE_MOUNT"; then
+        mount_fstype="$(findmnt -n -o FSTYPE --target "$HUGEPAGE_MOUNT" 2>/dev/null || true)"
+        mount_opts="$(findmnt -n -o OPTIONS --target "$HUGEPAGE_MOUNT" 2>/dev/null || true)"
+        if [[ "$mount_fstype" != "hugetlbfs" || "$mount_opts" != *"pagesize=2M"* ]]; then
+            echo "ERROR: $HUGEPAGE_MOUNT is already mounted with incompatible settings:" >&2
+            findmnt "$HUGEPAGE_MOUNT" >&2 || true
+            exit 1
+        fi
+    else
+        mount -t hugetlbfs -o pagesize=2M none "$HUGEPAGE_MOUNT"
+    fi
+
+    mountpoint -q "$HUGEPAGE_MOUNT" || {
+        echo "ERROR: failed to mount 2 MiB hugetlbfs at $HUGEPAGE_MOUNT" >&2
+        exit 1
+    }
+
+    echo "Hugepages ready: $HUGEPAGES_2M x 2 MiB on NUMA node $numa"
+    echo "Hugepage memory: $((HUGEPAGES_2M * 2)) MiB"
+    findmnt "$HUGEPAGE_MOUNT"
+}
+
+select_dpdk_driver() {
+    local requested="$1"
+
+    case "$requested" in
+        auto)
+            modprobe uio
+            if [[ -d /sys/module/igb_uio ]] || modprobe igb_uio 2>/dev/null; then
+                printf 'igb_uio\n'
+            else
+                modprobe uio_pci_generic
+                printf 'uio_pci_generic\n'
+            fi
+            ;;
+        igb_uio)
+            modprobe uio
+            if [[ ! -d /sys/module/igb_uio ]]; then
+                modprobe igb_uio
+            fi
+            printf 'igb_uio\n'
+            ;;
+        uio_pci_generic)
+            modprobe uio
+            modprobe uio_pci_generic
+            printf 'uio_pci_generic\n'
+            ;;
+        vfio-pci)
+            modprobe vfio-pci
+            printf 'vfio-pci\n'
+            ;;
+    esac
+}
+
+bind_dpdk_pci() {
+    ((BIND_DPDK)) || return 0
+
+    ensure_no_greenquic_processes
+
+    local pci_full iface default_iface ssh_local_ip addr target_driver actual_driver
+    pci_full="$(normalize_pci "$DPDK_PCI")"
+    [[ -e "/sys/bus/pci/devices/$pci_full" ]] || {
+        echo "ERROR: PCI device $pci_full does not exist" >&2
+        exit 1
+    }
+
+    iface="$(find "/sys/bus/pci/devices/$pci_full/net" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | head -n1 || true)"
+    if [[ -n "$iface" ]]; then
+        default_iface="$(ip route show default 2>/dev/null | awk 'NR==1 {print $5}')"
+        if [[ -n "$default_iface" && "$iface" == "$default_iface" ]]; then
+            echo "ERROR: refusing to bind $pci_full because interface $iface carries the default route" >&2
+            exit 1
+        fi
+
+        ssh_local_ip=""
+        if [[ -n "${SSH_CONNECTION:-}" ]]; then
+            read -r _ _ ssh_local_ip _ <<< "$SSH_CONNECTION"
+        fi
+        if [[ -n "$ssh_local_ip" ]]; then
+            while read -r addr; do
+                if [[ "${addr%/*}" == "$ssh_local_ip" ]]; then
+                    echo "ERROR: refusing to bind $pci_full because $iface owns this SSH session's local IP $ssh_local_ip" >&2
+                    exit 1
+                fi
+            done < <(ip -o -4 addr show dev "$iface" 2>/dev/null | awk '{print $4}')
+        fi
+
+        echo "DPDK PCI $pci_full currently maps to Linux interface: $iface"
+        ip link set "$iface" down
+    else
+        echo "DPDK PCI $pci_full has no Linux netdev (it may already be userspace-bound)."
+    fi
+
+    target_driver="$(select_dpdk_driver "$DPDK_BIND_DRIVER")"
+    echo "Binding $pci_full to DPDK driver: $target_driver"
+    python3 "$DPDK_DEVBIND" --bind="$target_driver" "$pci_full"
+
+    actual_driver="$(basename "$(readlink -f "/sys/bus/pci/devices/$pci_full/driver" 2>/dev/null || true)")"
+    [[ "$actual_driver" == "$target_driver" ]] || {
+        echo "ERROR: expected $pci_full on $target_driver, actual driver is '${actual_driver:-none}'" >&2
+        python3 "$DPDK_DEVBIND" --status-dev net >&2 || true
+        exit 1
+    }
+
+    BOUND_DPDK_DRIVER="$actual_driver"
+    echo "DPDK binding ready: $pci_full -> $BOUND_DPDK_DRIVER"
+}
 
 if ((REBUILD)); then
     echo "Removing generated build/install directories only:"
@@ -243,9 +497,6 @@ DPDK_PC="$(find "$DPDK_INSTALL" -type f -name libdpdk.pc -print -quit)"
 [[ -n "$DPDK_PC" ]] || { echo "ERROR: DPDK installation did not produce libdpdk.pc" >&2; exit 1; }
 DPDK_PC_DIR="$(dirname "$DPDK_PC")"
 
-# GREENQUIC-DPDK-STATIC-LIBDIR-V1
-# A static DPDK install is a directory of librte_*.a archives and may not
-# contain an aggregate libdpdk.a archive.
 DPDK_LIB_DIR="$(find "$DPDK_INSTALL" -type f -name 'librte_eal.a' -printf '%h\n' | head -n 1)"
 if [[ -z "$DPDK_LIB_DIR" ]]; then
     DPDK_LIB_DIR="$(find "$DPDK_INSTALL" -type f \( -name 'libdpdk.a' -o -name 'libdpdk.so' -o -name 'libdpdk.so.*' \) -printf '%h\n' | head -n 1)"
@@ -311,7 +562,7 @@ grep -aFq -- 'GreenQUIC-P4-SEQUENCE-V1' "$P4_CLIENT_BIN" || {
     exit 1
 }
 
-cat > "$ENV_FILE" <<'EOF'
+cat > "$ENV_FILE" <<'EOF_ENV'
 #!/usr/bin/env bash
 
 _GREENQUIC_ENV_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -344,7 +595,7 @@ export INTEROP_CLIENT_BIN="$(find "$MSQUIC_BUILD" -type f -name quicinterop -per
 export P4_CLIENT_BIN="$P4_BUILD/bin/Release/quicinterop"
 
 unset _GREENQUIC_ENV_DIR _DPDK_PC _DPDK_PC_DIR _DPDK_LIB_DIR
-EOF
+EOF_ENV
 chmod 0755 "$ENV_FILE"
 
 set_ini_value() {
@@ -375,18 +626,21 @@ set_ini_value() {
     rm -f "$temporary"
 }
 
-provided_config_count=0
-[[ -n "$DPDK_PCI" ]] && ((provided_config_count += 1))
-[[ -n "$LOCAL_IP" ]] && ((provided_config_count += 1))
-[[ -n "$PEER_MAC" ]] && ((provided_config_count += 1))
-[[ -n "$LCORES" ]] && ((provided_config_count += 1))
+machine_config_count=0
+[[ -n "$LOCAL_IP" ]] && ((machine_config_count += 1))
+[[ -n "$PEER_MAC" ]] && ((machine_config_count += 1))
+[[ -n "$LCORES" ]] && ((machine_config_count += 1))
 
-if ((provided_config_count != 0 && provided_config_count != 4)); then
-    echo "ERROR: provide --pci, --local-ip, --peer-mac and --lcores together" >&2
+if ((machine_config_count != 0 && machine_config_count != 3)); then
+    echo "ERROR: provide --local-ip, --peer-mac and --lcores together (with --pci)" >&2
+    exit 2
+fi
+if ((machine_config_count == 3)) && [[ -z "$DPDK_PCI" ]]; then
+    echo "ERROR: machine-specific DPDK configuration also requires --pci" >&2
     exit 2
 fi
 
-if ((provided_config_count == 4)); then
+if ((machine_config_count == 3)); then
     [[ "$DPDK_PCI" =~ ^([0-9a-fA-F]{4}:)?[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$ ]] || {
         echo "ERROR: invalid PCI BDF: $DPDK_PCI" >&2
         exit 2
@@ -419,11 +673,11 @@ if ((provided_config_count == 4)); then
     chmod 0600 "$DPDK_INI"
     echo "Configured $DPDK_INI"
 else
-    echo "No machine-specific DPDK values were supplied."
+    echo "No complete machine-specific DPDK values were supplied."
     if [[ -f "$DPDK_INI" ]]; then
         echo "Preserving existing $DPDK_INI"
     else
-        echo "You must create $DPDK_INI before running the server."
+        echo "You must create $DPDK_INI before running the server, or rerun bootstrap with --pci, --local-ip, --peer-mac and --lcores."
     fi
 fi
 
@@ -433,8 +687,11 @@ if [[ ! -f "$POWER_INI" && -f "$MSQUIC_SRC/powermng.example.ini" ]]; then
     echo "Created $POWER_INI from the repository example."
 fi
 
+configure_2m_hugepages
+bind_dpdk_pci
+
 if [[ ! -f "$ROOT_DIR/run_server.sh" ]]; then
-    cat > "$ROOT_DIR/run_server.sh" <<'EOF'
+    cat > "$ROOT_DIR/run_server.sh" <<'EOF_SERVER'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
@@ -487,14 +744,15 @@ case "$DRIVER" in
         ;;
     *)
         echo "ERROR: $PCI_FULL is bound to '${DRIVER:-no driver}', not a DPDK userspace driver." >&2
-        echo "The wrapper will not rebind a NIC automatically." >&2
+        echo "Use bootstrap --bind-dpdk or bind the NIC manually before starting the server." >&2
         exit 1
         ;;
 esac
 
 HUGEPAGES_TOTAL="$(awk '/^HugePages_Total:/ {print $2}' /proc/meminfo)"
 if [[ -z "$HUGEPAGES_TOTAL" || "$HUGEPAGES_TOTAL" == "0" ]]; then
-    echo "ERROR: no hugepages are configured. The wrapper will not change system memory settings." >&2
+    echo "ERROR: no hugepages are configured." >&2
+    echo "Use bootstrap --hugepages N or configure hugepages manually before starting the server." >&2
     exit 1
 fi
 
@@ -502,7 +760,7 @@ ulimit -l unlimited 2>/dev/null || true
 cd "$MSQUIC_ROOT"
 
 exec "$SECNETPERF_BIN" -exec:maxtput "$@"
-EOF
+EOF_SERVER
     chmod 0755 "$ROOT_DIR/run_server.sh"
     echo "Created $ROOT_DIR/run_server.sh"
 else
@@ -510,7 +768,7 @@ else
     echo "Preserving existing $ROOT_DIR/run_server.sh"
 fi
 
-cat <<EOF
+cat <<EOF_SUMMARY
 
 Build completed successfully.
 All required Debian/Ubuntu build dependencies were checked and installed automatically.
@@ -529,10 +787,33 @@ Interop client:
 
 P4 pretest client:
   $P4_CLIENT_BIN
+EOF_SUMMARY
+
+if [[ -n "$HUGEPAGES_2M" ]]; then
+    cat <<EOF_HUGE
+
+2 MiB hugepages:
+  count: $HUGEPAGES_2M
+  memory: $((HUGEPAGES_2M * 2)) MiB
+  NUMA node: $HUGEPAGE_NUMA_NODE
+  mount: $HUGEPAGE_MOUNT
+EOF_HUGE
+fi
+
+if ((BIND_DPDK)); then
+    cat <<EOF_BIND
+
+DPDK NIC binding:
+  PCI: $(normalize_pci "$DPDK_PCI")
+  driver: $BOUND_DPDK_DRIVER
+EOF_BIND
+fi
+
+cat <<'EOF_DONE'
 
 To use this shell interactively:
   source ./greenquic-env.sh
 
 To start the server after DPDK NIC binding and hugepages are ready:
   ./run_server.sh
-EOF
+EOF_DONE
