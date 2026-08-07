@@ -9,7 +9,7 @@ diff --git a/msquic/src/tools/interop/interop.cpp b/msquic/src/tools/interop/int
  
  namespace fs = std::filesystem;
  
-@@ -265,6 +266,60 @@
+@@ -265,6 +266,55 @@
  bool CustomUrlPath = false;
  std::vector<std::string> Urls;
  
@@ -65,7 +65,7 @@ diff --git a/msquic/src/tools/interop/interop.cpp b/msquic/src/tools/interop/int
  const char* SslKeyLogFileParam = nullptr;
  const char* DownloadDirectory = nullptr;
  const char* LogDirectory = nullptr;
-@@ -683,12 +738,88 @@
+@@ -683,12 +733,90 @@
          return CxPlatEventWaitWithTimeout(ShutdownComplete, WaitTimeoutMs);
      }
      bool SendHttpRequests(bool WaitForResponse = true) {
