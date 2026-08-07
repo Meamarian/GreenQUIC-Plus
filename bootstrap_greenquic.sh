@@ -4,10 +4,12 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CORE_BOOTSTRAP="$ROOT_DIR/bootstrap_greenquic_core.sh"
 MSR_CHECK="$ROOT_DIR/greenquic_test_suite_v22/common/bin/check_msr_pstate.sh"
+ICE_HELPER="$ROOT_DIR/greenquic_test_suite_v22/common/bin/ensure_ice_firmware.sh"
 DPDK_DEVBIND="$ROOT_DIR/msquic/deps/dpdk/usertools/dpdk-devbind.py"
 
 MSR_PSTATE_CHECK=1
 MSR_CHECK_CPU=19
+ICE_FIRMWARE_CHECK=1
 BIND_DPDK_REQUESTED=0
 DPDK_DRIVER_REQUEST="auto"
 DPDK_PCI=""
@@ -27,6 +29,8 @@ show_help() {
 Additional GreenQUIC host-readiness options:
   --msr-pstate-check       Run local MSR/P-state readiness check (default)
   --skip-msr-pstate-check  Skip the local MSR/P-state readiness check
+  --ice-firmware           Ensure Intel ICE/E810 DDP firmware is installed (default)
+  --skip-ice-firmware      Skip Intel ICE DDP firmware preparation
 
 Safe DPDK binding policy:
   --bind-dpdk              Bind --pci after all builds and host setup finish
@@ -36,7 +40,7 @@ Safe DPDK binding policy:
 Before a Linux-managed NIC is detached, bootstrap brings its interface UP and
 requires both carrier=1 and operstate=up. uio_pci_generic is never accepted.
 
-The MSR/P-state and NIC checks run only on the current server.
+The MSR/P-state, ICE firmware and NIC checks run only on the current server.
 EOF
     echo
     "$CORE_BOOTSTRAP" --help | sed \
@@ -159,7 +163,7 @@ check_link_before_bind() {
 bind_dpdk_safely() {
     local pci_full="$1"
     local requested_driver="$2"
-    local link_result link_rc target_driver actual_driver
+    local link_result link_rc target_driver actual_driver iface
 
     [[ -e "/sys/bus/pci/devices/$pci_full" ]] || {
         echo "ERROR: PCI device $pci_full does not exist" >&2
@@ -230,6 +234,14 @@ while (($#)); do
             ;;
         --msr-pstate-check)
             MSR_PSTATE_CHECK=1
+            shift
+            ;;
+        --ice-firmware)
+            ICE_FIRMWARE_CHECK=1
+            shift
+            ;;
+        --skip-ice-firmware)
+            ICE_FIRMWARE_CHECK=0
             shift
             ;;
         --lcores)
@@ -316,11 +328,20 @@ else
     echo "Local MSR/P-state readiness check disabled by --skip-msr-pstate-check."
 fi
 
-# The core performs dependency installation, ICE firmware repair, builds,
-# dpdk.ini generation and hugepage setup. NIC binding is intentionally removed
-# from the forwarded arguments and handled below so only approved drivers can
-# ever be selected by the public bootstrap.
-"$CORE_BOOTSTRAP" "${FORWARD_ARGS[@]}"
+if ((ICE_FIRMWARE_CHECK)); then
+    [[ -f "$ICE_HELPER" ]] || {
+        echo "ERROR: missing ICE firmware helper: $ICE_HELPER" >&2
+        exit 1
+    }
+    bash "$ICE_HELPER" "$DPDK_PCI"
+else
+    echo "Intel ICE DDP firmware preparation disabled by --skip-ice-firmware."
+fi
+
+# The public wrapper performs ICE firmware preparation and safe NIC binding.
+# Disable both legacy core actions here so the old fallback code cannot select
+# uio_pci_generic and the old firmware source discovery cannot trip pipefail.
+"$CORE_BOOTSTRAP" "${FORWARD_ARGS[@]}" --skip-ice-firmware
 
 # Tighten the generated runtime guard as well. The public bootstrap never
 # accepts uio_pci_generic, and run_server.sh should not accept it either.
