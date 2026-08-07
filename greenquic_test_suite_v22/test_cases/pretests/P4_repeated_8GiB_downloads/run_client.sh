@@ -32,16 +32,37 @@ if [[ -z "${GQ_INTEROP_CLIENT_BIN:-}" && -x "$P4_CLIENT_BIN" ]]; then
 fi
 
 actual_client_bin="${GQ_INTEROP_CLIENT_BIN:-$REPO_ROOT/msquic/build-greenquic/bin/Release/quicinterop}"
-grep -aFq -- '[GreenQUIC-P4] request=' "$actual_client_bin" 2>/dev/null || {
-    echo "ERROR: the selected quicinterop does not contain the P4 sequence marker" >&2
+grep -aFq -- 'GreenQUIC-P4-SEQUENCE-V2' "$actual_client_bin" 2>/dev/null || {
+    echo "ERROR: selected quicinterop is not the corrected P4 V2 sequential client" >&2
     echo "Binary: $actual_client_bin" >&2
-    echo "Build the separate build-greenquic-p4 client before running P4." >&2
+    echo "Run ./build_p4_client.sh after updating the repository." >&2
+    exit 2
+}
+grep -aFq -- 'ready_for_start_gate_us=' "$actual_client_bin" 2>/dev/null || {
+    echo "ERROR: selected P4 client does not contain the startup gate" >&2
     exit 2
 }
 
-# Repeat the same URL inside one quicinterop process. The patched interop client
-# opens one connection and sends these streams sequentially with GAP_US between
-# completed streams.
+# The common manifest generator validates completed names against a local
+# server_root reference. On Tinyman this is validation metadata only; downloads
+# themselves are still written to the configured sink (/dev/null). Create a
+# sparse logical-size reference so a fresh client node can validate 8-GiB
+# completions without consuming 8 GiB of disk blocks.
+server_root="$REPO_ROOT/greenquic_test_suite_v22/common/files/server_root"
+payload_name="${REQUEST_PATH##*/}"
+reference_file="$server_root/$payload_name"
+mkdir -p "$server_root"
+if [[ ! -e "$reference_file" ]]; then
+    truncate -s "$PAYLOAD_BYTES" "$reference_file"
+fi
+[[ "$(stat -Lc '%s' "$reference_file")" == "$PAYLOAD_BYTES" ]] || {
+    echo "ERROR: P4 validation reference has wrong size: $reference_file" >&2
+    exit 2
+}
+
+# Repeat the same URL inside one quicinterop process. The corrected P4 client
+# connects once, then sends one stream at a time, waits for the full response,
+# sleeps GAP_US, and only then starts the next stream.
 REQUEST_PATHS=""
 for ((i=1; i<=DOWNLOADS_PER_RUN; i++)); do
     REQUEST_PATHS+="$REQUEST_PATH"$'\n'
