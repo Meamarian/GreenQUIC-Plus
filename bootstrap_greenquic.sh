@@ -5,6 +5,7 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CORE_BOOTSTRAP="$ROOT_DIR/bootstrap_greenquic_core.sh"
 MSR_CHECK="$ROOT_DIR/greenquic_test_suite_v22/common/bin/check_msr_pstate.sh"
 ICE_HELPER="$ROOT_DIR/greenquic_test_suite_v22/common/bin/ensure_ice_firmware.sh"
+TEST_DEPS_HELPER="$ROOT_DIR/greenquic_test_suite_v22/common/bin/ensure_test_python_deps.sh"
 DPDK_DEVBIND="$ROOT_DIR/msquic/deps/dpdk/usertools/dpdk-devbind.py"
 
 MSR_PSTATE_CHECK=1
@@ -337,6 +338,12 @@ if ((ICE_FIRMWARE_CHECK)); then
 else
     echo "Intel ICE DDP firmware preparation disabled by --skip-ice-firmware."
 fi
+
+[[ -f "$TEST_DEPS_HELPER" ]] || {
+    echo "ERROR: missing GreenQUIC test dependency helper: $TEST_DEPS_HELPER" >&2
+    exit 1
+}
+bash "$TEST_DEPS_HELPER"
 
 # The public wrapper performs ICE firmware preparation and safe NIC binding.
 # Disable both legacy core actions here so the old fallback code cannot select
