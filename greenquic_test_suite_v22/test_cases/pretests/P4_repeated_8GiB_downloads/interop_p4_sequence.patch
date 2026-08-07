@@ -9,7 +9,7 @@ diff --git a/msquic/src/tools/interop/interop.cpp b/msquic/src/tools/interop/int
  
  namespace fs = std::filesystem;
  
-@@ -265,6 +266,43 @@
+@@ -265,6 +266,60 @@
  bool CustomUrlPath = false;
  std::vector<std::string> Urls;
  
@@ -27,19 +27,31 @@ diff --git a/msquic/src/tools/interop/interop.cpp b/msquic/src/tools/interop/int
 +}
 +
 +static uint64_t
-+GreenQuicP4RequestGapUs()
++GreenQuicP4ParseDelayUs(const char* Name)
 +{
-+    const char* Value = getenv("GQ_INTEROP_REQUEST_GAP_US");
++    const char* Value = getenv(Name);
 +    if (Value == nullptr || Value[0] == '\0') {
 +        return 0;
 +    }
 +    char* End = nullptr;
 +    const unsigned long long Parsed = strtoull(Value, &End, 10);
 +    if (End == Value || *End != '\0') {
-+        printf("GreenQUIC-P4: invalid GQ_INTEROP_REQUEST_GAP_US=%s\n", Value);
++        printf("GreenQUIC-P4: invalid %s=%s\n", Name, Value);
 +        return 0;
 +    }
 +    return (uint64_t)Parsed;
++}
++
++static uint64_t
++GreenQuicP4InitialDelayUs()
++{
++    return GreenQuicP4ParseDelayUs("GQ_INTEROP_P4_INITIAL_DELAY_US");
++}
++
++static uint64_t
++GreenQuicP4RequestGapUs()
++{
++    return GreenQuicP4ParseDelayUs("GQ_INTEROP_REQUEST_GAP_US");
 +}
 +
 +static uint64_t
@@ -53,21 +65,46 @@ diff --git a/msquic/src/tools/interop/interop.cpp b/msquic/src/tools/interop/int
  const char* SslKeyLogFileParam = nullptr;
  const char* DownloadDirectory = nullptr;
  const char* LogDirectory = nullptr;
-@@ -683,12 +721,65 @@
+@@ -683,12 +738,88 @@
          return CxPlatEventWaitWithTimeout(ShutdownComplete, WaitTimeoutMs);
      }
      bool SendHttpRequests(bool WaitForResponse = true) {
 +        const bool P4Sequence = GreenQuicP4SequenceEnabled();
++        const uint64_t InitialDelayUs =
++            P4Sequence ? GreenQuicP4InitialDelayUs() : 0;
 +        const uint64_t GapUs = P4Sequence ? GreenQuicP4RequestGapUs() : 0;
 +        size_t RequestIndex = 0;
 +        if (P4Sequence) {
 +            printf(
-+                "[GreenQUIC-P4] marker=%s downloads=%zu gap_us=%llu\n",
++                "[GreenQUIC-P4] marker=%s downloads=%zu initial_delay_us=%llu gap_us=%llu\n",
 +                GreenQuicP4SequenceMarker,
 +                Urls.size(),
++                (unsigned long long)InitialDelayUs,
 +                (unsigned long long)GapUs);
 +            fflush(stdout);
 +        }
++
++        // The initial delay is intentionally after the client process, DPDK
++        // port and QUIC connection have initialized, but before the first GET.
++        // This lets both userspace-bound E810 ports establish link while the
++        // measured P4 pre-cooldown still contains no application download.
++        if (P4Sequence && WaitForResponse && InitialDelayUs > 0) {
++            const uint64_t DelayStartUs = GreenQuicP4MonotonicUs();
++            printf(
++                "[GreenQUIC-P4] pre_download_cooldown_start_us=%llu requested_us=%llu\n",
++                (unsigned long long)DelayStartUs,
++                (unsigned long long)InitialDelayUs);
++            fflush(stdout);
++            std::this_thread::sleep_for(
++                std::chrono::microseconds((long long)InitialDelayUs));
++            const uint64_t DelayEndUs = GreenQuicP4MonotonicUs();
++            printf(
++                "[GreenQUIC-P4] pre_download_cooldown_complete_us=%llu actual_us=%llu\n",
++                (unsigned long long)DelayEndUs,
++                (unsigned long long)(DelayEndUs - DelayStartUs));
++            fflush(stdout);
++        }
++
          for (auto& Url : Urls) {
 +            ++RequestIndex;
 +            const uint64_t StartUs = GreenQuicP4MonotonicUs();
