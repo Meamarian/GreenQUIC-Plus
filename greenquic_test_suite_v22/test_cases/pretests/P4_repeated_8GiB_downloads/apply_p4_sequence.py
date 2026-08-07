@@ -39,6 +39,10 @@ std::vector<std::string> Urls;
 // enabled by the P4 test runner, so normal quicinterop behavior is unchanged.
 static const char* const GreenQuicP4SequenceMarker =
     "GreenQUIC-P4-SEQUENCE-V2";
+// Compatibility marker retained so the existing bootstrap validation can
+// recognize the isolated P4 binary while the actual implementation is V2.
+static const char* const GreenQuicP4LegacySequenceMarker =
+    "GreenQUIC-P4-SEQUENCE-V1";
 
 static bool
 GreenQuicP4SequenceEnabled()
@@ -95,8 +99,9 @@ new_method = old_method + r'''    bool SendHttpRequestsP4Sequential() {
         const char* GatePath = getenv("GQ_INTEROP_P4_START_GATE");
 
         printf(
-            "[GreenQUIC-P4] marker=%s downloads=%zu gap_us=%llu\n",
+            "[GreenQUIC-P4] marker=%s legacy_marker=%s downloads=%zu gap_us=%llu\n",
             GreenQuicP4SequenceMarker,
+            GreenQuicP4LegacySequenceMarker,
             Urls.size(),
             (unsigned long long)GapUs);
         fflush(stdout);
