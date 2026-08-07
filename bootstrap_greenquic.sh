@@ -95,6 +95,9 @@ MSQUIC_BUILD="$MSQUIC_SRC/build-greenquic"
 ENV_FILE="$ROOT_DIR/greenquic-env.sh"
 DPDK_INI="$MSQUIC_SRC/dpdk.ini"
 POWER_INI="$MSQUIC_SRC/powermng.ini"
+P4_TEST_DIR="$ROOT_DIR/greenquic_test_suite_v22/test_cases/pretests/P4_repeated_8GiB_downloads"
+P4_BUILD_SCRIPT="$P4_TEST_DIR/build_p4_client.sh"
+P4_BUILD="$MSQUIC_SRC/build-greenquic-p4"
 
 printf 'GreenQUIC root: %s\n' "$ROOT_DIR"
 printf 'Build jobs:      %s\n' "$JOBS"
@@ -104,6 +107,7 @@ printf 'Build jobs:      %s\n' "$JOBS"
 [[ -f "$DPDK_SRC/meson.build" ]] || { echo "ERROR: missing bundled DPDK source at $DPDK_SRC" >&2; exit 1; }
 [[ -d "$DPDK_SRC/drivers" && -d "$DPDK_SRC/lib" ]] || { echo "ERROR: incomplete DPDK source tree" >&2; exit 1; }
 [[ -f "$MSQUIC_SRC/submodules/CMakeLists.txt" ]] || { echo "ERROR: missing MsQuic dependency build file" >&2; exit 1; }
+[[ -f "$P4_BUILD_SCRIPT" ]] || { echo "ERROR: missing P4 build script: $P4_BUILD_SCRIPT" >&2; exit 1; }
 
 # A fresh flattened snapshot must contain the OpenSSL source itself.
 if [[ ! -f "$MSQUIC_SRC/submodules/openssl/Configure" ]]; then
@@ -121,6 +125,8 @@ DEBIAN_PACKAGES=(
     file
     unzip
     xz-utils
+    tar
+    patch
     build-essential
     gcc
     g++
@@ -200,7 +206,7 @@ else
     echo "All required Debian build packages are already installed."
 fi
 
-for command_name in gcc g++ cmake meson ninja pkg-config python3 perl make; do
+for command_name in gcc g++ cmake meson ninja pkg-config python3 perl make tar patch; do
     command -v "$command_name" >/dev/null 2>&1 || {
         echo "ERROR: required command is unavailable after dependency check: $command_name" >&2
         exit 1
@@ -209,8 +215,8 @@ done
 
 if ((REBUILD)); then
     echo "Removing generated build/install directories only:"
-    printf '  %s\n' "$DPDK_BUILD" "$DPDK_INSTALL" "$MSQUIC_BUILD"
-    rm -rf -- "$DPDK_BUILD" "$DPDK_INSTALL" "$MSQUIC_BUILD"
+    printf '  %s\n' "$DPDK_BUILD" "$DPDK_INSTALL" "$MSQUIC_BUILD" "$P4_BUILD"
+    rm -rf -- "$DPDK_BUILD" "$DPDK_INSTALL" "$MSQUIC_BUILD" "$P4_BUILD" "$ROOT_DIR/msquic-p4-source"
 fi
 
 mkdir -p "$DPDK_BUILD" "$DPDK_INSTALL"
@@ -289,7 +295,21 @@ cmake --build "$MSQUIC_BUILD" \
     --parallel "$JOBS"
 
 SECNETPERF_BIN="$(find "$MSQUIC_BUILD" -type f -name secnetperf -perm -111 -print -quit)"
+INTEROP_SERVER_BIN="$(find "$MSQUIC_BUILD" -type f -name quicinteropserver -perm -111 -print -quit)"
+INTEROP_CLIENT_BIN="$(find "$MSQUIC_BUILD" -type f -name quicinterop -perm -111 -print -quit)"
 [[ -n "$SECNETPERF_BIN" ]] || { echo "ERROR: secnetperf was not produced" >&2; exit 1; }
+[[ -n "$INTEROP_SERVER_BIN" ]] || { echo "ERROR: quicinteropserver was not produced" >&2; exit 1; }
+[[ -n "$INTEROP_CLIENT_BIN" ]] || { echo "ERROR: quicinterop was not produced" >&2; exit 1; }
+
+echo "Building isolated P4 pretest client..."
+chmod 0755 "$P4_BUILD_SCRIPT"
+"$P4_BUILD_SCRIPT"
+P4_CLIENT_BIN="$P4_BUILD/bin/Release/quicinterop"
+[[ -x "$P4_CLIENT_BIN" ]] || { echo "ERROR: P4 quicinterop was not produced: $P4_CLIENT_BIN" >&2; exit 1; }
+grep -aFq -- 'GreenQUIC-P4-SEQUENCE-V1' "$P4_CLIENT_BIN" || {
+    echo "ERROR: P4 quicinterop is missing the expected P4 sequence marker" >&2
+    exit 1
+}
 
 cat > "$ENV_FILE" <<'EOF'
 #!/usr/bin/env bash
@@ -301,6 +321,7 @@ export DPDK_ROOT="$MSQUIC_ROOT/deps/dpdk"
 export DPDK_BUILD="$DPDK_ROOT/build-greenquic"
 export DPDK_INSTALL="$MSQUIC_ROOT/deps/dpdk-install"
 export MSQUIC_BUILD="$MSQUIC_ROOT/build-greenquic"
+export P4_BUILD="$MSQUIC_ROOT/build-greenquic-p4"
 
 _DPDK_PC="$(find "$DPDK_INSTALL" -type f -name libdpdk.pc -print -quit 2>/dev/null)"
 if [[ -n "$_DPDK_PC" ]]; then
@@ -318,6 +339,9 @@ export CMAKE_PREFIX_PATH="$DPDK_INSTALL${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}
 export PATH="$DPDK_INSTALL/bin:$DPDK_ROOT/usertools:$PATH"
 
 export SECNETPERF_BIN="$(find "$MSQUIC_BUILD" -type f -name secnetperf -perm -111 -print -quit 2>/dev/null)"
+export INTEROP_SERVER_BIN="$(find "$MSQUIC_BUILD" -type f -name quicinteropserver -perm -111 -print -quit 2>/dev/null)"
+export INTEROP_CLIENT_BIN="$(find "$MSQUIC_BUILD" -type f -name quicinterop -perm -111 -print -quit 2>/dev/null)"
+export P4_CLIENT_BIN="$P4_BUILD/bin/Release/quicinterop"
 
 unset _GREENQUIC_ENV_DIR _DPDK_PC _DPDK_PC_DIR _DPDK_LIB_DIR
 EOF
@@ -496,6 +520,15 @@ Environment file:
 
 Secnetperf:
   $SECNETPERF_BIN
+
+Interop server:
+  $INTEROP_SERVER_BIN
+
+Interop client:
+  $INTEROP_CLIENT_BIN
+
+P4 pretest client:
+  $P4_CLIENT_BIN
 
 To use this shell interactively:
   source ./greenquic-env.sh
