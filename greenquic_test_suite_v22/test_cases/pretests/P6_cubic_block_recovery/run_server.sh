@@ -12,8 +12,8 @@ export GQ_INTEROP_SERVER_BIN="${GQ_INTEROP_SERVER_BIN:-$P6_SERVER_BIN}"
     echo "Run ./build_p6_client.sh first." >&2
     exit 2
 }
-grep -aFq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V1' "$GQ_INTEROP_SERVER_BIN" || {
-    echo "ERROR: selected server is not the isolated P6 binary: $GQ_INTEROP_SERVER_BIN" >&2
+grep -aFq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V2' "$GQ_INTEROP_SERVER_BIN" || {
+    echo "ERROR: selected server is not the isolated P6 V2 binary: $GQ_INTEROP_SERVER_BIN" >&2
     exit 2
 }
 
