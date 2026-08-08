@@ -21,7 +21,7 @@ P5_BUILD="$ROOT_DIR/msquic/build-greenquic-p5"
 P5_SOURCE="$ROOT_DIR/msquic-p5-source"
 P5_CLIENT="$P5_BUILD/bin/Release/quicinterop"
 P5_SERVER="$P5_BUILD/bin/Release/quicinteropserver"
-PLOTTER="$ROOT_DIR/greenquic_test_suite_v22/common/bin/plot_greenquic_counter_histograms.py"
+PLOTTER="$ROOT_DIR/greenquic_test_suite_v22/common/bin/plot_greenquic_single_run_charts.py"
 
 [[ -x "$BASE_BOOTSTRAP" ]] || {
     echo "ERROR: missing executable base bootstrap: $BASE_BOOTSTRAP" >&2
@@ -83,6 +83,17 @@ grep -aFq -- 'GreenQUIC COUNTERS schema=greenquic-counters-v1' "$P5_SERVER" || {
     exit 1
 }
 
+# Process-end datapath packet totals must be available for all three modes,
+# including strict OFF, without adding new hot-path instrumentation.
+grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$P5_CLIENT" || {
+    echo "ERROR: P5 client lacks process-end DPDK packet totals" >&2
+    exit 1
+}
+grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$P5_SERVER" || {
+    echo "ERROR: P5 server lacks process-end DPDK packet totals" >&2
+    exit 1
+}
+
 # Source-level fixes that must survive regeneration of msquic-p5-source.
 grep -Fq -- 'GREENQUIC-P5-ASYNC-SIGNAL-SAFE-EXIT-V1' \
     "$P5_SOURCE/src/tools/interopserver/InteropServer.cpp" || {
@@ -92,6 +103,11 @@ grep -Fq -- 'GREENQUIC-P5-ASYNC-SIGNAL-SAFE-EXIT-V1' \
 grep -Fq -- 'GREENQUIC-COUNTERS-RECOVERY-END-SUCCESS-V1' \
     "$P5_SOURCE/src/platform/greenquic_plus.c" || {
     echo "ERROR: P5 source lacks corrected recovery-end counter semantics" >&2
+    exit 1
+}
+grep -Fq -- 'GREENQUIC-P5-DATAPATH-PACKET-TOTALS-V1' \
+    "$P5_SOURCE/src/platform/datapath_raw_dpdk_linux.c" || {
+    echo "ERROR: P5 source lacks process-end datapath packet-total marker" >&2
     exit 1
 }
 
@@ -107,18 +123,19 @@ grep -Fq -- '-exitonsig' "$P5_DIR/gq_common_p5.sh" || {
     exit 1
 }
 
-# Additional counter charts committed with the last successful P5 changes.
+# New standalone single-run chart set. Existing/legacy chart code remains in
+# the repository but newly finalized P5 matrices invoke this plotter.
 [[ -f "$PLOTTER" ]] || {
-    echo "ERROR: P5 counter histogram plotter missing: $PLOTTER" >&2
+    echo "ERROR: single-run chart plotter missing: $PLOTTER" >&2
     exit 1
 }
-grep -Fq -- 'GREENQUIC-P5-COUNTER-HISTOGRAM-PLOTTER-V1' "$PLOTTER" || {
-    echo "ERROR: counter histogram plotter marker missing" >&2
+grep -Fq -- 'GREENQUIC-SINGLE-RUN-CHARTS-V1' "$PLOTTER" || {
+    echo "ERROR: single-run chart plotter marker missing" >&2
     exit 1
 }
-grep -Fq -- 'GREENQUIC-P5-COUNTER-HISTOGRAMS-V1' \
+grep -Fq -- 'GREENQUIC-SINGLE-RUN-CHARTS-HOOK-V1' \
     "$P5_DIR/p5_finalize_matrix.py" || {
-    echo "ERROR: P5 finalizer lacks additional counter-histogram hook" >&2
+    echo "ERROR: P5 finalizer lacks single-run chart hook" >&2
     exit 1
 }
 python3 "$PLOTTER" --self-test
@@ -136,5 +153,6 @@ printf ' NORMAL BUILD: READY\n'
 printf ' P4 ISOLATED BUILD: READY\n'
 printf ' P5 ISOLATED CLIENT+SERVER BUILD: READY\n'
 printf ' P5 FINAL COUNTERS + GRACEFUL CLEANUP: VERIFIED\n'
-printf ' P5 COUNTER HISTOGRAMS: VERIFIED\n'
+printf ' P5 DPDK PACKET TOTALS: VERIFIED\n'
+printf ' SINGLE-RUN CHARTS (WITH/WITHOUT VALUES): VERIFIED\n'
 printf '============================================================\n'
