@@ -23,6 +23,10 @@ SOURCE="$P5_SOURCE/src/tools/interop/interop.cpp"
     echo "ERROR: P5 source transformer not found: $TRANSFORM" >&2
     exit 2
 }
+[[ -f "$RESULTS_FIX" ]] || {
+    echo "ERROR: P5 datapath transformer not found: $RESULTS_FIX" >&2
+    exit 2
+}
 
 # Keep the main msquic source and build-greenquic binaries unchanged. Create a
 # separate P5 source copy and a separate P5 build directory.
@@ -54,6 +58,11 @@ grep -Fq 'Feature == StreamData && GreenQuicP5SequenceEnabled()' "$SOURCE" || {
     echo "ERROR: P5 StreamData execution hook was not added: $SOURCE" >&2
     exit 2
 }
+grep -Fq 'GREENQUIC-P5-DATAPATH-PACKET-TOTALS-V1' \
+    "$P5_SOURCE/src/platform/datapath_raw_dpdk_linux.c" || {
+    echo "ERROR: P5 packet-total teardown marker was not added" >&2
+    exit 2
+}
 
 export PKG_CONFIG_PATH="$DPDK/lib/pkgconfig:$DPDK/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export LIBRARY_PATH="$DPDK/lib:$DPDK/lib/x86_64-linux-gnu${LIBRARY_PATH:+:$LIBRARY_PATH}"
@@ -82,11 +91,19 @@ grep -aFq -- 'ready_for_start_gate_us=' "$BIN" || {
     echo "ERROR: built binary does not contain the P5 start-gate marker" >&2
     exit 2
 }
+grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$BIN" || {
+    echo "ERROR: built P5 client does not contain process-end packet totals" >&2
+    exit 2
+}
 
 SERVER_BIN="$BUILD/bin/Release/quicinteropserver"
 test -x "$SERVER_BIN"
 grep -aFq -- 'GreenQUIC FINAL idle_mode=' "$SERVER_BIN" || {
     echo "ERROR: built P5 server does not contain final idle counter output" >&2
+    exit 2
+}
+grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$SERVER_BIN" || {
+    echo "ERROR: built P5 server does not contain process-end packet totals" >&2
     exit 2
 }
 
