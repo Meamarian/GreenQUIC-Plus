@@ -6,10 +6,13 @@ ROOT="$(cd -- "$HERE/../../../.." && pwd)"
 CLIENT_BIN="$ROOT/msquic/build-greenquic-p6/bin/Release/quicinterop"
 
 [[ -x "$HERE/run_matrix_from_idex.sh" ]] || { echo "ERROR: missing P6 matrix controller" >&2; exit 2; }
-[[ -x "$CLIENT_BIN" ]] || { echo "ERROR: missing P6 client binary: $CLIENT_BIN; run ./build_p6_client.sh first" >&2; exit 2; }
+[[ -x "$CLIENT_BIN" ]] || { echo "ERROR: missing P6 client binary: $CLIENT_BIN; run bash ./build_p6_client.sh first" >&2; exit 2; }
 
-# P6 defaults: normal GreenQUIC policy, EPOLL, 16 GiB, deterministic sparse
-# server-download loss. Override any of these by appending another --env value.
+# P6 defaults: Normal GreenQUIC policy, EPOLL, 16 GiB, deterministic sparse
+# server-download loss (exactly one packet/event), plus a P6-only 64-KiB CUBIC
+# window cap. The cap does NOT synthesize a hint; it makes the existing real
+# BytesInFlight >= CongestionWindow condition reachable on the direct cable.
+# Override any setting by appending another --env value.
 exec "$HERE/run_matrix_from_idex.sh" \
   --client-host tinyman \
   --client-dir "$HERE" \
@@ -33,4 +36,5 @@ exec "$HERE/run_matrix_from_idex.sh" \
   --env PAYLOAD_BYTES=17179869184 \
   --env GQ_P6_DROP_EVERY_N=100000 \
   --env GQ_P6_DROP_START_AFTER=10000 \
+  --env GQ_P6_CWND_CAP_BYTES=65536 \
   "$@"
