@@ -11,7 +11,6 @@ SEQUENCE="$HERE/apply_p5_sequence.py"
 DATAPATH_FIX="$HERE/apply_p5_datapath_fix.py"
 P6_IMPAIRMENT="$HERE/apply_p6_impairment.py"
 INTEROP_SOURCE="$P6_SOURCE/src/tools/interop/interop.cpp"
-DPDK_SOURCE="$P6_SOURCE/src/platform/datapath_raw_dpdk.c"
 DPDK_LINUX_SOURCE="$P6_SOURCE/src/platform/datapath_raw_dpdk_linux.c"
 
 for f in "$SEQUENCE" "$DATAPATH_FIX" "$P6_IMPAIRMENT"; do
@@ -31,15 +30,15 @@ tar -C "$MAIN_MSQUIC" \
 mkdir -p "$P6_SOURCE/deps"
 ln -s "$DPDK" "$P6_SOURCE/deps/dpdk-install"
 
-# Reuse copies of the proven P5 transforms that live inside P6 itself, then add
-# the P6-only impairment. No file under P5 or common is modified.
+# Reuse P6-local copies of the proven P5 transforms, then patch the Linux DPDK
+# translation unit that CMake actually compiles. P5/common/main MsQuic stay unchanged.
 python3 "$SEQUENCE" "$INTEROP_SOURCE"
 python3 "$DATAPATH_FIX" "$DPDK_LINUX_SOURCE"
-python3 "$P6_IMPAIRMENT" "$DPDK_SOURCE"
+python3 "$P6_IMPAIRMENT" "$DPDK_LINUX_SOURCE"
 
 grep -Fq 'GreenQUIC-P5-SEQUENCE-V2' "$INTEROP_SOURCE" || { echo "ERROR: P6 lacks sequential transfer base" >&2; exit 2; }
 grep -Fq 'GREENQUIC-P5-DATAPATH-PACKET-TOTALS-V1' "$DPDK_LINUX_SOURCE" || { echo "ERROR: P6 lacks datapath packet totals" >&2; exit 2; }
-grep -Fq 'GREENQUIC-P6-DETERMINISTIC-LOSS-V1' "$DPDK_SOURCE" || { echo "ERROR: P6 impairment marker missing" >&2; exit 2; }
+grep -Fq 'GREENQUIC-P6-DETERMINISTIC-LOSS-V2' "$DPDK_LINUX_SOURCE" || { echo "ERROR: P6 Linux-DPDK impairment marker missing" >&2; exit 2; }
 
 export PKG_CONFIG_PATH="$DPDK/lib/pkgconfig:$DPDK/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export LIBRARY_PATH="$DPDK/lib:$DPDK/lib/x86_64-linux-gnu${LIBRARY_PATH:+:$LIBRARY_PATH}"
@@ -59,10 +58,22 @@ CLIENT="$BUILD/bin/Release/quicinterop"
 SERVER="$BUILD/bin/Release/quicinteropserver"
 [[ -x "$CLIENT" && -x "$SERVER" ]] || { echo "ERROR: P6 binaries missing" >&2; exit 2; }
 grep -aFq -- 'GreenQUIC-P5-SEQUENCE-V2' "$CLIENT" || { echo "ERROR: P6 client lacks sequential marker" >&2; exit 2; }
-grep -aFq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V1' "$CLIENT" || { echo "ERROR: P6 client lacks impairment marker" >&2; exit 2; }
-grep -aFq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V1' "$SERVER" || { echo "ERROR: P6 server lacks impairment marker" >&2; exit 2; }
+grep -aFq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V2' "$CLIENT" || { echo "ERROR: P6 client lacks Linux-DPDK impairment marker" >&2; exit 2; }
+grep -aFq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V2' "$SERVER" || { echo "ERROR: P6 server lacks Linux-DPDK impairment marker" >&2; exit 2; }
 grep -aFq -- 'hint_cubic_cwnd_blocked=' "$SERVER" || { echo "ERROR: P6 server lacks CWND-blocked hint counter" >&2; exit 2; }
 grep -aFq -- 'hint_cubic_recovery=' "$SERVER" || { echo "ERROR: P6 server lacks recovery hint counter" >&2; exit 2; }
+
+# Negative isolation checks: neither main tracked source nor an existing P5 generated
+# source may contain the P6 marker.
+if grep -R -Fq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V2' "$MAIN_MSQUIC/src"; then
+    echo "ERROR: P6 marker leaked into main MsQuic source" >&2
+    exit 2
+fi
+if [[ -d "$REPO_ROOT/msquic-p5-source/src" ]] && \
+   grep -R -Fq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V2' "$REPO_ROOT/msquic-p5-source/src"; then
+    echo "ERROR: P6 marker leaked into P5 generated source" >&2
+    exit 2
+fi
 
 echo
 echo "P6 server binary: $(readlink -f "$SERVER")"
@@ -70,4 +81,4 @@ sha256sum "$SERVER"
 echo "P6 client binary: $(readlink -f "$CLIENT")"
 sha256sum "$CLIENT"
 echo "P6 isolated source: $P6_SOURCE"
-echo "P5 was not modified: $REPO_ROOT/msquic-p5-source"
+echo "P5/main MsQuic isolation checks: PASS"
