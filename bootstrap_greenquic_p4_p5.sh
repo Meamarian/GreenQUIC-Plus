@@ -36,7 +36,6 @@ printf '\n============================================================\n'
 printf ' GREENQUIC FULL BOOTSTRAP: NORMAL + P4 + P5\n'
 printf '============================================================\n\n'
 
-# Preserve every existing bootstrap option and behavior.
 "$BASE_BOOTSTRAP" "$@"
 
 printf '\n============================================================\n'
@@ -50,101 +49,31 @@ printf '\n============================================================\n'
 printf ' VERIFY P5 LAST-SUCCESSFUL CODE + BINARIES\n'
 printf '============================================================\n\n'
 
-[[ -d "$P5_SOURCE" ]] || {
-    echo "ERROR: P5 isolated source tree was not created: $P5_SOURCE" >&2
-    exit 1
-}
-[[ -x "$P5_CLIENT" ]] || {
-    echo "ERROR: P5 client binary missing: $P5_CLIENT" >&2
-    exit 1
-}
-[[ -x "$P5_SERVER" ]] || {
-    echo "ERROR: P5 server binary missing: $P5_SERVER" >&2
-    exit 1
-}
+[[ -d "$P5_SOURCE" ]] || { echo "ERROR: P5 isolated source tree was not created: $P5_SOURCE" >&2; exit 1; }
+[[ -x "$P5_CLIENT" ]] || { echo "ERROR: P5 client binary missing: $P5_CLIENT" >&2; exit 1; }
+[[ -x "$P5_SERVER" ]] || { echo "ERROR: P5 server binary missing: $P5_SERVER" >&2; exit 1; }
 
-# Sequential single-connection P5 client + start gate.
-grep -aFq -- 'GreenQUIC-P5-SEQUENCE-V2' "$P5_CLIENT" || {
-    echo "ERROR: P5 client lacks GreenQUIC-P5-SEQUENCE-V2" >&2
-    exit 1
-}
-grep -aFq -- 'ready_for_start_gate_us=' "$P5_CLIENT" || {
-    echo "ERROR: P5 client lacks start-gate marker" >&2
-    exit 1
-}
+grep -aFq -- 'GreenQUIC-P5-SEQUENCE-V2' "$P5_CLIENT" || { echo "ERROR: P5 client lacks GreenQUIC-P5-SEQUENCE-V2" >&2; exit 1; }
+grep -aFq -- 'ready_for_start_gate_us=' "$P5_CLIENT" || { echo "ERROR: P5 client lacks start-gate marker" >&2; exit 1; }
+grep -aFq -- 'GreenQUIC COUNTERS schema=greenquic-counters-v1' "$P5_CLIENT" || { echo "ERROR: P5 client lacks final GreenQUIC counter schema" >&2; exit 1; }
+grep -aFq -- 'GreenQUIC COUNTERS schema=greenquic-counters-v1' "$P5_SERVER" || { echo "ERROR: P5 server lacks final GreenQUIC counter schema" >&2; exit 1; }
+grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$P5_CLIENT" || { echo "ERROR: P5 client lacks process-end DPDK packet totals" >&2; exit 1; }
+grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$P5_SERVER" || { echo "ERROR: P5 server lacks process-end DPDK packet totals" >&2; exit 1; }
 
-# Final process-end telemetry used by the successful debug run.
-grep -aFq -- 'GreenQUIC COUNTERS schema=greenquic-counters-v1' "$P5_CLIENT" || {
-    echo "ERROR: P5 client lacks final GreenQUIC counter schema" >&2
-    exit 1
-}
-grep -aFq -- 'GreenQUIC COUNTERS schema=greenquic-counters-v1' "$P5_SERVER" || {
-    echo "ERROR: P5 server lacks final GreenQUIC counter schema" >&2
-    exit 1
-}
+grep -Fq -- 'GREENQUIC-P5-ASYNC-SIGNAL-SAFE-EXIT-V1' "$P5_SOURCE/src/tools/interopserver/InteropServer.cpp" || { echo "ERROR: P5 source lacks graceful async-signal-safe server shutdown fix" >&2; exit 1; }
+grep -Fq -- 'GREENQUIC-COUNTERS-RECOVERY-END-SUCCESS-V1' "$P5_SOURCE/src/platform/greenquic_plus.c" || { echo "ERROR: P5 source lacks corrected recovery-end counter semantics" >&2; exit 1; }
+grep -Fq -- 'GREENQUIC-P5-DATAPATH-PACKET-TOTALS-V1' "$P5_SOURCE/src/platform/datapath_raw_dpdk_linux.c" || { echo "ERROR: P5 source lacks process-end datapath packet-total marker" >&2; exit 1; }
+grep -Fq -- 'GREENQUIC-P5-GRACEFUL-SERVER-EXIT-V1' "$P5_DIR/gq_common_p5.sh" || { echo "ERROR: P5 controller lacks graceful server-exit marker" >&2; exit 1; }
+grep -Fq -- '-exitonsig' "$P5_DIR/gq_common_p5.sh" || { echo "ERROR: P5 server launcher is not using -exitonsig" >&2; exit 1; }
 
-# Process-end datapath packet totals must be available for all three modes,
-# including strict OFF, without adding new hot-path instrumentation.
-grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$P5_CLIENT" || {
-    echo "ERROR: P5 client lacks process-end DPDK packet totals" >&2
-    exit 1
-}
-grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$P5_SERVER" || {
-    echo "ERROR: P5 server lacks process-end DPDK packet totals" >&2
-    exit 1
-}
-
-# Source-level fixes that must survive regeneration of msquic-p5-source.
-grep -Fq -- 'GREENQUIC-P5-ASYNC-SIGNAL-SAFE-EXIT-V1' \
-    "$P5_SOURCE/src/tools/interopserver/InteropServer.cpp" || {
-    echo "ERROR: P5 source lacks graceful async-signal-safe server shutdown fix" >&2
-    exit 1
-}
-grep -Fq -- 'GREENQUIC-COUNTERS-RECOVERY-END-SUCCESS-V1' \
-    "$P5_SOURCE/src/platform/greenquic_plus.c" || {
-    echo "ERROR: P5 source lacks corrected recovery-end counter semantics" >&2
-    exit 1
-}
-grep -Fq -- 'GREENQUIC-P5-DATAPATH-PACKET-TOTALS-V1' \
-    "$P5_SOURCE/src/platform/datapath_raw_dpdk_linux.c" || {
-    echo "ERROR: P5 source lacks process-end datapath packet-total marker" >&2
-    exit 1
-}
-
-# P5 controller must use graceful signal-driven shutdown so MsQuicClose() and
-# GreenQuicPowerCleanup() emit the final server counter record.
-grep -Fq -- 'GREENQUIC-P5-GRACEFUL-SERVER-EXIT-V1' \
-    "$P5_DIR/gq_common_p5.sh" || {
-    echo "ERROR: P5 controller lacks graceful server-exit marker" >&2
-    exit 1
-}
-grep -Fq -- '-exitonsig' "$P5_DIR/gq_common_p5.sh" || {
-    echo "ERROR: P5 server launcher is not using -exitonsig" >&2
-    exit 1
-}
-
-# New standalone single-run chart set. Existing/legacy chart code remains in
-# the repository but newly finalized P5 matrices invoke this plotter.
-[[ -f "$PLOTTER" ]] || {
-    echo "ERROR: single-run chart plotter missing: $PLOTTER" >&2
-    exit 1
-}
-grep -Fq -- 'GREENQUIC-SINGLE-RUN-CHARTS-V1' "$PLOTTER" || {
-    echo "ERROR: single-run chart plotter marker missing" >&2
-    exit 1
-}
-grep -Fq -- 'GREENQUIC-SINGLE-RUN-CHARTS-HOOK-V1' \
-    "$P5_DIR/p5_finalize_matrix.py" || {
-    echo "ERROR: P5 finalizer lacks single-run chart hook" >&2
-    exit 1
-}
+[[ -f "$PLOTTER" ]] || { echo "ERROR: single-run chart plotter missing: $PLOTTER" >&2; exit 1; }
+grep -Fq -- 'GREENQUIC-SINGLE-RUN-CHARTS-V2' "$PLOTTER" || { echo "ERROR: 22-chart single-run plotter marker missing" >&2; exit 1; }
+grep -Fq -- 'GREENQUIC-SINGLE-RUN-CHARTS-HOOK-V1' "$P5_DIR/p5_finalize_matrix.py" || { echo "ERROR: P5 finalizer lacks single-run chart hook" >&2; exit 1; }
 python3 "$PLOTTER" --self-test
 
-printf '\nP5 client binary:\n'
-printf '  %s\n' "$(readlink -f "$P5_CLIENT")"
+printf '\nP5 client binary:\n  %s\n' "$(readlink -f "$P5_CLIENT")"
 sha256sum "$P5_CLIENT"
-printf '\nP5 server binary:\n'
-printf '  %s\n' "$(readlink -f "$P5_SERVER")"
+printf '\nP5 server binary:\n  %s\n' "$(readlink -f "$P5_SERVER")"
 sha256sum "$P5_SERVER"
 
 printf '\n============================================================\n'
@@ -154,5 +83,5 @@ printf ' P4 ISOLATED BUILD: READY\n'
 printf ' P5 ISOLATED CLIENT+SERVER BUILD: READY\n'
 printf ' P5 FINAL COUNTERS + GRACEFUL CLEANUP: VERIFIED\n'
 printf ' P5 DPDK PACKET TOTALS: VERIFIED\n'
-printf ' SINGLE-RUN CHARTS (WITH/WITHOUT VALUES): VERIFIED\n'
+printf ' SINGLE-RUN 22-CHART SET (WITH/WITHOUT VALUES): VERIFIED\n'
 printf '============================================================\n'
