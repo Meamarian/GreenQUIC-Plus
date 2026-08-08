@@ -322,14 +322,15 @@ def main() -> int:
         "",
         "QUIC-Side Hint Events",
         "---------------------",
-        "- Semantics: API events emitted by QUIC/app hooks, not periodic samples.",
-        f"- ACK_PENDING: {int(counters.get('hint_ack_pending', 0) or 0)}",
-        f"- CUBIC_CWND_BLOCKED: {int(counters.get('hint_cubic_cwnd_blocked', 0) or 0)}",
-        f"- CUBIC_RECOVERY begin/assert: {int(counters.get('hint_cubic_recovery', 0) or 0)}",
-        f"- CUBIC_RECOVERY end: {int(counters.get('hint_cubic_recovery_end', 0) or 0)}",
-        f"- CUBIC_RAMPING: {int(counters.get('hint_cubic_ramping', 0) or 0)}",
-        f"- SERVER_FILE_TX_ACTIVE begin / end: {int(counters.get('hint_server_file_tx_active', 0) or 0)} / {int(counters.get('hint_server_file_tx_end', 0) or 0)}",
-        f"- CLIENT_FILE_RX_ACTIVE begin / end: {int(counters.get('hint_client_file_rx_active', 0) or 0)} / {int(counters.get('hint_client_file_rx_end', 0) or 0)}",
+        # GREENQUIC-P5-HINT-COUNTER-SEMANTICS-V1
+        "- Semantics: direct QUIC/app hook events; pulse counts are hook invocations, not distinct episodes or periodic samples.",
+        f"- ACK_PENDING pulse calls: {int(counters.get('hint_ack_pending', 0) or 0)}",
+        f"- CUBIC_CWND_BLOCKED pulse calls (send-allowance evaluations while blocked): {int(counters.get('hint_cubic_cwnd_blocked', 0) or 0)}",
+        f"- CUBIC_RECOVERY begin lifecycle events: {int(counters.get('hint_cubic_recovery', 0) or 0)}",
+        f"- CUBIC_RECOVERY successful end lifecycle events: {int(counters.get('hint_cubic_recovery_end', 0) or 0)}",
+        f"- CUBIC_RAMPING CWND-growth pulse calls: {int(counters.get('hint_cubic_ramping', 0) or 0)}",
+        f"- SERVER_FILE_TX_ACTIVE lifecycle begin / end: {int(counters.get('hint_server_file_tx_active', 0) or 0)} / {int(counters.get('hint_server_file_tx_end', 0) or 0)}",
+        f"- CLIENT_FILE_RX_ACTIVE lifecycle begin / end: {int(counters.get('hint_client_file_rx_active', 0) or 0)} / {int(counters.get('hint_client_file_rx_end', 0) or 0)}",
         f"- Counter source: {counters.get('source', 'unavailable')}",
     ])
 
@@ -374,12 +375,29 @@ def main() -> int:
         total_wakeups = sum(int(v.get("wakeups", 0) or 0) for v in per_cpu.values())
         state_counts = cstate.get("state_interval_counts") or {}
         state_idle_ms = cstate.get("state_total_idle_ms") or {}
+
+        # GREENQUIC-V22-RAW-CSTATE-SUMMARY-FALLBACK-V1 (P5-local)
+        if not state_counts:
+            recovered_counts: Counter[str] = Counter()
+            recovered_idle_ms: dict[str, float] = {}
+            for cpu_row in per_cpu.values():
+                for state, state_row in (cpu_row.get("states") or {}).items():
+                    recovered_counts[str(state)] += int(state_row.get("entries", 0) or 0)
+                    recovered_idle_ms[str(state)] = (
+                        recovered_idle_ms.get(str(state), 0.0)
+                        + float(state_row.get("total_idle_ns", 0) or 0) / 1_000_000.0
+                    )
+            state_counts = dict(recovered_counts)
+            state_idle_ms = recovered_idle_ms
+        completed_intervals = cstate.get("completed_idle_intervals")
+        if completed_intervals is None and state_counts:
+            completed_intervals = sum(int(value) for value in state_counts.values())
         lines.extend([
             f"- Trace clock: {cstate.get('clock', 'unavailable')}",
             f"- CPUs traced: {', '.join(str(v) for v in cstate.get('cpus', [])) or 'none'}",
             f"- cpu_idle entries: {total_entries}",
             f"- Wakeups / idle exits: {total_wakeups}",
-            f"- Completed idle intervals: {cstate.get('completed_idle_intervals', 0)}",
+            f"- Completed idle intervals: {completed_intervals if completed_intervals is not None else 'unavailable'}",
         ])
         if state_counts:
             rendered = ", ".join(

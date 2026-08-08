@@ -90,6 +90,17 @@ static atomic_uint_fast32_t ClientFileRxActiveCount;
 static atomic_uint_fast32_t UnknownRecoveryActiveCount;
 static atomic_uint_fast32_t LcoreRecoveryActiveCount[GQPLUS_MAX_LCORES];
 
+/* GREENQUIC-COUNTERS-V1: process-global semantic event counters. */
+static atomic_uint_fast64_t HintAckPendingCount;
+static atomic_uint_fast64_t HintCubicCwndBlockedCount;
+static atomic_uint_fast64_t HintCubicRecoveryCount;
+static atomic_uint_fast64_t HintCubicRecoveryEndCount;
+static atomic_uint_fast64_t HintCubicRampingCount;
+static atomic_uint_fast64_t HintServerFileTxActiveCount;
+static atomic_uint_fast64_t HintServerFileTxEndCount;
+static atomic_uint_fast64_t HintClientFileRxActiveCount;
+static atomic_uint_fast64_t HintClientFileRxEndCount;
+
 // Stores lcore + 1. Zero means unmapped; actual lcore 0 remains representable.
 static atomic_uint_fast32_t PartitionDpdkLcorePlusOne[GQPLUS_MAX_PARTITIONS];
 
@@ -116,6 +127,29 @@ CxPlatGreenQuicPlusValidPartition(uint16_t Partition)
 {
     return Partition != GQPLUS_PARTITION_UNKNOWN &&
         Partition < GQPLUS_MAX_PARTITIONS;
+}
+
+static void
+CxPlatGreenQuicPlusCountHintEvents(uint64_t Hints)
+{
+    if ((Hints & GQPLUS_HINT_ACK_PENDING) != 0) {
+        atomic_fetch_add_explicit(&HintAckPendingCount, 1, memory_order_relaxed);
+    }
+    if ((Hints & GQPLUS_HINT_CUBIC_CWND_BLOCKED) != 0) {
+        atomic_fetch_add_explicit(&HintCubicCwndBlockedCount, 1, memory_order_relaxed);
+    }
+    if ((Hints & GQPLUS_HINT_CUBIC_RECOVERY) != 0) {
+        atomic_fetch_add_explicit(&HintCubicRecoveryCount, 1, memory_order_relaxed);
+    }
+    if ((Hints & GQPLUS_HINT_CUBIC_RAMPING) != 0) {
+        atomic_fetch_add_explicit(&HintCubicRampingCount, 1, memory_order_relaxed);
+    }
+    if ((Hints & GQPLUS_HINT_SERVER_FILE_TX_ACTIVE) != 0) {
+        atomic_fetch_add_explicit(&HintServerFileTxActiveCount, 1, memory_order_relaxed);
+    }
+    if ((Hints & GQPLUS_HINT_CLIENT_FILE_RX_ACTIVE) != 0) {
+        atomic_fetch_add_explicit(&HintClientFileRxActiveCount, 1, memory_order_relaxed);
+    }
 }
 
 static void
@@ -234,6 +268,7 @@ CxPlatGreenQuicPlusDecrementGlobal(
 static void
 CxPlatGreenQuicPlusBeginRecoveryForLcore(uint16_t Lcore)
 {
+    CxPlatGreenQuicPlusCountHintEvents(GQPLUS_HINT_CUBIC_RECOVERY);
     atomic_fetch_add_explicit(
         &GlobalTxRecoveryActiveCount,
         1,
@@ -283,6 +318,11 @@ CxPlatGreenQuicPlusEndRecoveryForLcore(uint16_t Lcore)
                 Old - 1,
                 memory_order_acq_rel,
                 memory_order_relaxed)) {
+            // GREENQUIC-COUNTERS-RECOVERY-END-SUCCESS-V1
+            // Count only an actual successful recovery reference decrement.
+            // A stray/duplicate EndRecovery call with count==0 is not an event.
+            atomic_fetch_add_explicit(
+                &HintCubicRecoveryEndCount, 1, memory_order_relaxed);
             if (Old == 1) {
                 atomic_fetch_and_explicit(
                     Persistent,
@@ -313,6 +353,7 @@ CxPlatGreenQuicPlusBeginTransfer(uint64_t Hints)
     if (!CxPlatGreenQuicPlusRuntimeEnabled()) {
         return;
     }
+    CxPlatGreenQuicPlusCountHintEvents(Hints & GQPLUS_TRANSFER_HINTS);
     if ((Hints & GQPLUS_HINT_SERVER_FILE_TX_ACTIVE) != 0) {
         CxPlatGreenQuicPlusIncrementGlobal(
             &ServerFileTxActiveCount,
@@ -333,11 +374,15 @@ CxPlatGreenQuicPlusEndTransfer(uint64_t Hints)
         return;
     }
     if ((Hints & GQPLUS_HINT_SERVER_FILE_TX_ACTIVE) != 0) {
+        atomic_fetch_add_explicit(
+            &HintServerFileTxEndCount, 1, memory_order_relaxed);
         CxPlatGreenQuicPlusDecrementGlobal(
             &ServerFileTxActiveCount,
             GQPLUS_HINT_SERVER_FILE_TX_ACTIVE);
     }
     if ((Hints & GQPLUS_HINT_CLIENT_FILE_RX_ACTIVE) != 0) {
+        atomic_fetch_add_explicit(
+            &HintClientFileRxEndCount, 1, memory_order_relaxed);
         CxPlatGreenQuicPlusDecrementGlobal(
             &ClientFileRxActiveCount,
             GQPLUS_HINT_CLIENT_FILE_RX_ACTIVE);
@@ -403,6 +448,7 @@ CxPlatGreenQuicPlusSetHints(uint64_t Hints)
     }
     const uint64_t Plain =
         Hints & ~(GQPLUS_TRANSFER_HINTS | GQPLUS_HINT_CUBIC_RECOVERY);
+    CxPlatGreenQuicPlusCountHintEvents(Plain);
     atomic_fetch_or_explicit(
         &GlobalPersistentHints,
         Plain,
@@ -439,6 +485,7 @@ CxPlatGreenQuicPlusPulseToBucket(
     uint64_t Now
     )
 {
+    CxPlatGreenQuicPlusCountHintEvents(Hints);
     // Mirror only TX-relevant transient information for the TX owner.
     if ((Hints & GQPLUS_HINT_ACK_PENDING) != 0) {
         CxPlatGreenQuicPlusExtendUntil(
@@ -701,6 +748,34 @@ CxPlatGreenQuicPlusGetHints(void)
         Hints |= CxPlatGreenQuicPlusReadTransientBucket(Lcore, Now);
     }
     return Hints;
+}
+
+void
+CxPlatGreenQuicPlusGetHintCounters(
+    GQPLUS_HINT_COUNTERS* Counters
+    )
+{
+    if (Counters == NULL) {
+        return;
+    }
+    Counters->AckPending = atomic_load_explicit(
+        &HintAckPendingCount, memory_order_relaxed);
+    Counters->CubicCwndBlocked = atomic_load_explicit(
+        &HintCubicCwndBlockedCount, memory_order_relaxed);
+    Counters->CubicRecovery = atomic_load_explicit(
+        &HintCubicRecoveryCount, memory_order_relaxed);
+    Counters->CubicRecoveryEnd = atomic_load_explicit(
+        &HintCubicRecoveryEndCount, memory_order_relaxed);
+    Counters->CubicRamping = atomic_load_explicit(
+        &HintCubicRampingCount, memory_order_relaxed);
+    Counters->ServerFileTxActive = atomic_load_explicit(
+        &HintServerFileTxActiveCount, memory_order_relaxed);
+    Counters->ServerFileTxEnd = atomic_load_explicit(
+        &HintServerFileTxEndCount, memory_order_relaxed);
+    Counters->ClientFileRxActive = atomic_load_explicit(
+        &HintClientFileRxActiveCount, memory_order_relaxed);
+    Counters->ClientFileRxEnd = atomic_load_explicit(
+        &HintClientFileRxEndCount, memory_order_relaxed);
 }
 
 #if 0

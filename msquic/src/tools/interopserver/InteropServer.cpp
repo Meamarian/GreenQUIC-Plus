@@ -188,7 +188,11 @@ volatile sig_atomic_t exit_flag = 0;
 
 void
 handle_signal(int signum) {
-    printf("Received signal %d. Exiting.\n", signum);
+    // GREENQUIC-P5-ASYNC-SIGNAL-SAFE-EXIT-V1
+    // A POSIX signal handler must not call printf or other non-async-signal-
+    // safe library functions. Only set the sig_atomic_t flag; normal teardown
+    // and all reporting happen after pause() returns in the main thread.
+    (void)signum;
     exit_flag = 1;
 }
 

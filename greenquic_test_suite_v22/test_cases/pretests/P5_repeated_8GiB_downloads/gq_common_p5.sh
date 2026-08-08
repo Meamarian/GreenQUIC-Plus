@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GQ_COMMON_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+GQ_P5_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+GQ_COMMON_DIR="$(cd -- "$GQ_P5_DIR/../../../common" && pwd)"
 SUITE_ROOT="$(cd -- "$GQ_COMMON_DIR/.." && pwd)"
 
 # GREENQUIC-ENABLE-RECORD-V1: recording/report generation is independent of GQ_LOG_LEVEL.
@@ -1245,7 +1246,7 @@ run_server() {
         validate_runtime_log server "$GQ_SERVER_LOGF" "$GQ_SERVER_MODE" "$GQ_SERVER_STAMP" || check_rc=$?
         energy_finish "$GQ_SERVER_ESTART" "$GQ_SERVER_EOUT" "$GQ_SERVER_LABEL" || energy_rc=$?
         off_cpu_max_stop "${GQ_SERVER_OFF_CPU_STATE:-}"
-        python3 "$GQ_COMMON_DIR/bin/bundle_run_results.py" --test-dir "$GQ_SERVER_TEST_DIR" --role server --mode "$GQ_SERVER_MODE" --stamp "$GQ_SERVER_STAMP" || bundle_rc=$?
+        python3 "$GQ_P5_DIR/bundle_run_results_p5.py" --test-dir "$GQ_SERVER_TEST_DIR" --role server --mode "$GQ_SERVER_MODE" --stamp "$GQ_SERVER_STAMP" || bundle_rc=$?
         [[ "$rc" == 0 && "$power_rc" != 0 ]] && rc="$power_rc"
         [[ "$rc" == 0 && "$msr_rc" != 0 ]] && rc="$msr_rc"
         [[ "$rc" == 0 && "$cstate_rc" != 0 ]] && rc="$cstate_rc"
@@ -1260,10 +1261,14 @@ run_server() {
         off_cpu_max_emit_log "$mode" "$runtime/dpdk.ini"
         export GREENQUIC_CONFIG="$runtime/dpdk.ini"
         export GREENQUIC_POWER_CONFIG="$runtime/powermng.ini"
+        # GREENQUIC-P5-GRACEFUL-SERVER-EXIT-V1
+        # -exitonsig installs the interopserver SIGINT/SIGTERM handler. This is
+        # required so controller SIGINT returns through normal MsQuic teardown,
+        # reaches MsQuicClose(), and emits GreenQuicPowerCleanup counters.
         exec stdbuf -oL -eL "$INTEROP_SERVER_BIN" \
             "-listen:$SERVER_LISTEN" "-port:$SERVER_PORT" \
-            "-root:$root" "-file:$cert" "-key:$key" -noexit
-    ) 2>&1 | python3 "$GQ_COMMON_DIR/bin/timestamp_tee.py" --raw-log "$logf" --timeline "$timelinef"
+            "-root:$root" "-file:$cert" "-key:$key" -exitonsig
+    ) 2>&1 | python3 "$GQ_P5_DIR/timestamp_tee_p5.py" --raw-log "$logf" --timeline "$timelinef"
 }
 
 
@@ -1602,7 +1607,7 @@ run_client() {
         export GREENQUIC_POWER_CONFIG="$runtime/powermng.ini"
         off_cpu_max_emit_log "$mode" "$runtime/dpdk.ini"
         run_client_workload "$mode"
-    ) 2>&1 | python3 "$GQ_COMMON_DIR/bin/timestamp_tee.py" --raw-log "$logf" --timeline "$timelinef" || rc=${PIPESTATUS[0]}
+    ) 2>&1 | python3 "$GQ_P5_DIR/timestamp_tee_p5.py" --raw-log "$logf" --timeline "$timelinef" || rc=${PIPESTATUS[0]}
     if [[ "$rc" == 0 ]]; then
         local post_transfer_wait_s="${GQ_POST_TRANSFER_WAIT_S:-4}"
         if [[ "$post_transfer_wait_s" != 0 && "$post_transfer_wait_s" != 0.0 ]]; then

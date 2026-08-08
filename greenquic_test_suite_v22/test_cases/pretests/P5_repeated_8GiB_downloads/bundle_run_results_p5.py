@@ -10,6 +10,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+COMMON_BIN = (Path(__file__).resolve().parent / "../../../common/bin").resolve()
+
 
 def safe(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_")
@@ -193,7 +195,7 @@ def main() -> int:
         frequency_env = os.environ.copy()
         frequency_env["GQ_RESULT_MODE"] = args.mode
         subprocess.run([
-            "python3", str(Path(__file__).with_name("frequency_trace.py")),
+            "python3", str((COMMON_BIN / "frequency_trace.py")),
             "--timeline", str(frequency_input),
             "--prefix", str(frequency_prefix),
             "--role", args.role,
@@ -209,7 +211,7 @@ def main() -> int:
         msr_has_samples = len(data_rows) >= 2
     if msr_has_samples:
         command = [
-            "python3", str(Path(__file__).with_name("rapl_msr_trace.py")),
+            "python3", str((COMMON_BIN / "rapl_msr_trace.py")),
             "--csv", str(msr_csv),
             "--json", str(details / f"{stem}_msr_power.json"),
             "--timeseries-svg", str(run_dir / f"{stem}_msr_power_timeseries.svg"),
@@ -255,14 +257,22 @@ def main() -> int:
                 )
         
         if _gq_cstate_has_data:
-            subprocess.run([
-                "python3", str(Path(__file__).with_name("cstate_trace.py")),
-                "--csv", str(cstate_csv),
-                "--summary", str(cstate_json),
-                "--timeline-svg", str(run_dir / f"{stem}_cstate_timeseries.svg"),
-                "--histogram-svg", str(run_dir / f"{stem}_cstate_wakeup_histogram.svg"),
-                "--role", args.role,
-            ], check=True)
+            # GREENQUIC-V22-CSTATE-PLOT-BEST-EFFORT-V1 (P5-local)
+            try:
+                subprocess.run([
+                    "python3", str((COMMON_BIN / "cstate_trace.py")),
+                    "--csv", str(cstate_csv),
+                    "--summary", str(cstate_json),
+                    "--timeline-svg", str(run_dir / f"{stem}_cstate_timeseries.svg"),
+                    "--histogram-svg", str(run_dir / f"{stem}_cstate_wakeup_histogram.svg"),
+                    "--role", args.role,
+                ], check=True)
+            except subprocess.CalledProcessError as exc:
+                print(
+                    "[GreenQUIC-Test:WARN] C-state plot generation failed "
+                    f"(rc={exc.returncode}); preserving raw C-state data and "
+                    "continuing bundle/summary generation."
+                )
         else:
             print(
                 "[GreenQUIC-Test] Skipping C-state plots: "

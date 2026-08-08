@@ -27,6 +27,21 @@ extern "C" {
 #define GQPLUS_HINT_SERVER_FILE_TX_ACTIVE  (1ull << 16)
 #define GQPLUS_HINT_CLIENT_FILE_RX_ACTIVE  (1ull << 17)
 
+/* GREENQUIC-COUNTERS-V1: semantic QUIC-side event counters.
+ * These count API events, not periodic samples that happen to observe a bit.
+ */
+typedef struct GQPLUS_HINT_COUNTERS {
+    uint64_t AckPending;
+    uint64_t CubicCwndBlocked;
+    uint64_t CubicRecovery;
+    uint64_t CubicRecoveryEnd;
+    uint64_t CubicRamping;
+    uint64_t ServerFileTxActive;
+    uint64_t ServerFileTxEnd;
+    uint64_t ClientFileRxActive;
+    uint64_t ClientFileRxEnd;
+} GQPLUS_HINT_COUNTERS;
+
 /* GREENQUIC-STRICT-OFF-V1: process-wide runtime gate; enabled only in PLUS mode. */
 void CxPlatGreenQuicPlusSetRuntimeEnabled(int Enabled);
 int CxPlatGreenQuicPlusRuntimeEnabled(void);
@@ -52,6 +67,7 @@ void CxPlatGreenQuicPlusPulseHintsForPartition(uint16_t Partition, uint64_t Hint
 uint64_t CxPlatGreenQuicPlusGetHints(void);
 uint64_t CxPlatGreenQuicPlusGetTxHints(void);
 uint64_t CxPlatGreenQuicPlusGetHintsForLcore(uint16_t Lcore, int IncludeUnknownGlobalHints);
+void CxPlatGreenQuicPlusGetHintCounters(GQPLUS_HINT_COUNTERS* Counters);
 
 #ifdef __cplusplus
 }

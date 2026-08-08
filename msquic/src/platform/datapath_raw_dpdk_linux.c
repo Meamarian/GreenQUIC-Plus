@@ -378,6 +378,11 @@ typedef struct GREENQUIC_LCORE_STATE {
     uint64_t EpollAttempts;
     uint64_t EpollWakeups;
     uint64_t EpollTimeouts;
+    uint64_t EpollRxWakeups;
+    uint64_t EpollControlWakeups;
+    uint64_t EpollSignalWakeups;
+    uint64_t EpollRxFdDrains;
+    uint64_t EpollRxFdDrainErrors;
     uint64_t WakeSignals;
     int EpollFd;
     int WakeEventFd;
@@ -421,6 +426,21 @@ typedef struct GREENQUIC_LCORE_STATE {
     uint32_t LastRxControlPressure;
     uint32_t LastTxControlPressure;
     const char* LastAction;
+
+    /* GREENQUIC-COUNTERS-V1 */
+    uint64_t FreqPolicyMaxHard;
+    uint64_t FreqPolicyMaxControl;
+    uint64_t FreqPolicyUp;
+    uint64_t FreqPolicyDown;
+    uint64_t FreqPolicyMin;
+    uint64_t FreqPolicyTxRingProtectUp;
+    uint64_t FreqChangedMax;
+    uint64_t FreqChangedUp;
+    uint64_t FreqChangedDown;
+    uint64_t FreqChangedMin;
+    uint64_t FreqUnchanged;
+    uint64_t FreqErrors;
+
     BOOLEAN PowerInitialized;
     BOOLEAN PowerAvailable;
     BOOLEAN FreqIsMax;
@@ -1357,6 +1377,76 @@ GreenQuicPowerCleanup(
     fflush(stdout);
     funlockfile(stdout);
 
+    /* GREENQUIC-COUNTERS-V1: mandatory process-end telemetry even when
+     * GQ_LOG_LEVEL=0. Per-lcore values are summed by the harness; global
+     * QUIC-hint values are aggregated by max to avoid lcore multiplication.
+     */
+    GQPLUS_HINT_COUNTERS HintCounters;
+    CxPlatZeroMemory(&HintCounters, sizeof(HintCounters));
+    CxPlatGreenQuicPlusGetHintCounters(&HintCounters);
+
+    flockfile(stdout);
+    printf(
+        "[CPU %u] GreenQUIC COUNTERS schema=greenquic-counters-v1 "
+        "idle_mode=%s epoll_watchdog_us=%u "
+        "epoll_try=%" PRIu64 " epoll_wake=%" PRIu64 " "
+        "epoll_timeout=%" PRIu64 " epoll_rx_wake=%" PRIu64 " "
+        "epoll_control_wake=%" PRIu64 " epoll_signal_wake=%" PRIu64 " "
+        "epoll_rx_fd_drain=%" PRIu64 " epoll_rx_fd_drain_error=%" PRIu64 " "
+        "wake_signal=%" PRIu64 " "
+        "freq_policy_max_hard=%" PRIu64 " "
+        "freq_policy_max_control=%" PRIu64 " "
+        "freq_policy_up=%" PRIu64 " freq_policy_down=%" PRIu64 " "
+        "freq_policy_min=%" PRIu64 " "
+        "freq_policy_txring_protect_up=%" PRIu64 " "
+        "freq_changed_max=%" PRIu64 " freq_changed_up=%" PRIu64 " "
+        "freq_changed_down=%" PRIu64 " freq_changed_min=%" PRIu64 " "
+        "freq_unchanged=%" PRIu64 " freq_error=%" PRIu64 " "
+        "hint_ack_pending=%" PRIu64 " "
+        "hint_cubic_cwnd_blocked=%" PRIu64 " "
+        "hint_cubic_recovery=%" PRIu64 " "
+        "hint_cubic_recovery_end=%" PRIu64 " "
+        "hint_cubic_ramping=%" PRIu64 " "
+        "hint_server_file_tx_active=%" PRIu64 " "
+        "hint_server_file_tx_end=%" PRIu64 " "
+        "hint_client_file_rx_active=%" PRIu64 " "
+        "hint_client_file_rx_end=%" PRIu64 "\n",
+        Core,
+        GreenQuicIdleModeToString(Dpdk->GreenQuicIdleMode),
+        Dpdk->GreenQuicIdleWatchdogUs,
+        S->EpollAttempts,
+        S->EpollWakeups,
+        S->EpollTimeouts,
+        S->EpollRxWakeups,
+        S->EpollControlWakeups,
+        S->EpollSignalWakeups,
+        S->EpollRxFdDrains,
+        S->EpollRxFdDrainErrors,
+        S->WakeSignals,
+        S->FreqPolicyMaxHard,
+        S->FreqPolicyMaxControl,
+        S->FreqPolicyUp,
+        S->FreqPolicyDown,
+        S->FreqPolicyMin,
+        S->FreqPolicyTxRingProtectUp,
+        S->FreqChangedMax,
+        S->FreqChangedUp,
+        S->FreqChangedDown,
+        S->FreqChangedMin,
+        S->FreqUnchanged,
+        S->FreqErrors,
+        HintCounters.AckPending,
+        HintCounters.CubicCwndBlocked,
+        HintCounters.CubicRecovery,
+        HintCounters.CubicRecoveryEnd,
+        HintCounters.CubicRamping,
+        HintCounters.ServerFileTxActive,
+        HintCounters.ServerFileTxEnd,
+        HintCounters.ClientFileRxActive,
+        HintCounters.ClientFileRxEnd);
+    fflush(stdout);
+    funlockfile(stdout);
+
     if (S->PowerInitialized && S->PowerAvailable) {
         const uint32_t BeforeIndex = GreenQuicReadFreqIndex(Core);
         const int MaxRet = rte_power_freq_max(Core);
@@ -1421,6 +1511,13 @@ GreenQuicFreqMax(
     const uint32_t BeforeIndex = GreenQuicReadFreqIndex(Core);
     const int Ret = rte_power_freq_max(Core);
     const uint32_t AfterIndex = GreenQuicReadFreqIndex(Core);
+    if (Ret > 0) {
+        ++S->FreqChangedMax;
+    } else if (Ret == 0) {
+        ++S->FreqUnchanged;
+    } else {
+        ++S->FreqErrors;
+    }
     if (Ret >= 0) {
         S->FreqIsMax = TRUE;
         S->LastFreqMaxTsc = rte_get_tsc_cycles();
@@ -1486,6 +1583,13 @@ GreenQuicFreqUpStep(
     const uint32_t BeforeIndex = GreenQuicReadFreqIndex(Core);
     const int Ret = rte_power_freq_up(Core);
     const uint32_t AfterIndex = GreenQuicReadFreqIndex(Core);
+    if (Ret > 0) {
+        ++S->FreqChangedUp;
+    } else if (Ret == 0) {
+        ++S->FreqUnchanged;
+    } else {
+        ++S->FreqErrors;
+    }
     if (Ret >= 0) {
         S->LastFreqUpTsc = Now;
         S->FreqIsMax = FALSE;
@@ -1554,6 +1658,13 @@ GreenQuicFreqDownStep(
     const uint32_t BeforeIndex = GreenQuicReadFreqIndex(Core);
     const int Ret = rte_power_freq_down(Core);
     const uint32_t AfterIndex = GreenQuicReadFreqIndex(Core);
+    if (Ret > 0) {
+        ++S->FreqChangedDown;
+    } else if (Ret == 0) {
+        ++S->FreqUnchanged;
+    } else {
+        ++S->FreqErrors;
+    }
     if (Ret >= 0) {
         S->FreqIsMax = FALSE;
         S->LastFreqDownTsc = Now;
@@ -1622,6 +1733,13 @@ GreenQuicFreqMin(
     const uint32_t BeforeIndex = GreenQuicReadFreqIndex(Core);
     const int Ret = rte_power_freq_min(Core);
     const uint32_t AfterIndex = GreenQuicReadFreqIndex(Core);
+    if (Ret > 0) {
+        ++S->FreqChangedMin;
+    } else if (Ret == 0) {
+        ++S->FreqUnchanged;
+    } else {
+        ++S->FreqErrors;
+    }
     if (Ret >= 0) {
         S->FreqIsMax = FALSE;
         S->LastFreqDownTsc = Now;
@@ -2519,6 +2637,8 @@ GreenQuicTryEpollWait(
     const uint64_t Sequence = __atomic_load_n(&S->WakeSequence, __ATOMIC_ACQUIRE);
     int RxFd = -1;
     const uint16_t QueueId = GreenQuicGetQueueId(Dpdk, Core);
+    const uint64_t RxEventTag =
+        ((uint64_t)Interface->Port << 32) | (uint64_t)QueueId;
     BOOLEAN RxInterruptArmed = FALSE;
 
     if (OwnsRx) {
@@ -2544,7 +2664,7 @@ GreenQuicTryEpollWait(
         struct epoll_event RxEv;
         CxPlatZeroMemory(&RxEv, sizeof(RxEv));
         RxEv.events = EPOLLIN;
-        RxEv.data.u64 = ((uint64_t)Interface->Port << 32) | QueueId;
+        RxEv.data.u64 = RxEventTag;
         if (epoll_ctl(S->EpollFd, EPOLL_CTL_ADD, RxFd, &RxEv) != 0 &&
             errno != EEXIST) {
             const int SavedErrno = errno;
@@ -2618,6 +2738,52 @@ GreenQuicTryEpollWait(
         }
     }
 
+    BOOLEAN SawRxEvent = FALSE;
+    BOOLEAN SawControlEvent = FALSE;
+    if (Count > 0) {
+        for (int Index = 0; Index < Count; ++Index) {
+            if (Events[Index].data.u64 == UINT64_MAX) {
+                SawControlEvent = TRUE;
+            } else if (Events[Index].data.u64 == RxEventTag) {
+                SawRxEvent = TRUE;
+            }
+        }
+    }
+
+    /*
+     * GREENQUIC-EPOLL-RXFD-ACK-V1:
+     * The per-queue RX interrupt eventfd is level-triggered in this epoll set.
+     * Consume it after wake; otherwise the fd remains readable and every later
+     * epoll_wait returns immediately.
+     */
+    if (SawRxEvent && RxFd >= 0) {
+        uint64_t RxInterruptCount = 0;
+        ssize_t ReadRet;
+        do {
+            ReadRet = read(RxFd, &RxInterruptCount, sizeof(RxInterruptCount));
+        } while (ReadRet < 0 && errno == EINTR);
+
+        if (ReadRet == (ssize_t)sizeof(RxInterruptCount)) {
+            ++S->EpollRxFdDrains;
+        } else if (ReadRet < 0 &&
+                   (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            /* Benign if another interrupt-management path consumed it. */
+        } else {
+            const int SavedErrno = ReadRet < 0 ? errno : 0;
+            ++S->EpollRxFdDrainErrors;
+            fprintf(
+                stderr,
+                "[CPU %u] GreenQUIC IDLE mode=epoll result=disabled "
+                "RX interrupt fd drain failed: ret=%zd errno=%d (%s). "
+                "Falling back.\n\n",
+                Core,
+                ReadRet,
+                SavedErrno,
+                SavedErrno != 0 ? strerror(SavedErrno) : "short eventfd read");
+            S->EpollUnavailable = TRUE;
+        }
+    }
+
     uint64_t Drain;
     while (read(S->WakeEventFd, &Drain, sizeof(Drain)) == sizeof(Drain)) { }
 
@@ -2627,9 +2793,16 @@ GreenQuicTryEpollWait(
     }
     if (Count > 0) {
         ++S->EpollWakeups;
+        if (SawRxEvent) {
+            ++S->EpollRxWakeups;
+        }
+        if (SawControlEvent) {
+            ++S->EpollControlWakeups;
+        }
         return TRUE;
     }
     if (WaitErrno == EINTR) {
+        ++S->EpollSignalWakeups;
         // A signal is a wake-up condition; repoll instead of taking another sleep.
         return TRUE;
     }
@@ -3474,16 +3647,19 @@ GreenQuicApplyPolicy(
     HardMax = S->LastHardMax;
 
     if (HardMax) {
+        ++S->FreqPolicyMaxHard;
         S->LastAction = "freq_max_hard";
         GreenQuicFreqMax(Dpdk, Core);
         return;
     }
     if (S->PressureAvg >= Dpdk->GreenQuicPressureMaxThreshold) {
+        ++S->FreqPolicyMaxControl;
         S->LastAction = "freq_max_control";
         GreenQuicFreqMax(Dpdk, Core);
         return;
     }
     if (S->PressureAvg >= Dpdk->GreenQuicPressureUpThreshold) {
+        ++S->FreqPolicyUp;
         S->LastAction = "freq_up";
         GreenQuicFreqUpStep(Dpdk, Core);
         return;
@@ -3517,6 +3693,7 @@ GreenQuicApplyPolicy(
 
     if (OwnsTx && Dpdk->GreenQuicTxRingProtectUp &&
         Dpdk->GreenQuicNoSleepIfTxRingNotEmpty && TxRingCount > 0) {
+        ++S->FreqPolicyTxRingProtectUp;
         S->LastAction = "txring_protect_up";
         GreenQuicFreqUpStep(Dpdk, Core);
         return;
@@ -3534,9 +3711,11 @@ GreenQuicApplyPolicy(
         GreenQuicTscDeltaToUs(Now - LastActive);
 
     if (IdleUs >= Dpdk->GreenQuicFreqMinIdleUs) {
+        ++S->FreqPolicyMin;
         S->LastAction = "freq_min";
         GreenQuicFreqMin(Dpdk, Core);
     } else {
+        ++S->FreqPolicyDown;
         S->LastAction = "freq_down";
         GreenQuicFreqDownStep(Dpdk, Core);
     }
