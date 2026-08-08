@@ -189,18 +189,22 @@ def main() -> int:
     except Exception as exc:
         print(f"[P5:WARN] named C-state chart was not generated: {exc}")
 
-    # GREENQUIC-P5-COUNTER-HISTOGRAMS-V1
-    # Additional charts only. Existing P5/P4 chart files are not modified.
+    # GREENQUIC-SINGLE-RUN-CHARTS-HOOK-V1
+    # New additive chart set only; existing chart files/folders remain untouched.
+    # The legacy CUBIC-only counter plotter remains in the repository for history
+    # but is no longer invoked for newly finalized matrices.
     import subprocess as _gq_subprocess
     import sys as _gq_sys
-    _gq_counter_plotter = (
+    _gq_single_run_plotter = (
         Path(__file__).resolve().parents[3]
-        / "common" / "bin" / "plot_greenquic_counter_histograms.py"
+        / "common" / "bin" / "plot_greenquic_single_run_charts.py"
     )
-    if not _gq_counter_plotter.is_file():
-        raise SystemExit(f"ERROR: missing P5 counter histogram plotter: {_gq_counter_plotter}")
+    if not _gq_single_run_plotter.is_file():
+        raise SystemExit(
+            f"ERROR: missing single-run chart plotter: {_gq_single_run_plotter}"
+        )
     _gq_subprocess.run(
-        [_gq_sys.executable, str(_gq_counter_plotter), "--matrix", str(matrix)],
+        [_gq_sys.executable, str(_gq_single_run_plotter), "--matrix", str(matrix)],
         check=True,
     )
 
@@ -260,6 +264,9 @@ def main() -> int:
         "This directory is self-contained.\n\n"
         "- Raw matrix logs and aligned RAPL JSON: matrix root\n"
         "- Matrix tables and SVG charts: `tables/`\n"
+        "- New single-run comparison charts: `tables/charts/single_run_comparison/`\n"
+        "- With bar values: `tables/charts/single_run_comparison/with_values/`\n"
+        "- Without bar values: `tables/charts/single_run_comparison/without_values/`\n"
         "- Server run bundles: `runs/server/`\n"
         "- Client run bundles copied from tinyman: `runs/client/`\n"
         "- Static and per-run effective configuration: `configuration/`\n"
@@ -287,6 +294,10 @@ def main() -> int:
 
     print("[P5] Unified matrix integrity: PASS")
     print(f"[P5] Named CPUIdle chart: {charts / 'linux_cstate_residency_by_mode.svg'}")
+    print(
+        "[P5] Single-run charts: "
+        f"{charts / 'single_run_comparison'}"
+    )
     return 0
 
 
