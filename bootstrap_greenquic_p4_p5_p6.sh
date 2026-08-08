@@ -22,9 +22,9 @@ chmod 0755 "$P6/build_p6_client.sh" "$P6/run_p6_matrix.sh"
 
 [[ -d "$SOURCE" ]] || { echo "ERROR: P6 isolated source missing" >&2; exit 1; }
 [[ -x "$CLIENT" && -x "$SERVER" ]] || { echo "ERROR: P6 binaries missing" >&2; exit 1; }
-grep -Fq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V1' "$SOURCE/src/platform/datapath_raw_dpdk.c"
-grep -aFq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V1' "$CLIENT"
-grep -aFq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V1' "$SERVER"
+grep -Fq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V2' "$SOURCE/src/platform/datapath_raw_dpdk_linux.c"
+grep -aFq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V2' "$CLIENT"
+grep -aFq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V2' "$SERVER"
 grep -aFq -- 'hint_cubic_cwnd_blocked=' "$SERVER"
 grep -aFq -- 'hint_cubic_recovery=' "$SERVER"
 grep -aFq -- 'GreenQUIC-P5-SEQUENCE-V2' "$CLIENT"
