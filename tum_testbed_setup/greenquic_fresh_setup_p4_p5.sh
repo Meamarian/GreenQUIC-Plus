@@ -6,24 +6,24 @@ set -Eeuo pipefail
 # RUN THIS SCRIPT ON THE MAC.
 #
 # This wrapper deliberately preserves the established TUM setup sequence in
-# greenquic_fresh_setup.sh (SSH restoration, clone/pin, host bootstrap, E810
-# link checks, DPDK binding, real P0 smoke test, and P4 verification). Only
-# after that full setup passes do we build and verify the isolated P5 tree on
-# both idex and tinyman.
+# greenquic_fresh_setup_base.sh (SSH restoration, clone/pin, host bootstrap,
+# E810 link checks, DPDK binding, real P0 smoke test, and P4 verification).
+# Only after that full setup passes do we build and verify the isolated P5 tree
+# on both idex and tinyman.
 #
 # Generated P4/P5 source/build directories remain untracked and are recreated
 # from committed source on every fresh setup.
 # =============================================================================
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-BASE="$HERE/greenquic_fresh_setup.sh"
+BASE="$HERE/greenquic_fresh_setup_base.sh"
 BASTION="mohsen@coinbase"
 ROOT="/root/mohsen"
 P5_REL="greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads"
 P5="$ROOT/$P5_REL"
 P5_BUILD="$ROOT/msquic/build-greenquic-p5"
 P5_SOURCE="$ROOT/msquic-p5-source"
-PLOTTER="$ROOT/greenquic_test_suite_v22/common/bin/plot_greenquic_counter_histograms.py"
+PLOTTER="$ROOT/greenquic_test_suite_v22/common/bin/plot_greenquic_single_run_charts.py"
 
 SSH_OPTS=(
     -o ConnectTimeout=20
@@ -46,14 +46,14 @@ remote() {
     ssh "${SSH_OPTS[@]}" -J "$BASTION" root@"$host" "$@"
 }
 
-[[ -f "$BASE" ]] || fail "Missing base TUM setup: $BASE"
+[[ -f "$BASE" ]] || fail "Missing preserved base TUM setup: $BASE"
 
 printf '\n################################################################\n'
 printf '### PHASE 1 — EXISTING TUM SETUP: NORMAL + P4 + P0\n'
 printf '################################################################\n\n'
 
-# Use bash explicitly so the wrapper does not depend on the local executable
-# bit of a downloaded/copied setup script.
+# Run the preserved proven implementation directly. This avoids any dispatcher
+# recursion and keeps the established SSH/link/DPDK/P0/P4 behavior unchanged.
 bash "$BASE" "$@"
 
 printf '\n################################################################\n'
@@ -75,7 +75,7 @@ P5_BUILD="$ROOT/msquic/build-greenquic-p5"
 P5_SOURCE="$ROOT/msquic-p5-source"
 P5_CLIENT="$P5_BUILD/bin/Release/quicinterop"
 P5_SERVER="$P5_BUILD/bin/Release/quicinteropserver"
-PLOTTER="$ROOT/greenquic_test_suite_v22/common/bin/plot_greenquic_counter_histograms.py"
+PLOTTER="$ROOT/greenquic_test_suite_v22/common/bin/plot_greenquic_single_run_charts.py"
 
 cd "$ROOT"
 
@@ -113,6 +113,13 @@ grep -aFq -- 'ready_for_start_gate_us=' "$P5_CLIENT"
 grep -aFq -- 'GreenQUIC COUNTERS schema=greenquic-counters-v1' "$P5_CLIENT"
 grep -aFq -- 'GreenQUIC COUNTERS schema=greenquic-counters-v1' "$P5_SERVER"
 
+# Process-end DPDK packet totals are emitted for OFF/BASIC/PLUS without adding
+# any new hot-path work; the counters already exist in the datapath.
+grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$P5_CLIENT"
+grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$P5_SERVER"
+grep -Fq -- 'GREENQUIC-P5-DATAPATH-PACKET-TOTALS-V1' \
+    "$P5_SOURCE/src/platform/datapath_raw_dpdk_linux.c"
+
 # Last successful graceful-cleanup and CUBIC-counter fixes must survive the
 # isolated P5 source regeneration.
 grep -Fq -- 'GREENQUIC-P5-ASYNC-SIGNAL-SAFE-EXIT-V1' \
@@ -130,10 +137,11 @@ grep -aFq -- 'epoll_rx_fd_drain=' "$P5_CLIENT"
 grep -aFq -- 'epoll_rx_fd_drain_error=' "$P5_CLIENT"
 grep -aFq -- 'hint_cubic_ramping=' "$P5_SERVER"
 
-# Result-finalization additions are source artifacts, not generated results.
+# New additive single-run chart set. The legacy CUBIC-only plotter remains in
+# Git history/source but is intentionally not invoked for new matrices.
 [[ -f "$PLOTTER" ]]
-grep -Fq -- 'GREENQUIC-P5-COUNTER-HISTOGRAM-PLOTTER-V1' "$PLOTTER"
-grep -Fq -- 'GREENQUIC-P5-COUNTER-HISTOGRAMS-V1' "$P5/p5_finalize_matrix.py"
+grep -Fq -- 'GREENQUIC-SINGLE-RUN-CHARTS-V1' "$PLOTTER"
+grep -Fq -- 'GREENQUIC-SINGLE-RUN-CHARTS-HOOK-V1' "$P5/p5_finalize_matrix.py"
 python3 -c 'import matplotlib'
 python3 "$PLOTTER" --self-test
 
@@ -194,7 +202,9 @@ printf 'P5 final counters: PASS\n'
 printf 'P5 graceful cleanup: PASS\n'
 printf 'P5 corrected CUBIC recovery-end counter: PASS\n'
 printf 'P5 EPOLL RX-eventfd drain fix: PASS\n'
-printf 'P5 counter histogram self-test: PASS\n'
+printf 'P5 DPDK packet totals for OFF/BASIC/PLUS: PASS\n'
+printf 'Single-run charts with values: PASS\n'
+printf 'Single-run charts without values: PASS\n'
 printf 'P4 launcher: /root/run_p4.sh\n'
 printf 'P5 launcher: /root/run_p5.sh\n'
 printf '################################################################\n'
