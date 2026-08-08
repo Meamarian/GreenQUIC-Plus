@@ -18,7 +18,7 @@ esac
 [[ "$PAYLOAD_BYTES" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: PAYLOAD_BYTES must be positive" >&2; exit 2; }
 [[ -x "$GQ_INTEROP_CLIENT_BIN" ]] || { echo "ERROR: P6 client binary missing: $GQ_INTEROP_CLIENT_BIN" >&2; exit 2; }
 grep -aFq -- 'GreenQUIC-P5-SEQUENCE-V2' "$GQ_INTEROP_CLIENT_BIN" || { echo "ERROR: P6 client lacks sequential-download base" >&2; exit 2; }
-grep -aFq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V1' "$GQ_INTEROP_CLIENT_BIN" || { echo "ERROR: selected client is not the isolated P6 binary" >&2; exit 2; }
+grep -aFq -- 'GREENQUIC-P6-DETERMINISTIC-LOSS-V2' "$GQ_INTEROP_CLIENT_BIN" || { echo "ERROR: selected client is not the isolated P6 V2 binary" >&2; exit 2; }
 grep -aFq -- 'ready_for_start_gate_us=' "$GQ_INTEROP_CLIENT_BIN" || { echo "ERROR: P6 client lacks start gate" >&2; exit 2; }
 
 # Validation reference only. The real payload is served by idex. Keep the sparse
