@@ -42,6 +42,8 @@ python3 "$P6_CUBIC_CAP" "$CUBIC_SOURCE"
 
 grep -Fq 'GreenQUIC-P5-SEQUENCE-V2' "$INTEROP_SOURCE" || { echo "ERROR: P6 lacks sequential transfer base" >&2; exit 2; }
 grep -Fq 'GREENQUIC-P5-DATAPATH-PACKET-TOTALS-V1' "$DPDK_LINUX_SOURCE" || { echo "ERROR: P6 lacks datapath packet totals" >&2; exit 2; }
+grep -Fq 'GREENQUIC-P5-EPOLL-FD-INIT-FIX-V1' "$DPDK_LINUX_SOURCE" || { echo "ERROR: P6 lacks EPOLL fd initialization fix" >&2; exit 2; }
+grep -Fq 'S->EpollInitialized && S->WakeEventFd >= 0' "$DPDK_LINUX_SOURCE" || { echo "ERROR: P6 lacks EPOLL wake-event guard" >&2; exit 2; }
 grep -Fq 'GREENQUIC-P6-DETERMINISTIC-LOSS-V2' "$DPDK_LINUX_SOURCE" || { echo "ERROR: P6 Linux-DPDK impairment marker missing" >&2; exit 2; }
 grep -Fq 'GREENQUIC-P6-EXACT-ONE-PACKET-LOSS-V1' "$DPDK_LINUX_SOURCE" || { echo "ERROR: P6 exact-one-packet loss marker missing" >&2; exit 2; }
 grep -Fq 'GREENQUIC-P6-CUBIC-CWND-CAP-V1' "$CUBIC_SOURCE" || { echo "ERROR: P6 CUBIC cap marker missing" >&2; exit 2; }
