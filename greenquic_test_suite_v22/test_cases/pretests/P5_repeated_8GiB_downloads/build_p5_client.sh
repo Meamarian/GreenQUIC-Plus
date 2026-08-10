@@ -63,6 +63,16 @@ grep -Fq 'GREENQUIC-P5-DATAPATH-PACKET-TOTALS-V1' \
     echo "ERROR: P5 packet-total teardown marker was not added" >&2
     exit 2
 }
+grep -Fq 'GREENQUIC-P5-EPOLL-FD-INIT-FIX-V1' \
+    "$P5_SOURCE/src/platform/datapath_raw_dpdk_linux.c" || {
+    echo "ERROR: P5 EPOLL fd initialization fix was not added" >&2
+    exit 2
+}
+grep -Fq 'S->EpollInitialized && S->WakeEventFd >= 0' \
+    "$P5_SOURCE/src/platform/datapath_raw_dpdk_linux.c" || {
+    echo "ERROR: P5 EPOLL wake-event guard was not added" >&2
+    exit 2
+}
 
 export PKG_CONFIG_PATH="$DPDK/lib/pkgconfig:$DPDK/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export LIBRARY_PATH="$DPDK/lib:$DPDK/lib/x86_64-linux-gnu${LIBRARY_PATH:+:$LIBRARY_PATH}"
