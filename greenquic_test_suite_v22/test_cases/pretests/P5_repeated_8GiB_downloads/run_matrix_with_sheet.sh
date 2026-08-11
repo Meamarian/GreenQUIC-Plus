@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 BASE_RUNNER="$HERE/run_matrix_from_idex.sh"
-REPORTER="$HERE/build_sheet_rules_all.py"
+REPORTER="$HERE/build_sheet_rules_all_aligned.py"
 
 usage() {
     cat <<'EOF'
@@ -18,6 +18,10 @@ Behavior:
         legacy charts directory and generate the finalized the_sheet_rules_all/
         workbook + 62-chart report
   both  keep legacy output and also generate the_sheet_rules_all/ report
+
+Missing optional report inputs never abort report generation. The new reporter
+writes a warning chart plus the exact reason to validation_report.json and the
+Excel Validation warnings sheet.
 
 Default: both
 EOF
