@@ -7,7 +7,7 @@ REPORTER="$HERE/build_sheet_rules_all.py"
 usage() {
     cat <<'EOF'
 Usage:
-  ./run_matrix_with_sheet.sh [--chart-style new|old|both] [normal matrix options]
+  bash ./run_matrix_with_sheet.sh [--chart-style new|old|both] [normal matrix options]
 
 Aliases:
   --chart_style new|old|both
@@ -49,11 +49,13 @@ done
 case "$CHART_STYLE" in new|old|both) ;; *) echo "ERROR: --chart-style must be new, old, or both" >&2; exit 2;; esac
 
 [[ -x "$BASE_RUNNER" ]] || { echo "ERROR: missing executable $BASE_RUNNER" >&2; exit 2; }
-[[ -f "$REPORTER" ]] || { echo "ERROR: missing $REPORTER" >&2; exit 2; }
-python3 -c 'import matplotlib, numpy' >/dev/null 2>&1 || {
-    echo "ERROR: new report requires Python matplotlib and numpy" >&2
-    exit 2
-}
+if [[ "$CHART_STYLE" != "old" ]]; then
+    [[ -f "$REPORTER" ]] || { echo "ERROR: missing $REPORTER" >&2; exit 2; }
+    python3 -c 'import matplotlib, numpy' >/dev/null 2>&1 || {
+        echo "ERROR: new report requires Python matplotlib and numpy" >&2
+        exit 2
+    }
+fi
 
 # Force a known matrix path so post-processing never guesses which run was made.
 if [[ -z "$OUTPUT_DIR" ]]; then
