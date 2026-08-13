@@ -62,20 +62,28 @@ def _arg_value(name: str) -> str | None:
 
 def _generate_newcharts() -> int:
     here = Path(__file__).resolve().parent
-    common = here.parents[2] / "common" / "bin" / "build_newchart_variants.py"
+    common_dir = here.parents[2] / "common" / "bin"
     input_arg = _arg_value("--input")
     output_arg = _arg_value("--output")
-    if not common.is_file() or not input_arg:
-        base.warn("newchart_generator_missing_input", "Cannot run newchart generator", str(common))
+    if not input_arg:
+        base.warn("newchart_generator_missing_input", "Cannot run chart generators without --input", str(here))
         return 0
     env = os.environ.copy()
     env["PYTHONPATH"] = str(here) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    cmd = [sys.executable, str(common), "--input", input_arg, "--reporter-dir", str(here)]
-    if output_arg:
-        cmd += ["--output", output_arg]
-    result = subprocess.run(cmd, env=env, check=False)
-    if result.returncode != 0:
-        base.warn("newchart_generation_failed", f"newchart generator returned {result.returncode}", "P4")
+    for script_name, warning_code in (
+        ("build_newchart_variants.py", "newchart_generation_failed"),
+        ("build_normalized_derived_charts.py", "normalized_derived_generation_failed"),
+    ):
+        script = common_dir / script_name
+        if not script.is_file():
+            base.warn("newchart_generator_missing", "Cannot run chart generator", str(script))
+            continue
+        cmd = [sys.executable, str(script), "--input", input_arg, "--reporter-dir", str(here)]
+        if output_arg:
+            cmd += ["--output", output_arg]
+        result = subprocess.run(cmd, env=env, check=False)
+        if result.returncode != 0:
+            base.warn(warning_code, f"{script_name} returned {result.returncode}", "P4")
     return 0
 
 
