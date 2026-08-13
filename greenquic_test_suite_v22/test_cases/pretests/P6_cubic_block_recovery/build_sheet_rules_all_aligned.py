@@ -13,6 +13,12 @@ P5_REPORTER_DIR = HERE.parent / "P5_repeated_8GiB_downloads"
 sys.path.insert(0, str(P5_REPORTER_DIR))
 import build_sheet_rules_all as base
 
+COMMON_BIN = HERE.parents[2] / "common" / "bin"
+if str(COMMON_BIN) not in sys.path:
+    sys.path.insert(0, str(COMMON_BIN))
+import phase_alignment
+
+base.read_get_times = phase_alignment.read_http_get_times
 _original_raw_data = base.raw_data
 
 
@@ -31,15 +37,19 @@ def _aligned_raw_data(root):
         bridge = frequency.get("bridge") if frequency else None
         if bridge is None:
             continue
-        get_times = base.read_get_times(server_files.get("timeline"))
-        if not get_times:
+        get_times = phase_alignment.read_http_get_times(server_files.get("timeline"))
+        alignment = phase_alignment.build_alignment_info(windows, get_times)
+        record["server_alignment"] = alignment
+        if not alignment["valid"]:
             base.warn(
-                "server_cstate_endpoint_alignment_missing",
-                "Server C-state has a RAW↔MONOTONIC bridge, but no timestamped server GET events were recorded. Whole-trace C-state remains valid; server active/gap C-state is reported with a warning.",
-                f"server rep{repetition:02d} {mode}",
+                "server_phase_alignment_rejected",
+                "Server phase attribution rejected by repeated-GET alignment guard; whole-trace data remains valid.",
+                f"server rep{repetition:02d} {mode}: {alignment['reason']}",
             )
+            phase_alignment.invalidate_server_phase_data(record)
             continue
-        shift_ns = int(record.get("server_shift_ns", 0))
+        shift_ns = int(alignment["shift_ns"])
+        record["server_shift_ns"] = shift_ns
         shifted_bridge = replace(
             bridge,
             start_mono_ns=int(bridge.start_mono_ns) + shift_ns,

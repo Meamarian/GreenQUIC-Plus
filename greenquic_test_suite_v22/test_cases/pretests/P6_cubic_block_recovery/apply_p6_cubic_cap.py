@@ -68,12 +68,18 @@ if src.count(anchor) != 1:
     raise SystemExit(f"ERROR: expected one CUBIC constant anchor, found {src.count(anchor)}")
 src = src.replace(anchor, anchor + insert, 1)
 
-# Apply after reset initializes the real CUBIC window.
+# The same real CUBIC-window initialization sequence is used in both
+# CubicCongestionControlReset() and CubicCongestionControlInitialize().
+# Cap both sites so P6 starts capped on connection creation and stays capped
+# after any later CUBIC reset.
 old_reset = '''    Cubic->CongestionWindow = DatagramPayloadLength * Cubic->InitialWindowPackets;\n    Cubic->BytesInFlightMax = Cubic->CongestionWindow / 2;\n'''
 new_reset = '''    Cubic->CongestionWindow = DatagramPayloadLength * Cubic->InitialWindowPackets;\n    GreenQuicP6ApplyCwndCap(Cubic);\n    Cubic->BytesInFlightMax = Cubic->CongestionWindow / 2;\n'''
-if src.count(old_reset) != 1:
-    raise SystemExit(f"ERROR: expected one CUBIC reset window block, found {src.count(old_reset)}")
-src = src.replace(old_reset, new_reset, 1)
+if src.count(old_reset) != 2:
+    raise SystemExit(
+        f"ERROR: expected two CUBIC initialization/reset window blocks, "
+        f"found {src.count(old_reset)}"
+    )
+src = src.replace(old_reset, new_reset)
 
 # Apply after normal ACK-driven growth and the existing 2*BytesInFlightMax limit.
 old_growth = '''    if (Cubic->CongestionWindow > 2 * Cubic->BytesInFlightMax) {\n        Cubic->CongestionWindow = 2 * Cubic->BytesInFlightMax;\n    }\n\n    if (Cubic->CongestionWindow > OldCongestionWindow) {\n'''
