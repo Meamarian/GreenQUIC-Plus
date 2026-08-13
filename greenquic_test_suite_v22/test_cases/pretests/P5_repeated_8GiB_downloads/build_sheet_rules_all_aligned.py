@@ -100,8 +100,31 @@ def _generate_newcharts() -> int:
     return 0
 
 
+# GREENQUIC-REPORT-FINALIZER-V4
+# Final chart/workbook audit pass. It runs after the original reporter and does not change runtime settings.
+def _generate_report_finalizer() -> int:
+    here = Path(__file__).resolve().parent
+    common = here.parents[2] / "common" / "bin" / "build_report_finalizer_v4.py"
+    input_arg = _arg_value("--input")
+    output_arg = _arg_value("--output")
+    if not input_arg:
+        base.warn("report_finalizer_missing_input", "Cannot run report finalizer without --input", str(here))
+        return 0
+    if not common.is_file():
+        base.warn("report_finalizer_missing", "Final report generator is unavailable", str(common))
+        return 0
+    cmd = [sys.executable, str(common), "--input", input_arg]
+    if output_arg:
+        cmd += ["--output", output_arg]
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        base.warn("report_finalizer_failed", f"build_report_finalizer_v4.py returned {result.returncode}", str(here))
+    return 0
+
+
 if __name__ == "__main__":
     rc = base.main()
     if rc == 0:
         _generate_newcharts()
+        _generate_report_finalizer()
     raise SystemExit(rc)
