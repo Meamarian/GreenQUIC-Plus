@@ -47,12 +47,7 @@ def read_khz(cpu):
 
 
 def clock_bridge(phase, attempts=9):
-    """Return a low-uncertainty MONOTONIC_RAW -> MONOTONIC calibration.
-
-    CLOCK_MONOTONIC_RAW is read immediately before and after CLOCK_MONOTONIC.
-    Of several attempts we retain the bracket with the smallest RAW span.
-    The RAW timestamp is the bracket midpoint and uncertainty is half the span.
-    """
+    """Return a low-uncertainty MONOTONIC_RAW -> MONOTONIC calibration."""
     raw_clock = getattr(time, "CLOCK_MONOTONIC_RAW", None)
     if raw_clock is None:
         return None
@@ -91,7 +86,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--config", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
-    p.add_argument("--interval-ms", type=float, default=10.0)
+    p.add_argument("--interval-ms", type=float, default=1.0)
     a = p.parse_args()
     if a.interval_ms <= 0:
         raise SystemExit("interval must be positive")
@@ -103,19 +98,24 @@ def main():
     interval = int(a.interval_ms * 1_000_000)
     deadline = start
     with a.output.open("w", encoding="utf-8", buffering=1) as out:
-        # GREENQUIC-CLOCK-BRIDGE-V1: this lets report generation map the
-        # cpu_idle tracer's mono_raw timestamps into the MONOTONIC domain used
-        # by request markers, frequency samples and RAPL samples.
+        # GREENQUIC-CLOCK-BRIDGE-V1: map cpu_idle MONOTONIC_RAW into the
+        # MONOTONIC domain used by request, RAPL and per-sample frequency time.
         emit_bridge(out, "start")
         while running:
-            now = time.monotonic_ns()
-            elapsed = (now - start) / 1e9
+            sample_mono_ns = time.monotonic_ns()
+            elapsed = (sample_mono_ns - start) / 1e9
             for cpu in cpus:
                 khz = read_khz(cpu)
                 if khz is not None:
+                    # Absolute MONOTONIC time is mandatory for exact D1..D5 /
+                    # Gap1..Gap4 attribution. elapsed_s is retained for humans
+                    # and backwards-compatible consumers.
                     out.write(json.dumps({
                         "type": "line",
+                        "monotonic_ns": int(sample_mono_ns),
                         "elapsed_s": elapsed,
+                        "cpu": int(cpu),
+                        "freq_khz": int(khz),
                         "line": f"[CPU {cpu}] GreenQUIC RECORD freq_khz={khz}",
                     }, separators=(",", ":")) + "\n")
             deadline += interval
@@ -123,6 +123,7 @@ def main():
             if delay > 0:
                 time.sleep(delay / 1e9)
             else:
+                # Do not burst to "catch up": restart cadence from now.
                 deadline = time.monotonic_ns()
         emit_bridge(out, "end")
     return 0
