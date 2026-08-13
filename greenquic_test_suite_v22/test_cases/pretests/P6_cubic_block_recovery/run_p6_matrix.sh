@@ -4,16 +4,19 @@ set -Eeuo pipefail
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 ROOT="$(cd -- "$HERE/../../../.." && pwd)"
 CLIENT_BIN="$ROOT/msquic/build-greenquic-p6/bin/Release/quicinterop"
+MATRIX_WITH_SHEET="$HERE/run_matrix_with_sheet.sh"
 
-[[ -x "$HERE/run_matrix_from_idex.sh" ]] || { echo "ERROR: missing P6 matrix controller" >&2; exit 2; }
+[[ -x "$MATRIX_WITH_SHEET" ]] || { echo "ERROR: missing P6 matrix/report wrapper: $MATRIX_WITH_SHEET" >&2; exit 2; }
 [[ -x "$CLIENT_BIN" ]] || { echo "ERROR: missing P6 client binary: $CLIENT_BIN; run bash ./build_p6_client.sh first" >&2; exit 2; }
 
 # P6 defaults: Normal GreenQUIC policy, EPOLL, 16 GiB, deterministic sparse
 # server-download loss (exactly one packet/event), plus a P6-only 64-KiB CUBIC
 # window cap. The cap does NOT synthesize a hint; it makes the existing real
 # BytesInFlight >= CongestionWindow condition reachable on the direct cable.
-# Override any setting by appending another --env value.
-exec "$HERE/run_matrix_from_idex.sh" \
+# The matrix/report wrapper defaults to --chart-style both, so each completed
+# P6 matrix also gets the 62-chart report plus phase-scoped, normalized, and
+# derived chart families. Override chart style or any environment below via "$@".
+exec "$MATRIX_WITH_SHEET" \
   --client-host tinyman \
   --client-dir "$HERE" \
   --client-bin "$CLIENT_BIN" \
