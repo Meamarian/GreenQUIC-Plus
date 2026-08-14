@@ -51,12 +51,14 @@ p7_start_recorders client "$RUN_DIR"
 cleanup() {
     local rc=$?
     trap - EXIT INT TERM
+    p7_log "client REP $REP: stopping recorders and building client summary"
     p7_stop_recorders
     p7_capture_net_snapshot client "$RUN_DIR" after
     if [[ -f "$RUN_DIR/client.log" ]]; then
         python3 "$HERE/report_p7_run.py" --role client --run-dir "$RUN_DIR" --payload-bytes "$PAYLOAD_BYTES" --downloads "$DOWNLOADS_PER_RUN" --output "$RUN_DIR/summary.json" || rc=$?
     fi
     touch "$RUN_DIR/client_finished"
+    p7_log "client REP $REP: finalization complete"
     exit "$rc"
 }
 trap cleanup EXIT INT TERM
@@ -81,6 +83,8 @@ set -e
 completed="$(grep -cE '\[GreenQUIC-P5\] request=[0-9]+/[0-9]+ complete_us=.* success=1' "$RUN_DIR/client.log" || true)"
 [[ "$completed" == "$DOWNLOADS_PER_RUN" ]] || p7_die "expected $DOWNLOADS_PER_RUN completed downloads, observed $completed"
 
+p7_log "client REP $REP: all $DOWNLOADS_PER_RUN GETs complete; starting ${P7_POST_COOLDOWN_SECONDS}s post-cooldown"
 python3 "$HERE/p7_mark.py" --output "$RUN_DIR/control_timeline.jsonl" --event post_cool_start --role client --run-id "rep$REP"
 sleep "$P7_POST_COOLDOWN_SECONDS"
 python3 "$HERE/p7_mark.py" --output "$RUN_DIR/control_timeline.jsonl" --event post_cool_end --role client --run-id "rep$REP"
+p7_log "client REP $REP: post-cooldown complete; finalizing"
