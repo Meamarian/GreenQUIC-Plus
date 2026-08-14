@@ -49,14 +49,34 @@ p7_capture_net_snapshot client "$RUN_DIR" before
 p7_start_recorders client "$RUN_DIR"
 
 cleanup() {
-    local rc=$?
+    local rc=$? start_ms elapsed_ms
     trap - EXIT INT TERM
-    p7_log "client REP $REP: stopping recorders and building client summary"
+
+    start_ms="$(date +%s%3N)"
+    p7_log "client REP $REP: stopping C-state/frequency/RAPL recorders"
     p7_stop_recorders
+    elapsed_ms=$(( $(date +%s%3N) - start_ms ))
+    p7_log "client REP $REP: recorders stopped in ${elapsed_ms} ms"
+
+    start_ms="$(date +%s%3N)"
+    p7_log "client REP $REP: capturing final Linux network snapshot"
     p7_capture_net_snapshot client "$RUN_DIR" after
+    elapsed_ms=$(( $(date +%s%3N) - start_ms ))
+    p7_log "client REP $REP: final network snapshot complete in ${elapsed_ms} ms"
+
     if [[ -f "$RUN_DIR/client.log" ]]; then
-        python3 "$HERE/report_p7_run.py" --role client --run-dir "$RUN_DIR" --payload-bytes "$PAYLOAD_BYTES" --downloads "$DOWNLOADS_PER_RUN" --output "$RUN_DIR/summary.json" || rc=$?
+        start_ms="$(date +%s%3N)"
+        p7_log "client REP $REP: starting numeric run analysis (no chart generation)"
+        python3 "$HERE/report_p7_run.py" \
+            --role client \
+            --run-dir "$RUN_DIR" \
+            --payload-bytes "$PAYLOAD_BYTES" \
+            --downloads "$DOWNLOADS_PER_RUN" \
+            --output "$RUN_DIR/summary.json" || rc=$?
+        elapsed_ms=$(( $(date +%s%3N) - start_ms ))
+        p7_log "client REP $REP: numeric run analysis complete in ${elapsed_ms} ms"
     fi
+
     touch "$RUN_DIR/client_finished"
     p7_log "client REP $REP: finalization complete"
     exit "$rc"
