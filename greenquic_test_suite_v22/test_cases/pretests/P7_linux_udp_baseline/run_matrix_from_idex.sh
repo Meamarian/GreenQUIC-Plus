@@ -5,6 +5,7 @@ HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=/dev/null
 source "$HERE/p7_common.sh"
 TUNER="$HERE/p7_network_tuning.sh"
+RDMA_HELPER="$HERE/p7_rdma_aux.sh"
 
 RUNS="$MATRIX_REPETITIONS"
 CLIENT_HOST="tinyman"
@@ -36,6 +37,8 @@ Options:
   --pin-irq 0|1                   pin E810 MSI IRQs to dataplane CPU (default 1)
   --pin-quic 0|1                  taskset + MsQuic ProcessorList (default 1)
   --disable-rps 0|1               disable RPS on test NIC during run (default 1)
+  --disable-rdma 0|1              temporarily unbind only the selected ice NIC's
+                                   irdma auxiliary child; useful before channel tuning
   --nic-offloads native|on|off|paper
                                    NIC/kernel offload profile. "paper" applies the
                                    artifact-style GSO/GRO sequence with required-feature checks
@@ -56,7 +59,8 @@ Options:
   --output-dir PATH               result directory on IDEX
 
 Paper-style network example:
-  --nic-offloads paper --udp-rmem 6815744 --udp-wmem 6815744 \
+  --disable-rdma 1 --nic-offloads paper \
+  --udp-rmem 6815744 --udp-wmem 6815744 \
   --combined-channels 1 --network-diagnostics 1
 
 Defaults remain unchanged unless these tuning switches are supplied.
@@ -76,6 +80,7 @@ while (($#)); do
         --pin-irq) P7_PIN_IRQ="$2"; shift 2 ;;
         --pin-quic) P7_PIN_QUIC="$2"; shift 2 ;;
         --disable-rps) P7_DISABLE_RPS="$2"; shift 2 ;;
+        --disable-rdma) P7_DISABLE_RDMA="$2"; shift 2 ;;
         --nic-offloads)
             case "$2" in
                 paper) P7_NIC_OFFLOAD_REQUESTED="paper"; P7_NIC_OFFLOAD_PROFILE="native"; P7_PAPER_OFFLOADS=1 ;;
@@ -108,6 +113,7 @@ done
 p7_bool "$P7_PIN_IRQ" >/dev/null || p7_die "--pin-irq must be 0|1"
 p7_bool "$P7_PIN_QUIC" >/dev/null || p7_die "--pin-quic must be 0|1"
 p7_bool "$P7_DISABLE_RPS" >/dev/null || p7_die "--disable-rps must be 0|1"
+p7_bool "$P7_DISABLE_RDMA" >/dev/null || p7_die "--disable-rdma must be 0|1"
 p7_bool "$P7_RECORD_QUIC_CPUS" >/dev/null || p7_die "--record-quic-cpus must be 0|1"
 p7_bool "$ENABLE_RECORD" >/dev/null || p7_die "--enable-record must be 0|1"
 p7_bool "$P7_REQUIRE_RAPL" >/dev/null || p7_die "--require-rapl must be 0|1"
@@ -123,12 +129,14 @@ python3 -c 'import sys; assert float(sys.argv[1]) > 0' "$P7_FREQ_INTERVAL_MS" ||
 case "$P7_NIC_OFFLOAD_REQUESTED" in native|on|off|paper) ;; *) p7_die "bad --nic-offloads" ;; esac
 case "$P7_NIC_OFFLOAD_PROFILE" in native|on|off) ;; *) p7_die "internal NIC offload profile error" ;; esac
 [[ -x "$TUNER" ]] || p7_die "P7 network tuning helper missing/not executable: $TUNER"
+[[ -x "$RDMA_HELPER" ]] || p7_die "P7 RDMA helper missing/not executable: $RDMA_HELPER"
 env \
     "P7_UDP_RMEM_BYTES=$P7_UDP_RMEM_BYTES" \
     "P7_UDP_WMEM_BYTES=$P7_UDP_WMEM_BYTES" \
     "P7_COMBINED_CHANNELS=$P7_COMBINED_CHANNELS" \
     "P7_PAPER_OFFLOADS=$P7_PAPER_OFFLOADS" \
     "$TUNER" validate
+env "P7_DISABLE_RDMA=$P7_DISABLE_RDMA" "$RDMA_HELPER" validate
 
 stamp="$(date +%Y%m%d_%H%M%S)"
 OUTPUT_DIR="${OUTPUT_DIR:-$HERE/matrix_results/P7_linux_${stamp}}"
@@ -152,6 +160,7 @@ P7_ENV=(
     "P7_PIN_IRQ=$P7_PIN_IRQ"
     "P7_PIN_QUIC=$P7_PIN_QUIC"
     "P7_DISABLE_RPS=$P7_DISABLE_RPS"
+    "P7_DISABLE_RDMA=$P7_DISABLE_RDMA"
     "P7_NIC_OFFLOAD_PROFILE=$P7_NIC_OFFLOAD_PROFILE"
     "P7_PAPER_OFFLOADS=$P7_PAPER_OFFLOADS"
     "P7_UDP_RMEM_BYTES=$P7_UDP_RMEM_BYTES"
@@ -178,6 +187,8 @@ remote_env(){
 
 p7_restore_tuning_local(){ env "${P7_ENV[@]}" "$TUNER" restore server "$LOCAL_STATE"; }
 p7_restore_tuning_remote(){ remote_env "'$CLIENT_DIR/p7_network_tuning.sh' restore client '$REMOTE_STATE'"; }
+p7_restore_rdma_local(){ env "${P7_ENV[@]}" "$RDMA_HELPER" restore server "$LOCAL_STATE"; }
+p7_restore_rdma_remote(){ remote_env "'$CLIENT_DIR/p7_rdma_aux.sh' restore client '$REMOTE_STATE'"; }
 
 server_pid=""
 client_ssh_pid=""
@@ -188,6 +199,8 @@ cleanup() {
     if [[ -n "${server_pid:-}" ]] && kill -0 "$server_pid" 2>/dev/null; then kill -TERM "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; fi
     p7_restore_tuning_local 2>/dev/null || true
     p7_restore_tuning_remote 2>/dev/null || true
+    p7_restore_rdma_local 2>/dev/null || true
+    p7_restore_rdma_remote 2>/dev/null || true
     env "${P7_ENV[@]}" bash -c 'source "$1/p7_common.sh"; p7_restore_host server "$2"' _ "$HERE" "$LOCAL_STATE" 2>/dev/null || true
     remote_env "bash -c 'source \"$CLIENT_DIR/p7_common.sh\"; p7_restore_host client \"$REMOTE_STATE\"'" 2>/dev/null || true
     exit "$rc"
@@ -197,10 +210,18 @@ trap cleanup EXIT INT TERM
 env "${P7_ENV[@]}" bash -c 'source "$1/p7_common.sh"; p7_validate_common; p7_check_host_role server' _ "$HERE"
 remote_env "bash -c 'source \"$CLIENT_DIR/p7_common.sh\"; p7_validate_common; p7_check_host_role client'"
 remote "test -x '$CLIENT_DIR/p7_network_tuning.sh'" || p7_die "Tinyman network tuning helper missing/not executable: $CLIENT_DIR/p7_network_tuning.sh"
+remote "test -x '$CLIENT_DIR/p7_rdma_aux.sh'" || p7_die "Tinyman RDMA helper missing/not executable: $CLIENT_DIR/p7_rdma_aux.sh"
 remote_env "'$CLIENT_DIR/p7_network_tuning.sh' validate"
+remote_env "'$CLIENT_DIR/p7_rdma_aux.sh' validate"
 
 env "${P7_ENV[@]}" bash -c 'source "$1/p7_common.sh"; p7_prepare_host server "$2"' _ "$HERE" "$LOCAL_STATE"
 remote_env "mkdir -p '$REMOTE_STATE'; bash -c 'source \"$CLIENT_DIR/p7_common.sh\"; p7_prepare_host client \"$REMOTE_STATE\"'"
+
+# The ice driver rejects ethtool channel changes while its irdma auxiliary
+# child is bound. If requested, unbind only the RDMA child for the selected
+# test NIC; do not unload the global irdma module or disturb other ports.
+env "${P7_ENV[@]}" "$RDMA_HELPER" prepare server "$LOCAL_STATE"
+remote_env "'$CLIENT_DIR/p7_rdma_aux.sh' prepare client '$REMOTE_STATE'"
 
 env "${P7_ENV[@]}" "$TUNER" prepare server "$LOCAL_STATE"
 remote_env "'$CLIENT_DIR/p7_network_tuning.sh' prepare client '$REMOTE_STATE'"
@@ -230,6 +251,7 @@ quic_cpus=$P7_QUIC_CPUS
 pin_irq=$P7_PIN_IRQ
 pin_quic=$P7_PIN_QUIC
 disable_rps=$P7_DISABLE_RPS
+disable_rdma=$P7_DISABLE_RDMA
 nic_offloads=$P7_NIC_OFFLOAD_REQUESTED
 udp_rmem_bytes=$P7_UDP_RMEM_BYTES
 udp_wmem_bytes=$P7_UDP_WMEM_BYTES
@@ -321,8 +343,13 @@ python3 "$HERE/aggregate_p7_matrix.py" --matrix-dir "$OUTPUT_DIR" --runs "$RUNS"
 python3 "$HERE/p7_print_summary.py" --matrix-dir "$OUTPUT_DIR" --matrix
 p7_log "numeric aggregation complete; restoring DPDK drivers before report/chart stage"
 
+# Restore channels/socket buffers while RDMA is still unbound, then rebind the
+# original RDMA auxiliary child, then let p7_common restore IRQ/RPS/offloads
+# and finally return the PCI device to vfio-pci.
 p7_restore_tuning_local
 p7_restore_tuning_remote
+p7_restore_rdma_local
+p7_restore_rdma_remote
 env "${P7_ENV[@]}" bash -c 'source "$1/p7_common.sh"; p7_restore_host server "$2"' _ "$HERE" "$LOCAL_STATE"
 remote_env "bash -c 'source \"$CLIENT_DIR/p7_common.sh\"; p7_restore_host client \"$REMOTE_STATE\"'"
 trap - EXIT INT TERM
