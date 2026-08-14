@@ -25,7 +25,7 @@ Options:
   --pin-irq 0|1                   pin E810 MSI IRQs to dataplane CPU (default 1)
   --pin-quic 0|1                  taskset + MsQuic ProcessorList (default 1)
   --disable-rps 0|1               disable RPS on test NIC during run (default 1)
-  --nic-offloads native|on|off    NIC/kernel offload sensitivity (default native)
+  --nic-offloads native|on|off    NIC/kernel offload profile (default on: goodput-oriented)
   --record-quic-cpus 0|1          additionally trace QUIC CPU frequency/C-states (default 0)
   --enable-record 0|1             enable RAPL/frequency/C-state recording (default 1)
   --rapl-interval-ms MS           package+DRAM RAPL cadence (default 6)
@@ -38,9 +38,9 @@ Options:
   --client-dir PATH               P7 path on client
   --output-dir PATH               result directory on IDEX
 
-Primary paper baseline:
-  --pin-irq 1 --dataplane-cpu 19 --pin-quic 1 --quic-cpus 21,22,23,24 \
-  --nic-offloads native
+Default goodput/high-performance profile:
+  max_throughput MsQuic + IRQ CPU19 + QUIC CPUs21-24 + IRQ/QUIC pinning +
+  RPS disabled + irqbalance stopped + NIC offloads requested ON.
 EOF
 }
 
