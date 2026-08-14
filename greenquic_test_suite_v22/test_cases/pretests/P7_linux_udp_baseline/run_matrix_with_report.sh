@@ -24,10 +24,9 @@ P7-only wrapper options:
   --log-level 0|1              1 also prints stored request/UDP-feature diagnostics
 
 All normal P7 matrix options are accepted and forwarded. The wrapper forces
---restore-dpdk 1 and restores the exact DPDK driver that was present before P7.
-If a previous interrupted P7 left one test NIC on the Linux ice driver, startup
-quiesces that test interface and repairs it using the peer's DPDK driver before
-starting the new run.
+--restore-dpdk 1 and restores the exact P5-ready DPDK state established before
+P7. Interrupted P7 runs may leave a test NIC on ice or temporarily unbound;
+startup repairs those states before beginning a new Linux run.
 USAGE
     echo
     "$BASE" --help
@@ -71,8 +70,20 @@ PCI="0000:18:00.0"
 DEVBIND="/root/mohsen/msquic/deps/dpdk/usertools/dpdk-devbind.py"
 P7_RECOVERY_DPDK_DRIVER="${P7_RECOVERY_DPDK_DRIVER:-vfio-pci}"
 remote(){ ssh -o BatchMode=yes -o ConnectTimeout=20 root@"$CLIENT_HOST" "$@"; }
-driver_local(){ basename "$(readlink -f "/sys/bus/pci/devices/$PCI/driver" 2>/dev/null || true)"; }
-driver_remote(){ remote "basename \"\$(readlink -f '/sys/bus/pci/devices/$PCI/driver' 2>/dev/null || true)\""; }
+
+driver_local() {
+    local link="/sys/bus/pci/devices/$PCI/driver" target
+    if [[ ! -L "$link" ]]; then
+        printf 'none\n'
+        return 0
+    fi
+    target="$(readlink "$link" 2>/dev/null || true)"
+    if [[ -n "$target" ]]; then basename "$target"; else printf 'none\n'; fi
+}
+
+driver_remote() {
+    remote "link='/sys/bus/pci/devices/$PCI/driver'; if [[ -L \"\$link\" ]]; then target=\$(readlink \"\$link\" 2>/dev/null || true); if [[ -n \"\$target\" ]]; then basename \"\$target\"; else echo none; fi; else echo none; fi"
+}
 
 quiesce_linux_iface_local() {
     local iface
@@ -99,12 +110,11 @@ bind_driver_local() {
         igb_uio) modprobe uio 2>/dev/null || true; modprobe igb_uio 2>/dev/null || true ;;
         *) echo "ERROR: unsupported saved driver '$target'" >&2; return 1 ;;
     esac
-    if [[ "$current" == ice ]]; then
-        quiesce_linux_iface_local
-    fi
+    [[ "$current" == ice ]] && quiesce_linux_iface_local
     python3 "$DEVBIND" -b "$target" "$PCI"
-    [[ "$(driver_local)" == "$target" ]] || {
-        echo "ERROR: IDEX bind to $target failed; current=$(driver_local)" >&2
+    current="$(driver_local)"
+    [[ "$current" == "$target" ]] || {
+        echo "ERROR: IDEX bind to $target failed; current=$current" >&2
         return 1
     }
 }
@@ -117,36 +127,34 @@ bind_driver_remote() {
         vfio-pci|igb_uio) ;;
         *) echo "ERROR: unsupported recovery driver '$target'" >&2; return 1 ;;
     esac
-    if [[ "$current" == ice ]]; then
-        quiesce_linux_iface_remote
-    fi
-    remote "set -e; PCI='$PCI'; DEVBIND='$DEVBIND'; target='$target'; case \"\$target\" in vfio-pci) modprobe vfio-pci;; igb_uio) modprobe uio 2>/dev/null || true; modprobe igb_uio 2>/dev/null || true;; esac; python3 \"\$DEVBIND\" -b \"\$target\" \"\$PCI\"; current=\$(basename \"\$(readlink -f /sys/bus/pci/devices/\$PCI/driver 2>/dev/null || true)\"); [[ \"\$current\" == \"\$target\" ]] || { echo \"ERROR: Tinyman bind to \$target failed; current=\$current\" >&2; exit 1; }"
+    [[ "$current" == ice ]] && quiesce_linux_iface_remote
+    remote "set -e; PCI='$PCI'; DEVBIND='$DEVBIND'; target='$target'; case \"\$target\" in vfio-pci) modprobe vfio-pci;; igb_uio) modprobe uio 2>/dev/null || true; modprobe igb_uio 2>/dev/null || true;; esac; python3 \"\$DEVBIND\" -b \"\$target\" \"\$PCI\"; link=/sys/bus/pci/devices/\$PCI/driver; [[ -L \"\$link\" ]] || { echo \"ERROR: Tinyman bind to \$target left NIC unbound\" >&2; exit 1; }; current=\$(basename \"\$(readlink \"\$link\")\"); [[ \"\$current\" == \"\$target\" ]] || { echo \"ERROR: Tinyman bind to \$target failed; current=\$current\" >&2; exit 1; }"
 }
 
 INITIAL_SERVER="$(driver_local)"
 INITIAL_CLIENT="$(driver_remote)"
-case "$INITIAL_SERVER" in vfio-pci|igb_uio|ice) ;; *) echo "ERROR: unsupported initial IDEX test-NIC driver '$INITIAL_SERVER'" >&2; exit 2 ;; esac
-case "$INITIAL_CLIENT" in vfio-pci|igb_uio|ice) ;; *) echo "ERROR: unsupported initial Tinyman test-NIC driver '$INITIAL_CLIENT'" >&2; exit 2 ;; esac
+case "$INITIAL_SERVER" in vfio-pci|igb_uio|ice|none) ;; *) echo "ERROR: unsupported initial IDEX test-NIC driver '$INITIAL_SERVER'" >&2; exit 2 ;; esac
+case "$INITIAL_CLIENT" in vfio-pci|igb_uio|ice|none) ;; *) echo "ERROR: unsupported initial Tinyman test-NIC driver '$INITIAL_CLIENT'" >&2; exit 2 ;; esac
+case "$P7_RECOVERY_DPDK_DRIVER" in vfio-pci|igb_uio) ;; *) echo "ERROR: P7_RECOVERY_DPDK_DRIVER must be vfio-pci or igb_uio" >&2; exit 2 ;; esac
 
 stage "startup driver state: IDEX=$INITIAL_SERVER Tinyman=$INITIAL_CLIENT"
-if [[ "$INITIAL_SERVER" == ice && "$INITIAL_CLIENT" == ice ]]; then
-    case "$P7_RECOVERY_DPDK_DRIVER" in vfio-pci|igb_uio) ;; *) echo "ERROR: P7_RECOVERY_DPDK_DRIVER must be vfio-pci or igb_uio" >&2; exit 2 ;; esac
-    stage "both NICs are stale on ice; recovering both to $P7_RECOVERY_DPDK_DRIVER before P7"
-    bind_driver_local "$P7_RECOVERY_DPDK_DRIVER"
-    bind_driver_remote "$P7_RECOVERY_DPDK_DRIVER"
-elif [[ "$INITIAL_SERVER" == ice ]]; then
-    case "$INITIAL_CLIENT" in vfio-pci|igb_uio)
-        stage "IDEX is stale on ice; recovering IDEX to Tinyman DPDK driver $INITIAL_CLIENT"
-        bind_driver_local "$INITIAL_CLIENT"
-        ;;
-    esac
-elif [[ "$INITIAL_CLIENT" == ice ]]; then
-    case "$INITIAL_SERVER" in vfio-pci|igb_uio)
-        stage "Tinyman is stale on ice; recovering Tinyman to IDEX DPDK driver $INITIAL_SERVER"
-        bind_driver_remote "$INITIAL_SERVER"
-        ;;
-    esac
+
+# Recover only stale/non-DPDK states. If one peer is already P5-ready, use its
+# DPDK driver; otherwise use the configured recovery default (vfio-pci).
+RECOVERY_TARGET="$P7_RECOVERY_DPDK_DRIVER"
+case "$INITIAL_SERVER" in vfio-pci|igb_uio) RECOVERY_TARGET="$INITIAL_SERVER" ;; esac
+if [[ "$INITIAL_SERVER" != vfio-pci && "$INITIAL_SERVER" != igb_uio ]]; then
+    case "$INITIAL_CLIENT" in vfio-pci|igb_uio) RECOVERY_TARGET="$INITIAL_CLIENT" ;; esac
 fi
+
+case "$INITIAL_SERVER" in
+    ice)  stage "IDEX is stale on ice; recovering IDEX to $RECOVERY_TARGET"; bind_driver_local "$RECOVERY_TARGET" ;;
+    none) stage "IDEX test NIC is unbound; recovering IDEX to $RECOVERY_TARGET"; bind_driver_local "$RECOVERY_TARGET" ;;
+esac
+case "$INITIAL_CLIENT" in
+    ice)  stage "Tinyman is stale on ice; recovering Tinyman to $RECOVERY_TARGET"; bind_driver_remote "$RECOVERY_TARGET" ;;
+    none) stage "Tinyman test NIC is unbound; recovering Tinyman to $RECOVERY_TARGET"; bind_driver_remote "$RECOVERY_TARGET" ;;
+esac
 
 ORIG_SERVER="$(driver_local)"
 ORIG_CLIENT="$(driver_remote)"
