@@ -40,20 +40,41 @@ TEE_PID=$!
 APP_PID=""
 
 cleanup() {
-    local rc=$?
+    local rc=$? start_ms elapsed_ms
     trap - EXIT INT TERM
     if [[ -n "${APP_PID:-}" ]] && kill -0 "$APP_PID" 2>/dev/null; then
         kill -INT -- "-$APP_PID" 2>/dev/null || kill -INT "$APP_PID" 2>/dev/null || true
     fi
     [[ -n "${APP_PID:-}" ]] && wait "$APP_PID" 2>/dev/null || true
     [[ -n "${TEE_PID:-}" ]] && wait "$TEE_PID" 2>/dev/null || true
+
+    start_ms="$(date +%s%3N)"
+    p7_log "server REP $REP: stopping C-state/frequency/RAPL recorders"
     p7_stop_recorders
+    elapsed_ms=$(( $(date +%s%3N) - start_ms ))
+    p7_log "server REP $REP: recorders stopped in ${elapsed_ms} ms"
+
+    start_ms="$(date +%s%3N)"
+    p7_log "server REP $REP: capturing final Linux network snapshot"
     p7_capture_net_snapshot server "$RUN_DIR" after
+    elapsed_ms=$(( $(date +%s%3N) - start_ms ))
+    p7_log "server REP $REP: final network snapshot complete in ${elapsed_ms} ms"
+
     rm -f "$FIFO"
     if [[ -f "$RUN_DIR/server.log" ]]; then
-        python3 "$HERE/report_p7_run.py" --role server --run-dir "$RUN_DIR" --payload-bytes "$PAYLOAD_BYTES" --downloads "$DOWNLOADS_PER_RUN" --output "$RUN_DIR/summary.json" || rc=$?
+        start_ms="$(date +%s%3N)"
+        p7_log "server REP $REP: starting numeric run analysis (no chart generation)"
+        python3 "$HERE/report_p7_run.py" \
+            --role server \
+            --run-dir "$RUN_DIR" \
+            --payload-bytes "$PAYLOAD_BYTES" \
+            --downloads "$DOWNLOADS_PER_RUN" \
+            --output "$RUN_DIR/summary.json" || rc=$?
+        elapsed_ms=$(( $(date +%s%3N) - start_ms ))
+        p7_log "server REP $REP: numeric run analysis complete in ${elapsed_ms} ms"
     fi
     touch "$RUN_DIR/server_finished"
+    p7_log "server REP $REP: finalization complete"
     exit "$rc"
 }
 trap cleanup EXIT INT TERM
