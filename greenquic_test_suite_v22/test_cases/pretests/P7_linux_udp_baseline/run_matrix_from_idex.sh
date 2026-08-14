@@ -215,7 +215,8 @@ remote_env "'$CLIENT_DIR/p7_network_tuning.sh' validate"
 remote_env "'$CLIENT_DIR/p7_rdma_aux.sh' validate"
 
 env "${P7_ENV[@]}" bash -c 'source "$1/p7_common.sh"; p7_prepare_host server "$2"' _ "$HERE" "$LOCAL_STATE"
-remote_env "mkdir -p '$REMOTE_STATE'; bash -c 'source \"$CLIENT_DIR/p7_common.sh\"; p7_prepare_host client \"$REMOTE_STATE\"'"
+remote "mkdir -p '$REMOTE_STATE'"
+remote_env "bash -c 'source \"$CLIENT_DIR/p7_common.sh\"; p7_prepare_host client \"$REMOTE_STATE\"'"
 
 # The ice driver rejects ethtool channel changes while its irdma auxiliary
 # child is bound. If requested, unbind only the RDMA child for the selected
