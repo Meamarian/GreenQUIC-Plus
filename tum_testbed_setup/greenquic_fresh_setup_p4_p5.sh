@@ -92,6 +92,8 @@ grep -aFq -- 'epoll_rx_fd_drain=' "$P5_CLIENT"
 grep -aFq -- 'epoll_rx_fd_drain_error=' "$P5_CLIENT"
 grep -aFq -- 'hint_cubic_ramping=' "$P5_SERVER"
 [[ -f "$PLOTTER" ]]
+[[ -x "$P5/run_matrix_with_sheet.sh" ]]
+[[ -f "$P5/build_sheet_rules_all_aligned.py" ]]
 grep -Fq -- 'GREENQUIC-SINGLE-RUN-CHARTS-V2' "$PLOTTER"
 grep -Fq -- 'GREENQUIC-SINGLE-RUN-CHARTS-HOOK-V1' "$P5/p5_finalize_matrix.py"
 python3 -c 'import matplotlib'
@@ -126,7 +128,7 @@ cat > /root/run_p5.sh <<'EOF'
 set -Eeuo pipefail
 P5="/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads"
 cd "$P5"
-exec ./run_matrix_from_idex.sh \
+exec ./run_matrix_with_sheet.sh \
     --client-host tinyman \
     --client-dir "$P5" \
     --client-bin /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop \
@@ -154,5 +156,5 @@ printf 'P5 DPDK packet totals for OFF/BASIC/PLUS: PASS\n'
 printf 'Single-run 22-chart set with values: PASS\n'
 printf 'Single-run 22-chart set without values: PASS\n'
 printf 'P4 launcher: /root/run_p4.sh\n'
-printf 'P5 launcher: /root/run_p5.sh\n'
+printf 'P5 launcher: /root/run_p5.sh (matrix + sheet/chart report wrapper)\n'
 printf '################################################################\n'

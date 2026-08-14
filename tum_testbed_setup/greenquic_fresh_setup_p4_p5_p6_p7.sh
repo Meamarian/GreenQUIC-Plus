@@ -29,11 +29,19 @@ BUILD="$ROOT/msquic/build-linux-p7"
 SOURCE="$ROOT/msquic-p7-linux-source"
 CLIENT="$BUILD/bin/Release/quicinterop"
 SERVER="$BUILD/bin/Release/quicinteropserver"
+P5_BUILD="$ROOT/msquic/build-greenquic-p5"
+P5_CLIENT="$P5_BUILD/bin/Release/quicinterop"
+P5_SERVER="$P5_BUILD/bin/Release/quicinteropserver"
+P5_CLIENT_SHA_BEFORE="$(sha256sum "$P5_CLIENT" | awk '{print $1}')"
+P5_SERVER_SHA_BEFORE="$(sha256sum "$P5_SERVER" | awk '{print $1}')"
 cd "$ROOT"
 [[ -d "$P7" ]] || { echo "ERROR: P7 directory missing: $P7" >&2; exit 2; }
 chmod 0755 "$P7"/*.sh "$P7"/*.py
 for f in "$P7"/*.sh; do bash -n "$f"; done
 python3 -m py_compile "$P7"/*.py
+python3 -c 'import matplotlib, numpy'
+python3 "$P7/build_p7_report.py" --self-test
+[[ "$SOURCE" != "$ROOT/msquic-p5-source" && "$BUILD" != "$P5_BUILD" ]]
 "$P7/build_p7_linux.sh"
 [[ -d "$SOURCE" && -x "$CLIENT" && -x "$SERVER" ]]
 grep -Fq -- 'GREENQUIC-P7-LINUX-UDP-FEATURE-OBSERVE-V1' "$SOURCE/src/platform/datapath_epoll.c"
@@ -43,6 +51,10 @@ grep -Fq -- 'GREENQUIC-P7-SERVER-TIMELINE-V1' "$SOURCE/src/tools/interopserver/I
 grep -aFq -- 'GreenQUIC-P5-SEQUENCE-V2' "$CLIENT"
 grep -aFq -- 'linux_udp_features' "$CLIENT"
 grep -aFq -- 'GreenQUIC-P7' "$SERVER"
+[[ -x "$P7/run_matrix_with_report.sh" && -x "$P7/build_p7_report.py" ]]
+[[ "$(sha256sum "$P5_CLIENT" | awk '{print $1}')" == "$P5_CLIENT_SHA_BEFORE" ]]
+[[ "$(sha256sum "$P5_SERVER" | awk '{print $1}')" == "$P5_SERVER_SHA_BEFORE" ]]
+echo "P5 binary isolation after P7 build: PASS"
 if ldd "$CLIENT" 2>/dev/null | grep -qi dpdk || ldd "$SERVER" 2>/dev/null | grep -qi dpdk; then
     echo "ERROR: P7 Linux binaries unexpectedly link DPDK" >&2
     exit 3
@@ -66,7 +78,7 @@ cat > /root/run_p7.sh <<'EOF'
 set -Eeuo pipefail
 P7=/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline
 cd "$P7"
-exec ./run_matrix_from_idex.sh \
+exec ./run_matrix_with_report.sh \
     --client-host tinyman \
     --client-dir /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline \
     "$@"
@@ -78,6 +90,6 @@ P7LAUNCH
 
 printf '\n################################################################\n'
 printf '### GREENQUIC TUM TESTBED: NORMAL + P4 + P5 + P6 + P7 READY\n'
-printf '### P7 Linux launcher on idex: /root/run_p7.sh\n'
-printf '### P7 changes NICs to ice only while P7 runs, then restores vfio-pci.\n'
+printf '### P7 Linux launcher on idex: /root/run_p7.sh (isolated + report wrapper)\n'
+printf '### P7 changes NICs to ice only while P7 runs, then restores the exact pre-P7 DPDK driver.\n'
 printf '################################################################\n'
