@@ -17,9 +17,10 @@ P7_CERT="$SUITE_ROOT/common/certs/server.crt"
 P7_KEY="$SUITE_ROOT/common/certs/server.key"
 P7_DEVBIND="$REPO_ROOT/msquic/deps/dpdk/usertools/dpdk-devbind.py"
 
-p7_log(){ printf '\n[P7-Linux] %s\n' "$*" >&2; }
-p7_warn(){ printf '\n[P7-Linux:WARN] %s\n' "$*" >&2; }
-p7_die(){ printf '\n[P7-Linux:ERROR] %s\n' "$*" >&2; exit 2; }
+p7_now(){ date '+%Y-%m-%dT%H:%M:%S.%3N%z'; }
+p7_log(){ printf '\n[%s][P7-Linux] %s\n' "$(p7_now)" "$*" >&2; }
+p7_warn(){ printf '\n[%s][P7-Linux:WARN] %s\n' "$(p7_now)" "$*" >&2; }
+p7_die(){ printf '\n[%s][P7-Linux:ERROR] %s\n' "$(p7_now)" "$*" >&2; exit 2; }
 
 p7_bool() {
     case "${1,,}" in
