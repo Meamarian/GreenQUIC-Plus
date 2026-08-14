@@ -7,10 +7,9 @@ set -Eeuo pipefail
 # The complete wrapper deliberately calls the preserved P4/P5/P6 setup, which in
 # turn executes the preserved base implementation for SSH/link/DPDK/P0/P4.
 #
-# The base script historically used `lsmod | grep -q '^msr '` under pipefail.
-# On some fresh Debian runs that can terminate the remote setup without a useful
-# diagnostic. Run the setup from a temporary copy where only that exact MSR
-# readiness block is hardened. The checked-out repository itself stays clean.
+# The preserved base script contains one legacy MSR readiness pipeline that can
+# fail under `set -o pipefail` even when the msr module is present. Run from a
+# temporary copy and harden only that exact block before dispatch.
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BASE="$HERE/greenquic_fresh_setup_base.sh"
@@ -47,34 +46,41 @@ import sys
 
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
-old = """lsmod | grep -q '^msr '
-test -e /dev/cpu/19/msr
-rdmsr -p 19 0xCE >/dev/null
-echo \"MSR CPU19: PASS\""" 
-new = """echo \"Checking MSR readiness on CPU19...\"
-modprobe msr || {
-    echo \"ERROR: modprobe msr failed on $(hostname)\" >&2
-    exit 1
-}
-grep -q '^msr ' /proc/modules || {
-    echo \"ERROR: msr module is not loaded on $(hostname)\" >&2
-    exit 1
-}
-[[ -e /dev/cpu/19/msr ]] || {
-    echo \"ERROR: /dev/cpu/19/msr is missing on $(hostname)\" >&2
-    exit 1
-}
-rdmsr -p 19 0xCE >/dev/null || {
-    echo \"ERROR: rdmsr failed for CPU19 MSR 0xCE on $(hostname)\" >&2
-    exit 1
-}
-echo \"MSR CPU19: PASS\"""
+
+old = "\n".join([
+    "lsmod | grep -q '^msr '",
+    "test -e /dev/cpu/19/msr",
+    "rdmsr -p 19 0xCE >/dev/null",
+    'echo "MSR CPU19: PASS"',
+])
+
+new = "\n".join([
+    'echo "Checking MSR readiness on CPU19..."',
+    'modprobe msr || {',
+    '    echo "ERROR: modprobe msr failed on $(hostname)" >&2',
+    '    exit 1',
+    '}',
+    "grep -q '^msr ' /proc/modules || {",
+    '    echo "ERROR: msr module is not loaded on $(hostname)" >&2',
+    '    exit 1',
+    '}',
+    '[[ -e /dev/cpu/19/msr ]] || {',
+    '    echo "ERROR: /dev/cpu/19/msr is missing on $(hostname)" >&2',
+    '    exit 1',
+    '}',
+    'rdmsr -p 19 0xCE >/dev/null || {',
+    '    echo "ERROR: rdmsr failed for CPU19 MSR 0xCE on $(hostname)" >&2',
+    '    exit 1',
+    '}',
+    'echo "MSR CPU19: PASS"',
+])
 
 count = text.count(old)
 if count != 1:
     raise SystemExit(
         f"ERROR: expected exactly one legacy MSR readiness block, found {count}"
     )
+
 path.write_text(text.replace(old, new, 1), encoding="utf-8")
 PY
 
