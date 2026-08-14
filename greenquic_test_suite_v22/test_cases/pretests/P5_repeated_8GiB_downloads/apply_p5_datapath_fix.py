@@ -45,7 +45,7 @@ if IDLE_MARKER not in text:
         "monitor_try=%" PRIu64 " monitor_wake=%" PRIu64
         " monitor_timeout=%" PRIu64 " "
         "epoll_try=%" PRIu64 " epoll_wake=%" PRIu64
-        " epoll_timeout=%" PRIu64 " wake_signal=%" PRIu64 "\n",
+        " epoll_timeout=%" PRIu64 " wake_signal=%" PRIu64 "\\n",
         Core,
         GreenQuicIdleModeToString(Dpdk->GreenQuicIdleMode),
         S->MonitorAttempts,
@@ -144,7 +144,7 @@ if PACKET_MARKER not in text:
      */
     printf(
         "[CPU %u] GreenQUIC PACKETS source=datapath_totals "
-        "rx_pkts=%" PRIu64 " tx_pkts=%" PRIu64 "\n",
+        "rx_pkts=%" PRIu64 " tx_pkts=%" PRIu64 "\\n",
         Dpdk->Cpu,
         Dpdk->RxCounter,
         Dpdk->TxCounter);
@@ -153,6 +153,19 @@ if PACKET_MARKER not in text:
     char stats_path[1048];""",
         "P5 process-end datapath packet totals",
     )
+
+# Guard against accidentally turning the C escape sequence "\\n" into a real
+# line break inside a generated string literal.
+required_c_strings = (
+    r'" epoll_timeout=%" PRIu64 " wake_signal=%" PRIu64 "\n",',
+    r'"rx_pkts=%" PRIu64 " tx_pkts=%" PRIu64 "\n",',
+)
+for expected in required_c_strings:
+    if expected not in text:
+        raise SystemExit(
+            "ERROR: generated C telemetry string lost its escaped newline: "
+            + expected
+        )
 
 path.write_text(text, encoding="utf-8")
 print(
