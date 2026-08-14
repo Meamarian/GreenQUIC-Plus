@@ -15,7 +15,7 @@ remote(){ local host="$1"; shift; ssh "${SSH_OPTS[@]}" -J "$BASTION" root@"$host
 bash "$BASE" "$@"
 
 printf '\n################################################################\n'
-printf '### PHASE 4 — BUILD + VERIFY ISOLATED P6 ON BOTH NODES\n'
+printf '### PHASE 4 — P6 BUILD TEMPORARILY SKIPPED\n'
 printf '################################################################\n\n'
 
 build_p6(){
@@ -42,13 +42,21 @@ echo "P6 BUILD+VERIFY PASS on $(hostname)"
 P6BUILD
 }
 
-build_p6 idex
-build_p6 tinyman
+# TEMPORARY P6 SKIP (2026-08-14):
+# Keep the complete P6 build/verification function above intact for later use,
+# but do not invoke it during the fresh TUM setup right now. This lets the
+# outer P4+P5+P6+P7 wrapper continue directly to the P7 Linux build after P5.
+# To re-enable P6 later, uncomment these two lines only:
+# build_p6 idex
+# build_p6 tinyman
+printf 'P6 build/verification: TEMPORARILY SKIPPED; continuing to P7.\n'
 
 IDEX_SHA="$(remote idex 'git -C /root/mohsen rev-parse HEAD')"
 TINYMAN_SHA="$(remote tinyman 'git -C /root/mohsen rev-parse HEAD')"
 [[ "$IDEX_SHA" == "$TINYMAN_SHA" ]] || fail "IDEX/Tinyman commits differ: $IDEX_SHA vs $TINYMAN_SHA"
 
+# Keep the P6 launcher code in place. It is installed for convenience, but the
+# P6 binary is intentionally not built by this temporary setup path.
 remote idex bash -s <<'P6LAUNCH'
 set -Eeuo pipefail
 cat > /root/run_p6.sh <<'EOF'
@@ -60,10 +68,11 @@ exec ./run_p6_matrix.sh "$@"
 EOF
 chmod 700 /root/run_p6.sh
 /root/run_p6.sh --help >/dev/null 2>&1 || true
-echo "/root/run_p6.sh installed"
+echo "/root/run_p6.sh installed (P6 build currently skipped)"
 P6LAUNCH
 
 printf '\n################################################################\n'
-printf '### GREENQUIC TUM TESTBED: NORMAL + P4 + P5 + P6 READY\n'
-printf '### P6 launcher on idex: /root/run_p6.sh\n'
+printf '### GREENQUIC TUM TESTBED: NORMAL + P4 + P5 READY\n'
+printf '### P6 build: TEMPORARILY SKIPPED (code retained/commented calls only)\n'
+printf '### Continuing to P7 in the outer setup wrapper.\n'
 printf '################################################################\n'
