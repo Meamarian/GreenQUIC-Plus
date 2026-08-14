@@ -26,7 +26,8 @@ P7-only wrapper options:
 All normal P7 matrix options are accepted and forwarded. The wrapper forces
 --restore-dpdk 1 and restores the exact DPDK driver that was present before P7.
 If a previous interrupted P7 left one test NIC on the Linux ice driver, startup
-repairs that stale state using the peer's DPDK driver before starting the run.
+quiesces that test interface and repairs it using the peer's DPDK driver before
+starting the new run.
 USAGE
     echo
     "$BASE" --help
@@ -73,20 +74,53 @@ remote(){ ssh -o BatchMode=yes -o ConnectTimeout=20 root@"$CLIENT_HOST" "$@"; }
 driver_local(){ basename "$(readlink -f "/sys/bus/pci/devices/$PCI/driver" 2>/dev/null || true)"; }
 driver_remote(){ remote "basename \"\$(readlink -f '/sys/bus/pci/devices/$PCI/driver' 2>/dev/null || true)\""; }
 
+quiesce_linux_iface_local() {
+    local iface
+    iface="$(find "/sys/bus/pci/devices/$PCI/net" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | head -n1 || true)"
+    [[ -n "$iface" ]] || return 0
+    stage "quiescing stale IDEX Linux test interface $iface before DPDK bind"
+    ip addr flush dev "$iface" 2>/dev/null || true
+    ip -6 addr flush dev "$iface" 2>/dev/null || true
+    ip route flush dev "$iface" 2>/dev/null || true
+    ip -6 route flush dev "$iface" 2>/dev/null || true
+    ip link set dev "$iface" down 2>/dev/null || true
+}
+
+quiesce_linux_iface_remote() {
+    remote "set -e; PCI='$PCI'; iface=\$(find /sys/bus/pci/devices/\$PCI/net -mindepth 1 -maxdepth 1 -printf '%f\\n' 2>/dev/null | head -n1 || true); if [[ -n \"\$iface\" ]]; then echo \"[P7-recovery] quiescing stale Tinyman Linux test interface \$iface before DPDK bind\"; ip addr flush dev \"\$iface\" 2>/dev/null || true; ip -6 addr flush dev \"\$iface\" 2>/dev/null || true; ip route flush dev \"\$iface\" 2>/dev/null || true; ip -6 route flush dev \"\$iface\" 2>/dev/null || true; ip link set dev \"\$iface\" down 2>/dev/null || true; fi"
+}
+
 bind_driver_local() {
-    local target="$1" current="$(driver_local)"
+    local target="$1" current
+    current="$(driver_local)"
     [[ "$current" == "$target" ]] && return 0
     case "$target" in
         vfio-pci) modprobe vfio-pci ;;
         igb_uio) modprobe uio 2>/dev/null || true; modprobe igb_uio 2>/dev/null || true ;;
         *) echo "ERROR: unsupported saved driver '$target'" >&2; return 1 ;;
     esac
+    if [[ "$current" == ice ]]; then
+        quiesce_linux_iface_local
+    fi
     python3 "$DEVBIND" -b "$target" "$PCI"
-    [[ "$(driver_local)" == "$target" ]]
+    [[ "$(driver_local)" == "$target" ]] || {
+        echo "ERROR: IDEX bind to $target failed; current=$(driver_local)" >&2
+        return 1
+    }
 }
+
 bind_driver_remote() {
-    local target="$1"
-    remote "set -e; PCI='$PCI'; DEVBIND='$DEVBIND'; current=\$(basename \"\$(readlink -f /sys/bus/pci/devices/\$PCI/driver 2>/dev/null || true)\"); if [[ \"\$current\" != '$target' ]]; then case '$target' in vfio-pci) modprobe vfio-pci;; igb_uio) modprobe uio 2>/dev/null || true; modprobe igb_uio 2>/dev/null || true;; *) echo \"ERROR: unsupported recovery driver '$target'\" >&2; exit 2;; esac; python3 \"\$DEVBIND\" -b '$target' \"\$PCI\"; fi; [[ \$(basename \"\$(readlink -f /sys/bus/pci/devices/\$PCI/driver)\") == '$target' ]]"
+    local target="$1" current
+    current="$(driver_remote)"
+    [[ "$current" == "$target" ]] && return 0
+    case "$target" in
+        vfio-pci|igb_uio) ;;
+        *) echo "ERROR: unsupported recovery driver '$target'" >&2; return 1 ;;
+    esac
+    if [[ "$current" == ice ]]; then
+        quiesce_linux_iface_remote
+    fi
+    remote "set -e; PCI='$PCI'; DEVBIND='$DEVBIND'; target='$target'; case \"\$target\" in vfio-pci) modprobe vfio-pci;; igb_uio) modprobe uio 2>/dev/null || true; modprobe igb_uio 2>/dev/null || true;; esac; python3 \"\$DEVBIND\" -b \"\$target\" \"\$PCI\"; current=\$(basename \"\$(readlink -f /sys/bus/pci/devices/\$PCI/driver 2>/dev/null || true)\"); [[ \"\$current\" == \"\$target\" ]] || { echo \"ERROR: Tinyman bind to \$target failed; current=\$current\" >&2; exit 1; }"
 }
 
 INITIAL_SERVER="$(driver_local)"
