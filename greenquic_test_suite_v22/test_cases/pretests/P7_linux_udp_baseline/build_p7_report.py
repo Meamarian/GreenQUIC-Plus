@@ -21,6 +21,16 @@ def js(p):return json.loads(p.read_text())
 def endpoint(root,e):return [(d,js(d/'summary.json')) for d in sorted((root/'runs'/e).glob('rep*')) if (d/'summary.json').is_file()]
 def rapl(s,scope,k):return num(((((s.get('scopes')or{}).get(scope)or{}).get('rapl')or{}).get(k)))
 def freq(s,scope,cpu):return num((((s.get('scopes')or{}).get(scope)or{}).get('frequency')or{}).get(str(cpu),{}).get('mean_ghz'))
+def workload_duration(s):
+    us=num(s.get('workload_elapsed_us'))
+    return us/1e6 if us is not None and us>=0 else None
+def aligned_duration(s):
+    w=s.get('windows')or{}; pre=w.get('pre_cool')or[]; post=w.get('post_cool')or[]
+    if not pre or not post:return None
+    try:a0=int(pre[0][0]);a1=int(pre[0][1]);b0=int(post[-1][0]);b1=int(post[-1][1])
+    except (TypeError,ValueError,IndexError):return None
+    if a1<=a0 or b1<=b0 or b1<a0:return None
+    return (b1-a0)/1e9
 def ensure(p):p.mkdir(parents=True,exist_ok=True);return p
 def bar(report,n,name,title,ylabel,cats,series,stats,manifest):
     cache={label:[stat(v) for v in groups] for label,groups in series.items()}
@@ -112,19 +122,34 @@ def build(root,report):
     timeseries(report,root,'client','rapl',cpu,15,'client_rapl_over_time','Client RAPL power over pre-cool, downloads and gaps','W',manifest)
     timeseries(report,root,'server','freq',cpu,16,'server_frequency_over_time',f'Server CPU{cpu} frequency over pre-cool, downloads and gaps','GHz',manifest)
     timeseries(report,root,'client','freq',cpu,17,'client_frequency_over_time',f'Client CPU{cpu} frequency over pre-cool, downloads and gaps','GHz',manifest)
+    bar(report,18,'duration_breakdown','Transfer, gap-window, and aligned duration','Seconds',['MsQuic-Linux'],{
+        'Workload':[[workload_duration(c) for c in C]],
+        'Client aligned':[[aligned_duration(c) for c in C]],
+        'Server aligned':[[aligned_duration(s) for s in S]],
+    },stats,manifest)
     with (report/'chart_statistics.csv').open('w',newline='') as f: w=csv.writer(f);w.writerow(['chart','name','series','category','n','mean','sd','variance']);w.writerows(stats)
     with (report/'chart_manifest.csv').open('w',newline='') as f:w=csv.writer(f);w.writerow(['chart','name','variance','values','format','path']);w.writerows(manifest)
     (report/'validation_report.json').write_text(json.dumps({'schema':'greenquic-p7-report-v1','repetitions':len(rows),'chart_numbers':sorted({x[0] for x in manifest}),'variant_files':len(manifest),'warnings':[]},indent=2)+'\n')
-    (report/'README.txt').write_text('P7 Linux UDP report. Same P5 chart-variant convention; Linux-equivalent metrics only. DPDK-only pressure/action/hint charts are intentionally absent.\n')
+    (report/'README.txt').write_text('P7 Linux UDP report. Same P5 chart-variant convention; Linux-equivalent metrics only. Chart 18 mirrors the P5 workload/client-aligned/server-aligned duration breakdown for the single MsQuic-Linux mode. DPDK-only pressure/action/hint charts are intentionally absent.\n')
     print(f'P7 report: {report}');print(f'P7 charts: {len(set(x[0] for x in manifest))} chart numbers, {len(manifest)} variant files')
 def selftest():
     with tempfile.TemporaryDirectory() as td:
         r=Path(td);(r/'runs/server/rep01').mkdir(parents=True);(r/'runs/client/rep01').mkdir(parents=True);base=1_000_000_000
         for e in ('server','client'):
-            s={'windows':{'pre_cool':[[base,base+1_000_000_000]],'active':[[base+1_000_000_000,base+2_000_000_000]],'combined':[[base+1_000_000_000,base+2_000_000_000]],'post_cool':[[base+2_000_000_000,base+3_000_000_000]],'gap':[]},'scopes':{x:{'rapl':{'total_j':80,'total_w':80},'frequency':{'19':{'mean_ghz':2.2}}} for x in ('pre_cool','active','combined','post_cool','gap')}};(r/f'runs/{e}/rep01/summary.json').write_text(json.dumps(s))
+            s={'windows':{'pre_cool':[[base,base+1_000_000_000]],'active':[[base+1_000_000_000,base+2_000_000_000]],'combined':[[base+1_000_000_000,base+2_000_000_000]],'post_cool':[[base+2_000_000_000,base+3_000_000_000]],'gap':[]},'scopes':{x:{'rapl':{'total_j':80,'total_w':80},'frequency':{'19':{'mean_ghz':2.2}}} for x in ('pre_cool','active','combined','post_cool','gap')}}
+            if e=='client':s['workload_elapsed_us']=1_000_000
+            (r/f'runs/{e}/rep01/summary.json').write_text(json.dumps(s))
             (r/f'runs/{e}/rep01/rapl.csv').write_text('sample_monotonic_ns,total_power_w,total_power_smoothed_w\n'+''.join(f'{base+i*10_000_000},80,80\n' for i in range(301)))
             (r/f'runs/{e}/rep01/frequency.jsonl').write_text(''.join(json.dumps({'type':'line','monotonic_ns':base+i*10_000_000,'cpu':19,'freq_khz':2200000})+'\n' for i in range(301)))
-        (r/'p7_all_runs.csv').write_text('repetition,goodput_gbps,gap_inclusive_goodput_gbps,combined_active_j_per_useful_gbit,combined_combined_j_per_useful_gbit\n1,8,8,20,20\n');(r/'matrix_config.env').write_text('dataplane_cpu=19\n');build(r,r/'the_sheet_rules_all');print('P7 report self-test PASS')
+        (r/'p7_all_runs.csv').write_text('repetition,goodput_gbps,gap_inclusive_goodput_gbps,combined_active_j_per_useful_gbit,combined_combined_j_per_useful_gbit\n1,8,8,20,20\n');(r/'matrix_config.env').write_text('dataplane_cpu=19\n');out=r/'the_sheet_rules_all';build(r,out)
+        duration_chart=out/'charts'/'without_variance'/'svg'/'with_values'/'18_duration_breakdown.svg'
+        if not duration_chart.is_file():raise AssertionError('duration breakdown chart was not generated')
+        validation=json.loads((out/'validation_report.json').read_text())
+        if 18 not in validation.get('chart_numbers',[]):raise AssertionError('duration breakdown chart missing from manifest validation')
+        rows=list(csv.DictReader((out/'chart_statistics.csv').open()))
+        duration={row['series']:float(row['mean']) for row in rows if row['name']=='duration_breakdown'}
+        if duration!={'Workload':1.0,'Client aligned':3.0,'Server aligned':3.0}:raise AssertionError(f'unexpected duration metrics: {duration}')
+        print('P7 report self-test PASS')
 def main():
     a=argparse.ArgumentParser();a.add_argument('--matrix-dir',type=Path);a.add_argument('--output',type=Path);a.add_argument('--self-test',action='store_true');z=a.parse_args()
     if z.self_test:selftest();return
