@@ -8,6 +8,7 @@ text = path.read_text(encoding="utf-8")
 IDLE_MARKER = "GREENQUIC-V22-FINAL-IDLE-COUNTERS-V1"
 PACKET_MARKER = "GREENQUIC-P5-DATAPATH-PACKET-TOTALS-V1"
 EPOLL_FD_MARKER = "GREENQUIC-P5-EPOLL-FD-INIT-FIX-V1"
+DVFS_RECORD_MARKER = "GREENQUIC-DVFS-RECORD-LOG0-V1"
 
 
 def once(old, new, label):
@@ -44,7 +45,7 @@ if IDLE_MARKER not in text:
         "monitor_try=%" PRIu64 " monitor_wake=%" PRIu64
         " monitor_timeout=%" PRIu64 " "
         "epoll_try=%" PRIu64 " epoll_wake=%" PRIu64
-        " epoll_timeout=%" PRIu64 " wake_signal=%" PRIu64 "\\n",
+        " epoll_timeout=%" PRIu64 " wake_signal=%" PRIu64 "\n",
         Core,
         GreenQuicIdleModeToString(Dpdk->GreenQuicIdleMode),
         S->MonitorAttempts,
@@ -98,6 +99,34 @@ if EPOLL_FD_MARKER not in text:
         "P5 EPOLL wake-event guard",
     )
 
+# Recording must remain independent from verbose GreenQUIC logging. The report
+# finalizer phase-attributes successful DVFS changes from timestamped FREQ
+# records. With GQ_LOG_LEVEL=0, retain only those sparse successful-change
+# records when ENABLE_RECORD=1; all unchanged/error/debug FREQ output stays off.
+if DVFS_RECORD_MARKER not in text:
+    once(
+        """    if (Dpdk->GreenQuicLogLevel == 0) {
+        return;
+    }
+    const int BeforePrintable =""",
+        """    /* GREENQUIC-DVFS-RECORD-LOG0-V1
+     * ENABLE_RECORD is normalized by the P5/P6 harness to literal 0/1.
+     * A successful DVFS change is sparse (typically tens per run), so keeping
+     * only these lines provides exact MONOTONIC phase evidence without turning
+     * verbose GreenQUIC logging back on.
+     */
+    if (Dpdk->GreenQuicLogLevel == 0) {
+        const char* RecordEnabled = getenv("ENABLE_RECORD");
+        if (RecordEnabled == NULL ||
+            strcmp(RecordEnabled, "1") != 0 ||
+            strcmp(Result, "changed") != 0) {
+            return;
+        }
+    }
+    const int BeforePrintable =""",
+        "log-off DVFS measurement events",
+    )
+
 # P5-only process-end packet totals. RxCounter/TxCounter already exist and are
 # updated by the datapath for every mode, including strict OFF. This adds only
 # one teardown print and does not add any new RX/TX hot-path work.
@@ -115,7 +144,7 @@ if PACKET_MARKER not in text:
      */
     printf(
         "[CPU %u] GreenQUIC PACKETS source=datapath_totals "
-        "rx_pkts=%" PRIu64 " tx_pkts=%" PRIu64 "\\n",
+        "rx_pkts=%" PRIu64 " tx_pkts=%" PRIu64 "\n",
         Dpdk->Cpu,
         Dpdk->RxCounter,
         Dpdk->TxCounter);
@@ -130,5 +159,6 @@ print(
     f"P5 datapath fixes applied to {path}; "
     f"idle_marker={IDLE_MARKER in text} "
     f"packet_marker={PACKET_MARKER in text} "
-    f"epoll_fd_marker={EPOLL_FD_MARKER in text}"
+    f"epoll_fd_marker={EPOLL_FD_MARKER in text} "
+    f"dvfs_record_marker={DVFS_RECORD_MARKER in text}"
 )
