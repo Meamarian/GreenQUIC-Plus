@@ -43,6 +43,7 @@ p7_validate_common() {
     [[ "$GAP_US" =~ ^[0-9]+$ ]] || p7_die "GAP_US must be non-negative"
     [[ "$PAYLOAD_BYTES" =~ ^[1-9][0-9]*$ ]] || p7_die "PAYLOAD_BYTES must be positive"
     case "$P7_NIC_OFFLOAD_PROFILE" in native|on|off) ;; *) p7_die "P7_NIC_OFFLOAD_PROFILE must be native|on|off" ;; esac
+    p7_bool "${P7_SAVE_NETWORK_DIAGNOSTICS:-0}" >/dev/null || p7_die "P7_SAVE_NETWORK_DIAGNOSTICS must be 0 or 1"
 }
 
 p7_role_device() { case "$1" in server) printf '%s\n' "$SERVER_DPDK_DEVICE" ;; client) printf '%s\n' "$CLIENT_DPDK_DEVICE" ;; *) p7_die "invalid role $1" ;; esac; }
@@ -73,6 +74,7 @@ p7_get_iface() { local role="$1" device iface; device="$(p7_role_device "$role")
 
 p7_offload_query_name() { case "$1" in rx) echo rx-checksumming ;; tx) echo tx-checksumming ;; gro) echo generic-receive-offload ;; gso) echo generic-segmentation-offload ;; tso) echo tcp-segmentation-offload ;; rx-gro-hw) echo rx-gro-hw ;; tx-udp-segmentation) echo tx-udp-segmentation ;; rx-udp-gro-forwarding) echo rx-udp-gro-forwarding ;; *) echo "$1" ;; esac; }
 
+# These tiny state files are restoration metadata only; they are not sampled/traced.
 p7_save_offloads() { local iface="$1" out="$2" cmd q state; : > "$out"; for cmd in rx tx gro gso tso rx-gro-hw tx-udp-segmentation rx-udp-gro-forwarding; do q="$(p7_offload_query_name "$cmd")"; state="$(ethtool -k "$iface" 2>/dev/null | awk -v k="$q" '$1==k":" {print $2; exit}')"; [[ "$state" == on || "$state" == off ]] && printf '%s=%s\n' "$cmd" "$state" >> "$out"; done; }
 p7_apply_offloads() { local iface="$1" profile="$2" target cmd; [[ "$profile" == native ]] && return 0; target="$profile"; for cmd in rx tx gro gso tso rx-gro-hw tx-udp-segmentation rx-udp-gro-forwarding; do ethtool -K "$iface" "$cmd" "$target" >/dev/null 2>&1 || true; done; }
 p7_restore_offloads() { local iface="$1" state_file="$2" cmd state; [[ -f "$state_file" ]] || return 0; while IFS='=' read -r cmd state; do [[ -n "$cmd" && ( "$state" == on || "$state" == off ) ]] || continue; ethtool -K "$iface" "$cmd" "$state" >/dev/null 2>&1 || true; done < "$state_file"; }
@@ -94,8 +96,13 @@ p7_prepare_host() {
     p7_save_offloads "$iface" "$state_dir/offloads.before"; p7_save_irq_state "$iface" "$state_dir/irq_affinity.before"; p7_save_rps "$iface" "$state_dir/rps.before"
     if [[ "$(p7_bool "$P7_STOP_IRQBALANCE")" == 1 ]]; then systemctl stop irqbalance >/dev/null 2>&1 || true; fi
     p7_apply_offloads "$iface" "$P7_NIC_OFFLOAD_PROFILE"; p7_pin_irqs "$iface" "$P7_DATAPLANE_CPU"; p7_disable_rps "$iface"
-    ethtool -k "$iface" > "$state_dir/offloads.effective.txt" 2>&1 || true; ethtool -l "$iface" > "$state_dir/channels.txt" 2>&1 || true; ethtool "$iface" > "$state_dir/link.txt" 2>&1 || true; cat /proc/interrupts > "$state_dir/interrupts.after_prepare.txt"
-    p7_log "$role prepared: iface=$iface IRQ-pin=$P7_PIN_IRQ cpu=$P7_DATAPLANE_CPU QUIC-cpus=$P7_QUIC_CPUS NIC-offloads=$P7_NIC_OFFLOAD_PROFILE"
+    if [[ "$(p7_bool "${P7_SAVE_NETWORK_DIAGNOSTICS:-0}")" == 1 ]]; then
+        ethtool -k "$iface" > "$state_dir/offloads.effective.txt" 2>&1 || true
+        ethtool -l "$iface" > "$state_dir/channels.txt" 2>&1 || true
+        ethtool "$iface" > "$state_dir/link.txt" 2>&1 || true
+        cat /proc/interrupts > "$state_dir/interrupts.after_prepare.txt" 2>/dev/null || true
+    fi
+    p7_log "$role prepared: iface=$iface IRQ-pin=$P7_PIN_IRQ cpu=$P7_DATAPLANE_CPU QUIC-cpus=$P7_QUIC_CPUS NIC-offloads=$P7_NIC_OFFLOAD_PROFILE network-diagnostics=${P7_SAVE_NETWORK_DIAGNOSTICS:-0}"
 }
 
 p7_restore_host() {
@@ -186,8 +193,15 @@ PY
 }
 
 p7_capture_net_snapshot() {
-    local role="$1" run_dir="$2" tag="$3" iface; iface="$(p7_get_iface "$role")"
-    ip -s link show "$iface" > "$run_dir/net_${tag}_ip_link.txt" 2>&1 || true; ethtool -S "$iface" > "$run_dir/net_${tag}_ethtool_stats.txt" 2>&1 || true; ethtool -k "$iface" > "$run_dir/net_${tag}_offloads.txt" 2>&1 || true; cat /proc/softirqs > "$run_dir/net_${tag}_softirqs.txt" 2>/dev/null || true; cat /proc/interrupts > "$run_dir/net_${tag}_interrupts.txt" 2>/dev/null || true; cat /proc/net/softnet_stat > "$run_dir/net_${tag}_softnet_stat.txt" 2>/dev/null || true
+    local role="$1" run_dir="$2" tag="$3" iface
+    [[ "$(p7_bool "${P7_SAVE_NETWORK_DIAGNOSTICS:-0}")" == 1 ]] || return 0
+    iface="$(p7_get_iface "$role")"
+    ip -s link show "$iface" > "$run_dir/net_${tag}_ip_link.txt" 2>&1 || true
+    ethtool -S "$iface" > "$run_dir/net_${tag}_ethtool_stats.txt" 2>&1 || true
+    ethtool -k "$iface" > "$run_dir/net_${tag}_offloads.txt" 2>&1 || true
+    cat /proc/softirqs > "$run_dir/net_${tag}_softirqs.txt" 2>/dev/null || true
+    cat /proc/interrupts > "$run_dir/net_${tag}_interrupts.txt" 2>/dev/null || true
+    cat /proc/net/softnet_stat > "$run_dir/net_${tag}_softnet_stat.txt" 2>/dev/null || true
 }
 
 P7_RAPL_PID=""; P7_FREQ_PID=""; P7_CSTATE_PID=""
