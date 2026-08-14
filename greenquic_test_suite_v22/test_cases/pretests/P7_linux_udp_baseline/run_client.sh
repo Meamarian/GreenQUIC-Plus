@@ -45,7 +45,9 @@ for ((i=1; i<=DOWNLOADS_PER_RUN; i++)); do
     if (( i == 1 )); then args+=("-urls:$url"); else args+=("$url"); fi
 done
 
-p7_capture_net_snapshot client "$RUN_DIR" before
+if [[ "$(p7_bool "${P7_SAVE_NETWORK_DIAGNOSTICS:-0}")" == 1 ]]; then
+    p7_capture_net_snapshot client "$RUN_DIR" before
+fi
 p7_start_recorders client "$RUN_DIR"
 
 cleanup() {
@@ -58,11 +60,13 @@ cleanup() {
     elapsed_ms=$(( $(date +%s%3N) - start_ms ))
     p7_log "client REP $REP: recorders stopped in ${elapsed_ms} ms"
 
-    start_ms="$(date +%s%3N)"
-    p7_log "client REP $REP: capturing final Linux network snapshot"
-    p7_capture_net_snapshot client "$RUN_DIR" after
-    elapsed_ms=$(( $(date +%s%3N) - start_ms ))
-    p7_log "client REP $REP: final network snapshot complete in ${elapsed_ms} ms"
+    if [[ "$(p7_bool "${P7_SAVE_NETWORK_DIAGNOSTICS:-0}")" == 1 ]]; then
+        start_ms="$(date +%s%3N)"
+        p7_log "client REP $REP: capturing optional Linux network diagnostics"
+        p7_capture_net_snapshot client "$RUN_DIR" after
+        elapsed_ms=$(( $(date +%s%3N) - start_ms ))
+        p7_log "client REP $REP: optional network diagnostics complete in ${elapsed_ms} ms"
+    fi
 
     if [[ -f "$RUN_DIR/client.log" ]]; then
         start_ms="$(date +%s%3N)"
