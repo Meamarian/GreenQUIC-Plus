@@ -44,6 +44,35 @@ def parse_app_windows(role: str, text: str):
     combined=[(active[0][0],active[-1][1])] if active else []
     return {'active':active,'gap':gaps,'combined':combined}
 
+def parse_p5_goodput(text: str, payload_bytes: int, downloads: int):
+    starts={int(i):int(us) for i,_n,us in re.findall(r'\[GreenQUIC-P5\]\s+request=(\d+)/(\d+)\s+start_us=(\d+)',text)}
+    completions={}
+    pat=re.compile(r'\[GreenQUIC-P5\]\s+request=(\d+)/(\d+)\s+complete_us=(\d+)\s+path=\S+\s+duration_us=(\d+)\s+success=(\d+)')
+    for i,_n,complete_us,duration_us,success in pat.findall(text):
+        completions[int(i)]={'complete_us':int(complete_us),'duration_us':int(duration_us),'success':int(success)}
+    expected=range(1,downloads+1)
+    if any(i not in starts or i not in completions for i in expected):
+        raise SystemExit(f'P7 client is missing P5-compatible timing markers: starts={len(starts)} completions={len(completions)} expected={downloads}')
+    if any(completions[i]['success'] != 1 for i in expected):
+        raise SystemExit('P7 client has a failed download; refusing goodput calculation')
+    durations=[completions[i]['duration_us'] for i in expected]
+    if any(v <= 0 for v in durations):
+        raise SystemExit('P7 client has a non-positive P5 duration_us')
+    active_us=sum(durations)
+    workload_us=completions[downloads]['complete_us']-starts[1]
+    if workload_us <= 0:
+        raise SystemExit('P7 client workload elapsed time is not positive')
+    total_bytes=payload_bytes*downloads
+    active_gp=total_bytes*8.0/active_us/1000.0
+    workload_gp=total_bytes*8.0/workload_us/1000.0
+    return {
+        'download_duration_us':durations,
+        'download_duration_us_total':active_us,
+        'workload_elapsed_us':workload_us,
+        'goodput_active_downloads_gbps':active_gp,
+        'goodput_workload_including_gaps_gbps':workload_gp,
+    }
+
 def control_windows(path: Path):
     rows=read_jsonl(path); last={}
     for row in rows:
@@ -130,18 +159,24 @@ def main():
     for scope,ws in windows.items(): scopes[scope]={'window_count':len(ws),'duration_s':union_duration_ns(ws)/1e9,'rapl':rapl_metrics(rapl,ws),'frequency':frequency_metrics(freq,ws),'cstate':cstate_metrics(run/'cstate.csv',freq,names,ws)}
     data={'schema':'greenquic-p7-linux-run-v1','role':args.role,'payload_bytes_per_download':args.payload_bytes,'downloads':args.downloads,'useful_bytes':args.payload_bytes*args.downloads,'windows':{k:[[a,b] for a,b in v] for k,v in windows.items()},'scopes':scopes}
     if args.role=='client':
-        active_s=scopes.get('active',{}).get('duration_s',0) or 0; combined_s=scopes.get('combined',{}).get('duration_s',0) or 0; bits=data['useful_bytes']*8.0
-        data['goodput_gbps']=bits/active_s/1e9 if active_s>0 else None; data['gap_inclusive_goodput_gbps']=bits/combined_s/1e9 if combined_s>0 else None
-        useful_gbit=bits/1e9
+        p5gp=parse_p5_goodput(text,args.payload_bytes,args.downloads)
+        data.update(p5gp)
+        # Compatibility aliases retained for the existing P7 aggregate/charts.
+        data['goodput_gbps']=p5gp['goodput_active_downloads_gbps']
+        data['gap_inclusive_goodput_gbps']=p5gp['goodput_workload_including_gaps_gbps']
+        bits=data['useful_bytes']*8.0; useful_gbit=bits/1e9
         for scope in ('active','combined'):
             total_j=scopes.get(scope,{}).get('rapl',{}).get('total_j')
             if total_j is not None and useful_gbit>0: scopes[scope]['j_per_useful_gbit']=total_j/useful_gbit
     args.output.parent.mkdir(parents=True,exist_ok=True); args.output.write_text(json.dumps(data,indent=2)+'\n')
     print(f"P7 {args.role} summary")
     if args.role=='client':
-        goodput=data.get('goodput_gbps'); gap_goodput=data.get('gap_inclusive_goodput_gbps')
-        if goodput is None or gap_goodput is None: raise SystemExit('client goodput could not be derived from application windows')
-        print(f"goodput={goodput:.6f} Gbit/s"); print(f"gap_inclusive_goodput={gap_goodput:.6f} Gbit/s")
+        goodput=data.get('goodput_active_downloads_gbps'); gap_goodput=data.get('goodput_workload_including_gaps_gbps')
+        if goodput is None or gap_goodput is None: raise SystemExit('client goodput could not be derived from P5-compatible timing markers')
+        print(f"goodput_active_downloads={goodput:.6f} Gbit/s")
+        print(f"goodput_workload_including_gaps={gap_goodput:.6f} Gbit/s")
+        print(f"download_duration_us_total={data['download_duration_us_total']}")
+        print(f"workload_elapsed_us={data['workload_elapsed_us']}")
     for scope in ('pre_cool','active','gap','combined','post_cool'):
         if scope not in scopes: continue
         r=scopes[scope]['rapl']; energy=r.get('total_j'); power=r.get('total_w'); energy_text=f'{energy:.6f}J' if isinstance(energy,(int,float)) else 'N/A'; power_text=f'{power:.6f}W' if isinstance(power,(int,float)) else 'N/A'
