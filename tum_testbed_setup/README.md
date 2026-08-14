@@ -6,7 +6,7 @@ This folder contains Mac-side setup/recovery tooling for the TUM/LRZ IDEX + Tiny
 
 `greenquic_fresh_setup.sh`
 
-Run it on the Mac, not on IDEX or Tinyman. It restores SSH access through `mohsen@coinbase`, checks GitHub access, checks out the current `main` branch on both live-boot nodes, runs the GreenQUIC bootstrap, prepares hugepages/firmware/test dependencies, verifies the physical E810 link while both ports are still kernel-managed, binds the test NICs to an approved DPDK driver, and runs the P0 1 MiB QUIC/DPDK smoke test before declaring P4 ready.
+Run it on the Mac, not on IDEX or Tinyman. It restores SSH access through `mohsen@coinbase`, checks GitHub access, checks out the current `main` branch on both live-boot nodes, runs the GreenQUIC bootstrap, prepares hugepages/firmware/test dependencies, verifies the physical E810 link while both ports are still kernel-managed, binds the test NICs to an approved DPDK driver, and runs the P0 1 MiB QUIC/DPDK smoke test before declaring P4 ready. The complete setup also builds and verifies the isolated P5/P6 and normal-Linux P7 binaries on both nodes and installs `/root/run_p7.sh` on IDEX.
 
 The script never copies the Mac private SSH key to either test node. IDEX receives its own generated key for IDEX -> Tinyman SSH.
 
@@ -69,19 +69,16 @@ pos nodes reset tinyman
 
 echo
 echo "tinyman reset command finished."
-
 echo
 echo "Current node status:"
 pos nodes list | grep -E 'idex|tinyman'
 
 echo
 echo "[6/6] Waiting for SSH..."
-
 until ssh -o ConnectTimeout=3 -o BatchMode=yes idex 'echo "IDEX READY"' 2>/dev/null; do
     echo "Waiting for idex SSH..."
     sleep 5
 done
-
 until ssh -o ConnectTimeout=3 -o BatchMode=yes tinyman 'echo "TINYMAN READY"' 2>/dev/null; do
     echo "Waiting for tinyman SSH..."
     sleep 5
@@ -108,3 +105,37 @@ watch -n 2 "pos nodes list | grep -E 'idex|tinyman'"
 ```
 
 Use `Ctrl+C` only to stop this `watch` command in the second shell. Leave the first reset/setup shell running until it finishes.
+
+## P7 Linux UDP baseline
+
+The complete setup now also builds an isolated non-DPDK MsQuic binary on both IDEX and Tinyman and installs `/root/run_p7.sh` on IDEX. P7 uses the normal Linux `datapath_linux.c` + `datapath_epoll.c` path while reusing the exact P5 sequential-download application timing logic.
+
+The primary controlled Linux mapping is CPU19 for E810 IRQ/NAPI work and CPUs21–24 for the MsQuic worker processor list/process affinity, corresponding as closely as Linux permits to the P5 single-core DPDK mapping CPU19 + QUIC workers21–24. P7 temporarily switches the test NIC from `vfio-pci` to `ice` and restores DPDK after the matrix by default.
+
+Primary 6-repetition run on IDEX:
+
+```bash
+/root/run_p7.sh \
+  --downloads 5 \
+  --gap-seconds 5 \
+  --runs 6 \
+  --pre-cooldown-seconds 5 \
+  --post-cooldown-seconds 5 \
+  --between-runs-seconds 5 \
+  --dataplane-cpu 19 \
+  --quic-cpus 21,22,23,24 \
+  --pin-irq 1 \
+  --pin-quic 1 \
+  --disable-rps 1 \
+  --nic-offloads native \
+  --record-quic-cpus 0 \
+  --enable-record 1 \
+  --rapl-interval-ms 6 \
+  --freq-interval-ms 1 \
+  --require-rapl 1 \
+  --stop-irqbalance 1 \
+  --mtu 1500 \
+  --restore-dpdk 1
+```
+
+Use `--nic-offloads on` or `--nic-offloads off` only as sensitivity experiments; `--nic-offloads native` is the normal Linux baseline, while MsQuic keeps its stock UDP segmentation/coalescing capability probe and P7 records the detected features.
