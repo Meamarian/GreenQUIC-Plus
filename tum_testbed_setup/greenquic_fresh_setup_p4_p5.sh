@@ -57,6 +57,7 @@ build_and_verify_p5() {
 
     remote "$host" bash -s <<'P5BUILD'
 set -Eeuo pipefail
+trap 'rc=$?; echo "ERROR: P5 verification failed on $(hostname) at line $LINENO: $BASH_COMMAND (rc=$rc)" >&2; exit $rc' ERR
 ROOT="/root/mohsen"
 P5="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads"
 P5_BUILD="$ROOT/msquic/build-greenquic-p5"
@@ -83,6 +84,7 @@ grep -aFq -- 'GreenQUIC COUNTERS schema=greenquic-counters-v1' "$P5_SERVER"
 grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$P5_CLIENT"
 grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$P5_SERVER"
 grep -Fq -- 'GREENQUIC-P5-DATAPATH-PACKET-TOTALS-V1' "$P5_SOURCE/src/platform/datapath_raw_dpdk_linux.c"
+grep -Fq -- 'GREENQUIC-DVFS-RECORD-LOG0-V1' "$P5_SOURCE/src/platform/datapath_raw_dpdk_linux.c"
 grep -Fq -- 'GREENQUIC-P5-ASYNC-SIGNAL-SAFE-EXIT-V1' "$P5_SOURCE/src/tools/interopserver/InteropServer.cpp"
 grep -Fq -- 'GREENQUIC-COUNTERS-RECOVERY-END-SUCCESS-V1' "$P5_SOURCE/src/platform/greenquic_plus.c"
 grep -Fq -- 'GREENQUIC-P5-GRACEFUL-SERVER-EXIT-V1' "$P5/gq_common_p5.sh"
@@ -95,7 +97,11 @@ grep -aFq -- 'hint_cubic_ramping=' "$P5_SERVER"
 [[ -x "$P5/run_matrix_with_sheet.sh" ]]
 [[ -f "$P5/build_sheet_rules_all_aligned.py" ]]
 grep -Fq -- 'GREENQUIC-SINGLE-RUN-CHARTS-V2' "$PLOTTER"
-grep -Fq -- 'GREENQUIC-SINGLE-RUN-CHARTS-HOOK-V1' "$P5/p5_finalize_matrix.py"
+# The old p5_finalize_matrix.py single-run hook marker was removed when the
+# finalized report path moved into run_matrix_with_sheet.sh. Verify the current
+# report entry point instead of requiring that stale marker.
+grep -Fq -- 'build_sheet_rules_all_aligned.py' "$P5/run_matrix_with_sheet.sh"
+grep -Fq -- '--expected-charts 62' "$P5/run_matrix_with_sheet.sh"
 python3 -c 'import matplotlib'
 python3 "$PLOTTER" --self-test
 
@@ -105,7 +111,7 @@ sha256sum "$P5_CLIENT"
 echo "P5 SERVER: $(readlink -f "$P5_SERVER")"
 sha256sum "$P5_SERVER"
 echo
-echo "P5 BUILD + LAST-SUCCESSFUL FIX VERIFICATION: PASS on $(hostname)"
+echo "P5 BUILD + CURRENT REPORT/DVFS VERIFICATION: PASS on $(hostname)"
 P5BUILD
 }
 
@@ -149,12 +155,13 @@ printf 'P5 client build: PASS on both\n'
 printf 'P5 server build: PASS on both\n'
 printf 'P5 sequence V2 + start gate: PASS\n'
 printf 'P5 final counters: PASS\n'
+printf 'P5 log-off DVFS event recording: PASS\n'
 printf 'P5 graceful cleanup: PASS\n'
 printf 'P5 corrected CUBIC recovery-end counter: PASS\n'
 printf 'P5 EPOLL RX-eventfd drain fix: PASS\n'
 printf 'P5 DPDK packet totals for OFF/BASIC/PLUS: PASS\n'
-printf 'Single-run 22-chart set with values: PASS\n'
-printf 'Single-run 22-chart set without values: PASS\n'
+printf 'P5 legacy single-run chart plotter: PASS\n'
+printf 'P5 finalized 62-chart report entry point: PASS\n'
 printf 'P4 launcher: /root/run_p4.sh\n'
 printf 'P5 launcher: /root/run_p5.sh (matrix + sheet/chart report wrapper)\n'
 printf '################################################################\n'
