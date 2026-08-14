@@ -30,7 +30,9 @@ cp -p "$HERE/config.env" "$RUN_DIR/config.env.snapshot"
     printf 'nic_offloads=%s\n' "$P7_NIC_OFFLOAD_PROFILE"
 } > "$RUN_DIR/effective.env"
 
-p7_capture_net_snapshot server "$RUN_DIR" before
+if [[ "$(p7_bool "${P7_SAVE_NETWORK_DIAGNOSTICS:-0}")" == 1 ]]; then
+    p7_capture_net_snapshot server "$RUN_DIR" before
+fi
 p7_start_recorders server "$RUN_DIR"
 
 FIFO="$RUN_DIR/server.stdout.fifo"
@@ -54,11 +56,13 @@ cleanup() {
     elapsed_ms=$(( $(date +%s%3N) - start_ms ))
     p7_log "server REP $REP: recorders stopped in ${elapsed_ms} ms"
 
-    start_ms="$(date +%s%3N)"
-    p7_log "server REP $REP: capturing final Linux network snapshot"
-    p7_capture_net_snapshot server "$RUN_DIR" after
-    elapsed_ms=$(( $(date +%s%3N) - start_ms ))
-    p7_log "server REP $REP: final network snapshot complete in ${elapsed_ms} ms"
+    if [[ "$(p7_bool "${P7_SAVE_NETWORK_DIAGNOSTICS:-0}")" == 1 ]]; then
+        start_ms="$(date +%s%3N)"
+        p7_log "server REP $REP: capturing optional Linux network diagnostics"
+        p7_capture_net_snapshot server "$RUN_DIR" after
+        elapsed_ms=$(( $(date +%s%3N) - start_ms ))
+        p7_log "server REP $REP: optional network diagnostics complete in ${elapsed_ms} ms"
+    fi
 
     rm -f "$FIFO"
     if [[ -f "$RUN_DIR/server.log" ]]; then
