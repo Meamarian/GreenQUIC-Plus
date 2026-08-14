@@ -109,7 +109,12 @@ p7_restore_host() {
 }
 
 p7_write_execution_config() {
-    local role="$1" run_dir="$2" cfg="$run_dir/linux_msquic.ini"; mkdir -p "$run_dir"
+    # Keep assignments separate under `set -u`: expanding cfg in the same local
+    # command as run_dir can read run_dir before Bash has assigned it.
+    local role="$1"
+    local run_dir="$2"
+    local cfg="$run_dir/linux_msquic.ini"
+    mkdir -p "$run_dir"
     cat > "$cfg" <<CFG
 # P7 Linux baseline. These are tool-level MsQuic execution settings only.
 # No DPDK datapath configuration is present.
