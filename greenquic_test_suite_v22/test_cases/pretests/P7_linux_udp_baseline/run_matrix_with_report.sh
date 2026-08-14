@@ -4,6 +4,7 @@ set -Eeuo pipefail
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 BASE="$HERE/run_matrix_from_idex.sh"
 REPORTER="$HERE/build_p7_report.py"
+SUMMARY="$HERE/p7_print_summary.py"
 CLIENT_HOST="tinyman"
 CLIENT_DIR="$HERE"
 CHART_STYLE="both"
@@ -11,13 +12,16 @@ LOG_LEVEL="0"
 OUTPUT_DIR=""
 ARGS=()
 
+now(){ date '+%Y-%m-%dT%H:%M:%S.%3N%z'; }
+stage(){ printf '\n[%s][P7-report] %s\n' "$(now)" "$*"; }
+
 usage() {
     cat <<'USAGE'
 P7 Linux UDP matrix with P5-style report generation.
 
 P7-only wrapper options:
   --chart-style new|old|both   default both; new/both generate the P7 report tree
-  --log-level 0|1              1 prints stored request/UDP-feature diagnostics after each repetition
+  --log-level 0|1              1 also prints stored request/UDP-feature diagnostics
 
 All normal P7 matrix options are accepted and forwarded. The wrapper forces
 --restore-dpdk 1 and restores the exact DPDK driver that was present before P7,
@@ -52,7 +56,7 @@ while (($#)); do
 done
 case "$CHART_STYLE" in new|old|both) ;; *) echo "ERROR: --chart-style must be new, old, or both" >&2; exit 2 ;; esac
 case "$LOG_LEVEL" in 0|1) ;; *) echo "ERROR: --log-level must be 0 or 1" >&2; exit 2 ;; esac
-[[ -x "$BASE" && -x "$REPORTER" ]] || { echo "ERROR: P7 runner/reporter missing" >&2; exit 2; }
+[[ -x "$BASE" && -x "$REPORTER" && -f "$SUMMARY" ]] || { echo "ERROR: P7 runner/reporter/summary helper missing" >&2; exit 2; }
 python3 -c 'import matplotlib, numpy' >/dev/null
 
 if [[ -z "$OUTPUT_DIR" ]]; then
@@ -96,79 +100,45 @@ restore_exact() {
 cleanup() {
     local rc=$?
     trap - EXIT INT TERM
+    stage "cleanup: restoring exact pre-P7 DPDK drivers"
     restore_exact || true
     exit "$rc"
 }
 trap cleanup EXIT INT TERM
 
-echo "[P7-isolation] pre-run drivers: IDEX=$ORIG_SERVER Tinyman=$ORIG_CLIENT"
+stage "pre-run drivers: IDEX=$ORIG_SERVER Tinyman=$ORIG_CLIENT"
+stage "STARTING P7 WORKLOAD MATRIX — chart generation is NOT running yet"
 "$BASE" "${ARGS[@]}"
+stage "workload matrix and per-run summaries complete; restoring exact DPDK drivers"
 restore_exact
 trap - EXIT INT TERM
 
-echo "[P7-isolation] post-run drivers: IDEX=$(driver_local) Tinyman=$(driver_remote)"
+stage "post-run drivers: IDEX=$(driver_local) Tinyman=$(driver_remote)"
 [[ "$(driver_local)" == "$ORIG_SERVER" ]] || { echo "ERROR: IDEX driver restore mismatch" >&2; exit 1; }
 [[ "$(driver_remote)" == "$ORIG_CLIENT" ]] || { echo "ERROR: Tinyman driver restore mismatch" >&2; exit 1; }
 
-python3 - "$OUTPUT_DIR" "$LOG_LEVEL" <<'PY'
-from pathlib import Path
-import json, math, sys
-root=Path(sys.argv[1]); log_level=int(sys.argv[2])
-def get(d,*ks):
-    for k in ks:
-        if not isinstance(d,dict): return None
-        d=d.get(k)
-    return d if isinstance(d,(int,float)) and math.isfinite(float(d)) else None
-def f(v,u): return 'N/A' if v is None else f'{v:.3f} {u}'
-reps=sorted((root/'runs'/'client').glob('rep*'))
-for cdir in reps:
-    sdir=root/'runs'/'server'/cdir.name
-    if not (cdir/'summary.json').is_file() or not (sdir/'summary.json').is_file(): continue
-    c=json.loads((cdir/'summary.json').read_text()); s=json.loads((sdir/'summary.json').read_text())
-    se=get(s,'scopes','active','rapl','total_j'); ce=get(c,'scopes','active','rapl','total_j')
-    sp=get(s,'scopes','active','rapl','total_w'); cp=get(c,'scopes','active','rapl','total_w')
-    ee=se+ce if se is not None and ce is not None else None; pp=sp+cp if sp is not None and cp is not None else None
-    gbit=(c.get('useful_bytes') or 0)*8/1e9; cost=ee/gbit if ee is not None and gbit else None
-    print(f'\n=== P7 {cdir.name} summary ===')
-    print('Active goodput:',f(get(c,'goodput_gbps'),'Gbit/s'))
-    print('Gap-inclusive goodput:',f(get(c,'gap_inclusive_goodput_gbps'),'Gbit/s'))
-    print('Active RAPL energy: server',f(se,'J'),'| client',f(ce,'J'),'| combined',f(ee,'J'))
-    print('Active RAPL power:  server',f(sp,'W'),'| client',f(cp,'W'),'| combined',f(pp,'W'))
-    print('Combined active energy cost:',f(cost,'J/Gbit'))
-    if log_level:
-        print('--- diagnostic markers ---')
-        for p in (sdir/'server.log',cdir/'client.log'):
-            if not p.is_file(): continue
-            for line in p.read_text(errors='replace').splitlines():
-                if 'linux_udp_features' in line or '[GreenQUIC-P7]' in line or '[GreenQUIC-P5]' in line:
-                    print(f'{p.name}: {line}')
-PY
+stage "FINAL NUMERIC SUMMARY BEFORE CHART GENERATION"
+python3 "$SUMMARY" --matrix-dir "$OUTPUT_DIR" --matrix
 
-python3 - "$OUTPUT_DIR/p7_statistics.json" <<'PY'
-import json, sys
-s=json.load(open(sys.argv[1]))
-def line(key,label,unit):
-    v=s.get(key,{}) or {}; n=v.get('n',0); mu=v.get('mean'); sd=v.get('sd')
-    if mu is None: return f'{label}: N/A (n={n})'
-    if sd is None: return f'{label}: {mu:.3f} {unit} (n={n}; SD N/A)'
-    return f'{label}: {mu:.3f} ± {sd:.3f} {unit} (n={n})'
-print('\n=== P7 Linux UDP Matrix Summary ===')
-for args in [
- ('goodput_gbps','Active goodput','Gbit/s'),
- ('gap_inclusive_goodput_gbps','Gap-inclusive goodput','Gbit/s'),
- ('combined_active_energy_j','Combined active RAPL energy','J'),
- ('combined_active_power_w','Combined active RAPL power','W'),
- ('combined_active_j_per_useful_gbit','Combined active energy cost','J/Gbit'),
- ('combined_gap_energy_j','Combined gap RAPL energy','J'),
- ('combined_combined_energy_j','Combined D1→Dn RAPL energy','J'),
- ('combined_combined_j_per_useful_gbit','Combined D1→Dn energy cost','J/Gbit')]:
-    print(line(*args))
+if [[ "$LOG_LEVEL" == 1 ]]; then
+    stage "stored request/UDP-feature diagnostics"
+    python3 - "$OUTPUT_DIR" <<'PY'
+from pathlib import Path
+import sys
+root=Path(sys.argv[1])
+for p in sorted((root/'runs').glob('**/*.log')):
+    for line in p.read_text(errors='replace').splitlines():
+        if 'linux_udp_features' in line or '[GreenQUIC-P7]' in line or '[GreenQUIC-P5]' in line:
+            print(f'{p.relative_to(root)}: {line}')
 PY
+fi
 
 if [[ "$CHART_STYLE" == old ]]; then
-    echo "[P7-report] chart-style=old: numeric output only"
+    stage "chart-style=old: numeric output only; chart generation skipped"
 else
+    stage "STARTING CHART/REPORT GENERATION"
     python3 "$REPORTER" --matrix-dir "$OUTPUT_DIR" --output "$OUTPUT_DIR/the_sheet_rules_all"
+    stage "CHART/REPORT GENERATION COMPLETE"
     echo "[P7-report] chart-style=$CHART_STYLE"
     echo "[P7-report] report: $OUTPUT_DIR/the_sheet_rules_all"
 fi
