@@ -10,6 +10,11 @@ CLIENT_HOST="tinyman"
 CLIENT_DIR="$HERE"
 OUTPUT_DIR=""
 
+p7_now(){ date '+%Y-%m-%dT%H:%M:%S.%3N%z'; }
+p7_log(){ printf '\n[%s][P7-Linux] %s\n' "$(p7_now)" "$*" >&2; }
+p7_warn(){ printf '\n[%s][P7-Linux:WARN] %s\n' "$(p7_now)" "$*" >&2; }
+p7_die(){ printf '\n[%s][P7-Linux:ERROR] %s\n' "$(p7_now)" "$*" >&2; exit 2; }
+
 usage(){ cat <<'EOF'
 P7 Linux UDP baseline matrix (run on IDEX)
 
@@ -25,7 +30,7 @@ Options:
   --pin-irq 0|1                   pin E810 MSI IRQs to dataplane CPU (default 1)
   --pin-quic 0|1                  taskset + MsQuic ProcessorList (default 1)
   --disable-rps 0|1               disable RPS on test NIC during run (default 1)
-  --nic-offloads native|on|off    NIC/kernel offload sensitivity (default native)
+  --nic-offloads native|on|off    NIC/kernel offload profile (default on: goodput-oriented)
   --record-quic-cpus 0|1          additionally trace QUIC CPU frequency/C-states (default 0)
   --enable-record 0|1             enable RAPL/frequency/C-state recording (default 1)
   --rapl-interval-ms MS           package+DRAM RAPL cadence (default 6)
@@ -38,9 +43,9 @@ Options:
   --client-dir PATH               P7 path on client
   --output-dir PATH               result directory on IDEX
 
-Primary paper baseline:
-  --pin-irq 1 --dataplane-cpu 19 --pin-quic 1 --quic-cpus 21,22,23,24 \
-  --nic-offloads native
+Default goodput/high-performance profile:
+  max_throughput MsQuic + IRQ CPU19 + QUIC CPUs21-24 + IRQ/QUIC pinning +
+  RPS disabled + irqbalance stopped + NIC offloads requested ON.
 EOF
 }
 
@@ -189,7 +194,8 @@ for rep in $(seq 1 "$RUNS"); do
     remote "rm -rf '$crun_remote'; mkdir -p '$crun_remote'; rm -f '$gate'"
 
     p7_log "REP $rep/$RUNS: starting Linux MsQuic server"
-    env "${P7_ENV[@]}" "$HERE/run_server.sh" --run-dir "$srun" --rep "$rep" > "$srun/controller.log" 2>&1 &
+    env "${P7_ENV[@]}" "$HERE/run_server.sh" --run-dir "$srun" --rep "$rep" \
+        > >(tee "$srun/controller.log" | python3 "$HERE/p7_live_prefix.py" --role server --rep "$rep" --runs "$RUNS" --downloads "$DOWNLOADS_PER_RUN") 2>&1 &
     server_pid=$!
     for _ in $(seq 1 300); do
         [[ -f "$srun/server.log" ]] && grep -Eq 'Waiting forever\.|Waiting for SIGINT' "$srun/server.log" && break
@@ -197,9 +203,11 @@ for rep in $(seq 1 "$RUNS"); do
         sleep 0.1
     done
     [[ -f "$srun/server.log" ]] && grep -Eq 'Waiting forever\.|Waiting for SIGINT' "$srun/server.log" || p7_die "server readiness marker not observed"
+    p7_log "REP $rep/$RUNS: server ready"
 
-    p7_log "REP $rep/$RUNS: starting connected client and waiting at P5 start gate"
-    remote_env "'$CLIENT_DIR/run_client.sh' --run-dir '$crun_remote' --rep '$rep' --gate '$gate'" > "$OUTPUT_DIR/runs/client_rep${rep2}_controller.log" 2>&1 &
+    p7_log "REP $rep/$RUNS: starting connected client and waiting at start gate"
+    remote_env "'$CLIENT_DIR/run_client.sh' --run-dir '$crun_remote' --rep '$rep' --gate '$gate'" \
+        > >(tee "$OUTPUT_DIR/runs/client_rep${rep2}_controller.log" | python3 "$HERE/p7_live_prefix.py" --role client --rep "$rep" --runs "$RUNS" --downloads "$DOWNLOADS_PER_RUN") 2>&1 &
     client_ssh_pid=$!
     for _ in $(seq 1 600); do
         if remote "test -f '$crun_remote/client.log' && grep -qF 'ready_for_start_gate_us=' '$crun_remote/client.log'"; then break; fi
@@ -208,11 +216,13 @@ for rep in $(seq 1 "$RUNS"); do
     done
     remote "grep -qF 'ready_for_start_gate_us=' '$crun_remote/client.log'" || p7_die "client gate readiness marker missing"
 
+    p7_log "REP $rep/$RUNS: PRE-COOLDOWN start (${P7_PRE_COOLDOWN_SECONDS}s), connection established and no GET released"
     python3 "$HERE/p7_mark.py" --output "$srun/control_timeline.jsonl" --event pre_cool_start --role server --run-id "rep$rep"
     remote "python3 '$CLIENT_DIR/p7_mark.py' --output '$crun_remote/control_timeline.jsonl' --event pre_cool_start --role client --run-id 'rep$rep'"
     sleep "$P7_PRE_COOLDOWN_SECONDS"
     python3 "$HERE/p7_mark.py" --output "$srun/control_timeline.jsonl" --event pre_cool_end --role server --run-id "rep$rep"
     remote "python3 '$CLIENT_DIR/p7_mark.py' --output '$crun_remote/control_timeline.jsonl' --event pre_cool_end --role client --run-id 'rep$rep'; touch '$gate'"
+    p7_log "REP $rep/$RUNS: PRE-COOLDOWN complete; start gate released, GET 1/$DOWNLOADS_PER_RUN may begin"
 
     for _ in $(seq 1 1800); do
         grep -qE "\[GreenQUIC-P7\] request=${DOWNLOADS_PER_RUN} complete_us=.* success=1" "$srun/server.log" 2>/dev/null && break
@@ -221,27 +231,38 @@ for rep in $(seq 1 "$RUNS"); do
         sleep 0.1
     done
     grep -qE "\[GreenQUIC-P7\] request=${DOWNLOADS_PER_RUN} complete_us=.* success=1" "$srun/server.log" || p7_die "final server request completion marker missing"
+    p7_log "REP $rep/$RUNS: all $DOWNLOADS_PER_RUN server GETs complete; SERVER POST-COOLDOWN start (${P7_POST_COOLDOWN_SECONDS}s)"
     python3 "$HERE/p7_mark.py" --output "$srun/control_timeline.jsonl" --event post_cool_start --role server --run-id "rep$rep"
     sleep "$P7_POST_COOLDOWN_SECONDS"
     python3 "$HERE/p7_mark.py" --output "$srun/control_timeline.jsonl" --event post_cool_end --role server --run-id "rep$rep"
+    p7_log "REP $rep/$RUNS: server post-cooldown complete; stopping server and waiting for client post-cooldown/final summary"
 
     kill -TERM "$server_pid" 2>/dev/null || true
     wait "$server_pid" || { rc=$?; [[ "$rc" == 130 || "$rc" == 143 ]] || p7_die "server wrapper failed rc=$rc"; }
     server_pid=""
+    p7_log "REP $rep/$RUNS: server finalization complete; waiting for client wrapper if still active"
     wait "$client_ssh_pid" || { rc=$?; cat "$OUTPUT_DIR/runs/client_rep${rep2}_controller.log" >&2; p7_die "client wrapper failed rc=$rc"; }
     client_ssh_pid=""
+    p7_log "REP $rep/$RUNS: client finalization complete; copying Tinyman result bundle"
 
     rm -rf "$crun_local"; mkdir -p "$crun_local"
     remote "tar -C '$crun_remote' -cf - ." | tar -C "$crun_local" -xf -
     [[ -f "$srun/summary.json" && -f "$crun_local/summary.json" ]] || p7_die "rep $rep summary missing"
+    python3 "$HERE/p7_print_summary.py" --matrix-dir "$OUTPUT_DIR" --rep "$rep"
     p7_log "REP $rep/$RUNS PASS"
-    if (( rep < RUNS )); then sleep "$P7_BETWEEN_RUNS_SECONDS"; fi
+    if (( rep < RUNS )); then
+        p7_log "cooldown between repetitions: ${P7_BETWEEN_RUNS_SECONDS}s"
+        sleep "$P7_BETWEEN_RUNS_SECONDS"
+    fi
 done
 
+p7_log "all repetitions complete; aggregating numeric matrix statistics"
 python3 "$HERE/aggregate_p7_matrix.py" --matrix-dir "$OUTPUT_DIR" --runs "$RUNS"
+python3 "$HERE/p7_print_summary.py" --matrix-dir "$OUTPUT_DIR" --matrix
+p7_log "numeric aggregation complete; restoring DPDK drivers before report/chart stage"
 
 env "${P7_ENV[@]}" bash -c 'source "$1/p7_common.sh"; p7_restore_host server "$2"' _ "$HERE" "$LOCAL_STATE"
 remote_env "bash -c 'source \"$CLIENT_DIR/p7_common.sh\"; p7_restore_host client \"$REMOTE_STATE\"'"
 trap - EXIT INT TERM
 
-printf '\nP7 LINUX MATRIX PASS\nRESULTS: %s\n' "$OUTPUT_DIR"
+printf '\n[%s][P7-Linux] P7 LINUX MATRIX PASS\nRESULTS: %s\n' "$(p7_now)" "$OUTPUT_DIR"
