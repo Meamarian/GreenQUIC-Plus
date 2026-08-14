@@ -20,4 +20,3 @@ row = {
 }
 with a.output.open('a', encoding='utf-8') as f:
     f.write(json.dumps(row, separators=(',', ':')) + '\n')
-print(json.dumps(row, separators=(',', ':')))
