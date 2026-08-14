@@ -24,8 +24,9 @@ P7-only wrapper options:
   --log-level 0|1              1 also prints stored request/UDP-feature diagnostics
 
 All normal P7 matrix options are accepted and forwarded. The wrapper forces
---restore-dpdk 1 and restores the exact DPDK driver that was present before P7,
-so P5 remains ready after P7 (including on failure).
+--restore-dpdk 1 and restores the exact DPDK driver that was present before P7.
+If a previous interrupted P7 left one test NIC on the Linux ice driver, startup
+repairs that stale state using the peer's DPDK driver before starting the run.
 USAGE
     echo
     "$BASE" --help
@@ -67,14 +68,10 @@ ARGS+=("--restore-dpdk" "1")
 
 PCI="0000:18:00.0"
 DEVBIND="/root/mohsen/msquic/deps/dpdk/usertools/dpdk-devbind.py"
+P7_RECOVERY_DPDK_DRIVER="${P7_RECOVERY_DPDK_DRIVER:-vfio-pci}"
 remote(){ ssh -o BatchMode=yes -o ConnectTimeout=20 root@"$CLIENT_HOST" "$@"; }
 driver_local(){ basename "$(readlink -f "/sys/bus/pci/devices/$PCI/driver" 2>/dev/null || true)"; }
 driver_remote(){ remote "basename \"\$(readlink -f '/sys/bus/pci/devices/$PCI/driver' 2>/dev/null || true)\""; }
-
-ORIG_SERVER="$(driver_local)"
-ORIG_CLIENT="$(driver_remote)"
-case "$ORIG_SERVER" in vfio-pci|igb_uio) ;; *) echo "ERROR: P7 expected P5-ready DPDK driver on IDEX, found '$ORIG_SERVER'" >&2; exit 2 ;; esac
-case "$ORIG_CLIENT" in vfio-pci|igb_uio) ;; *) echo "ERROR: P7 expected P5-ready DPDK driver on Tinyman, found '$ORIG_CLIENT'" >&2; exit 2 ;; esac
 
 bind_driver_local() {
     local target="$1" current="$(driver_local)"
@@ -89,8 +86,40 @@ bind_driver_local() {
 }
 bind_driver_remote() {
     local target="$1"
-    remote "set -e; PCI='$PCI'; DEVBIND='$DEVBIND'; current=\$(basename \"\$(readlink -f /sys/bus/pci/devices/\$PCI/driver 2>/dev/null || true)\"); if [[ \"\$current\" != '$target' ]]; then case '$target' in vfio-pci) modprobe vfio-pci;; igb_uio) modprobe uio 2>/dev/null || true; modprobe igb_uio 2>/dev/null || true;; esac; python3 \"\$DEVBIND\" -b '$target' \"\$PCI\"; fi; [[ \$(basename \"\$(readlink -f /sys/bus/pci/devices/\$PCI/driver)\") == '$target' ]]"
+    remote "set -e; PCI='$PCI'; DEVBIND='$DEVBIND'; current=\$(basename \"\$(readlink -f /sys/bus/pci/devices/\$PCI/driver 2>/dev/null || true)\"); if [[ \"\$current\" != '$target' ]]; then case '$target' in vfio-pci) modprobe vfio-pci;; igb_uio) modprobe uio 2>/dev/null || true; modprobe igb_uio 2>/dev/null || true;; *) echo \"ERROR: unsupported recovery driver '$target'\" >&2; exit 2;; esac; python3 \"\$DEVBIND\" -b '$target' \"\$PCI\"; fi; [[ \$(basename \"\$(readlink -f /sys/bus/pci/devices/\$PCI/driver)\") == '$target' ]]"
 }
+
+INITIAL_SERVER="$(driver_local)"
+INITIAL_CLIENT="$(driver_remote)"
+case "$INITIAL_SERVER" in vfio-pci|igb_uio|ice) ;; *) echo "ERROR: unsupported initial IDEX test-NIC driver '$INITIAL_SERVER'" >&2; exit 2 ;; esac
+case "$INITIAL_CLIENT" in vfio-pci|igb_uio|ice) ;; *) echo "ERROR: unsupported initial Tinyman test-NIC driver '$INITIAL_CLIENT'" >&2; exit 2 ;; esac
+
+stage "startup driver state: IDEX=$INITIAL_SERVER Tinyman=$INITIAL_CLIENT"
+if [[ "$INITIAL_SERVER" == ice && "$INITIAL_CLIENT" == ice ]]; then
+    case "$P7_RECOVERY_DPDK_DRIVER" in vfio-pci|igb_uio) ;; *) echo "ERROR: P7_RECOVERY_DPDK_DRIVER must be vfio-pci or igb_uio" >&2; exit 2 ;; esac
+    stage "both NICs are stale on ice; recovering both to $P7_RECOVERY_DPDK_DRIVER before P7"
+    bind_driver_local "$P7_RECOVERY_DPDK_DRIVER"
+    bind_driver_remote "$P7_RECOVERY_DPDK_DRIVER"
+elif [[ "$INITIAL_SERVER" == ice ]]; then
+    case "$INITIAL_CLIENT" in vfio-pci|igb_uio)
+        stage "IDEX is stale on ice; recovering IDEX to Tinyman DPDK driver $INITIAL_CLIENT"
+        bind_driver_local "$INITIAL_CLIENT"
+        ;;
+    esac
+elif [[ "$INITIAL_CLIENT" == ice ]]; then
+    case "$INITIAL_SERVER" in vfio-pci|igb_uio)
+        stage "Tinyman is stale on ice; recovering Tinyman to IDEX DPDK driver $INITIAL_SERVER"
+        bind_driver_remote "$INITIAL_SERVER"
+        ;;
+    esac
+fi
+
+ORIG_SERVER="$(driver_local)"
+ORIG_CLIENT="$(driver_remote)"
+case "$ORIG_SERVER" in vfio-pci|igb_uio) ;; *) echo "ERROR: failed to recover P5-ready DPDK driver on IDEX; found '$ORIG_SERVER'" >&2; exit 2 ;; esac
+case "$ORIG_CLIENT" in vfio-pci|igb_uio) ;; *) echo "ERROR: failed to recover P5-ready DPDK driver on Tinyman; found '$ORIG_CLIENT'" >&2; exit 2 ;; esac
+stage "P5-ready startup state confirmed: IDEX=$ORIG_SERVER Tinyman=$ORIG_CLIENT"
+
 restore_exact() {
     set +e
     bind_driver_local "$ORIG_SERVER"
@@ -100,13 +129,12 @@ restore_exact() {
 cleanup() {
     local rc=$?
     trap - EXIT INT TERM
-    stage "cleanup: restoring exact pre-P7 DPDK drivers"
+    stage "cleanup: restoring exact P5-ready pre-P7 DPDK drivers"
     restore_exact || true
     exit "$rc"
 }
 trap cleanup EXIT INT TERM
 
-stage "pre-run drivers: IDEX=$ORIG_SERVER Tinyman=$ORIG_CLIENT"
 stage "STARTING P7 WORKLOAD MATRIX — chart generation is NOT running yet"
 "$BASE" "${ARGS[@]}"
 stage "workload matrix and per-run summaries complete; restoring exact DPDK drivers"
