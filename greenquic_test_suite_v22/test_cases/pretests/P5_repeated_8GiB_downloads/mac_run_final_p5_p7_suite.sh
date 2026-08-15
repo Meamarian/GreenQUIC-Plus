@@ -259,7 +259,7 @@ echo "======================================================================"
 echo "SCP ALL ZIP FILES TO MAC DOWNLOADS"
 echo "======================================================================"
 mkdir -p "$EXPORT_LOCAL"
-scp "idex:${EXPORT_REMOTE}/"*.zip "$EXPORT_LOCAL/" || true
+scp "idex:${EXPORT_REMOTE}/*.zip" "$EXPORT_LOCAL/" || true
 scp "idex:${EXPORT_REMOTE}/source_paths.txt" "$EXPORT_LOCAL/" || true
 cp "$BUILD_LOG_I" "$EXPORT_LOCAL/build_idex.log" 2>/dev/null || true
 cp "$BUILD_LOG_T" "$EXPORT_LOCAL/build_tinyman.log" 2>/dev/null || true
