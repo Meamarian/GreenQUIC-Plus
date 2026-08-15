@@ -11,14 +11,17 @@ usage() {
 Usage:
   bash ./mac_run_p5_super_performance.sh [--plan screen|combo|all] [--tests comma,list] [--downloads N]
 
-Default next experiment:
+Recommended next run:
   --plan screen
+
+The screen plan changes one property at a time from the measured cache128 +
+TX-burst16 baseline. Combination profiles exist but are not run by default.
 
 Examples:
   bash ./mac_run_p5_super_performance.sh
   bash ./mac_run_p5_super_performance.sh --plan combo
   bash ./mac_run_p5_super_performance.sh --plan all
-  bash ./mac_run_p5_super_performance.sh --tests measured_default,classic_mp,drain4
+  bash ./mac_run_p5_super_performance.sh --tests measured_default,no_debug_counters,txmeta_mbuf
 EOF
 }
 
@@ -45,16 +48,18 @@ RESULT="/tmp/P5_SUPER_SWEEP_${STAMP}"
 MATRIX="$P5/matrix_results/P5_SUPER_SWEEP_${STAMP}"
 CHARTS="/tmp/P5_SUPER_SWEEP_CHARTS_${STAMP}.tar.gz"
 LOCAL="$HOME/Downloads/P5_SUPER_SWEEP_${STAMP}"
+RUNNER="run_p5_super_performance_sweep_v2.sh"
 
 cd "$REPO_ROOT"
 cleanup_local_bundle() { rm -f "$BUNDLE"; }
 trap cleanup_local_bundle EXIT
 
 echo "======================================================================"
-echo "P5 SUPER PERFORMANCE"
+echo "P5 SUPER PERFORMANCE V2"
 echo "PLAN=$PLAN"
 echo "TESTS=${TESTS:-plan-default}"
 echo "DOWNLOADS=$DOWNLOADS"
+echo "RUNNER=$RUNNER"
 echo "======================================================================"
 
 if [ -n "$(git status --porcelain)" ]; then
@@ -93,9 +98,9 @@ else
 fi
 ls -lh "$BUNDLE"
 
-if ssh idex 'ps -eo args= | grep -Eq "[r]un_p5_super_performance_sweep.sh|[r]un_cache128_ring_sweep.sh|[r]un_cache128_isolated_feature_sweep.sh"'; then
+if ssh idex 'ps -eo args= | grep -Eq "[r]un_p5_super_performance_sweep(_v2)?\.sh|[r]un_cache128_ring_sweep\.sh|[r]un_cache128_isolated_feature_sweep\.sh"'; then
     echo "ERROR: an old P5 performance sweep is still running on idex."
-    ssh idex 'ps -eo pid=,args= | grep -E "[r]un_p5_super_performance_sweep.sh|[r]un_cache128_ring_sweep.sh|[r]un_cache128_isolated_feature_sweep.sh"'
+    ssh idex 'ps -eo pid=,args= | grep -E "[r]un_p5_super_performance_sweep(_v2)?\.sh|[r]un_cache128_ring_sweep\.sh|[r]un_cache128_isolated_feature_sweep\.sh"'
     exit 40
 fi
 
@@ -130,15 +135,15 @@ echo "TINYMAN:"
 git log -1 --format='HEAD=%H%nSUBJECT=%s'
 REMOTE
 
-ssh idex "cd '$P5' && bash -n ./build_p5_super_performance.sh && bash -n ./run_p5_super_performance_sweep.sh && python3 -m py_compile ./apply_p5_super_performance.py && echo 'IDEX SUPER PREFLIGHT PASS'"
-ssh idex "ssh root@tinyman \"cd '$P5' && bash -n ./build_p5_super_performance.sh && bash -n ./run_p5_super_performance_sweep.sh && python3 -m py_compile ./apply_p5_super_performance.py && echo 'TINYMAN SUPER PREFLIGHT PASS'\""
+ssh idex "cd '$P5' && bash -n ./build_p5_super_performance.sh && bash -n ./$RUNNER && python3 -m py_compile ./apply_p5_super_performance.py && echo 'IDEX SUPER V2 PREFLIGHT PASS'"
+ssh idex "ssh root@tinyman \"cd '$P5' && bash -n ./build_p5_super_performance.sh && bash -n ./$RUNNER && python3 -m py_compile ./apply_p5_super_performance.py && echo 'TINYMAN SUPER V2 PREFLIGHT PASS'\""
 
 echo
 echo "======================================================================"
 echo "STARTING REMOTE SWEEP"
 echo "======================================================================"
 set +e
-ssh idex "cd '$P5' && STAMP='$STAMP' P5_SUPER_PLAN='$PLAN' P5_SUPER_TESTS='$TESTS' P5_SUPER_DOWNLOADS='$DOWNLOADS' bash ./run_p5_super_performance_sweep.sh"
+ssh idex "cd '$P5' && STAMP='$STAMP' P5_SUPER_PLAN='$PLAN' P5_SUPER_TESTS='$TESTS' P5_SUPER_DOWNLOADS='$DOWNLOADS' bash ./$RUNNER"
 RUN_RC=$?
 set -e
 
