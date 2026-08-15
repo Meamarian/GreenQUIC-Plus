@@ -15,6 +15,11 @@ p.add_argument("--drain-bursts", type=int, default=1)
 p.add_argument("--drain-threshold", type=int, default=0)
 p.add_argument("--mtu", type=int, default=0)
 p.add_argument("--skip-off-ringcount", choices=("0", "1"), default="0")
+p.add_argument("--debug-counters", choices=("0", "1"), default="1")
+p.add_argument("--transfer-window", choices=("0", "1"), default="1")
+p.add_argument("--trace-ringcount", choices=("0", "1"), default="1")
+p.add_argument("--tx-meta", choices=("pool", "mbuf"), default="pool")
+p.add_argument("--rx-meta", choices=("pool", "mbuf"), default="pool")
 p.add_argument("--cap-diag", choices=("0", "1"), default="1")
 args = p.parse_args()
 
@@ -52,12 +57,14 @@ for marker in bad_markers:
             "restore the disposable datapath before applying super performance"
         )
 
+
 def replace_once(old: str, new: str, label: str) -> None:
     global text
     n = text.count(old)
     if n != 1:
         raise SystemExit(f"ERROR: {label}: expected exactly one anchor, found {n}")
     text = text.replace(old, new, 1)
+
 
 def replace_macro(name: str, value: int) -> None:
     global text
@@ -66,6 +73,7 @@ def replace_macro(name: str, value: int) -> None:
     if len(matches) != 1:
         raise SystemExit(f"ERROR: expected exactly one {name}, found {len(matches)}")
     text = re.sub(pattern, f"#define {name:<28} {value}", text, count=1)
+
 
 replace_macro("DEFAULT_MBUF_CACHE_SIZE", args.cache)
 replace_macro("DEFAULT_RX_BURST_SIZE", args.rx_burst)
@@ -107,6 +115,205 @@ if args.mtu == 1500:
         "    PortConfig.rxmode.mtu = DeviceInfo.max_mtu;",
         "    PortConfig.rxmode.mtu = 1500;",
         "P5/P7 MTU alignment",
+    )
+
+# The three DPDK-wide counters below are explicitly marked as debugging-only in
+# the tracked datapath and have no readers. TxEnqueueCounter is especially bad
+# for the MP producer path because every QUIC worker writes the same cache line.
+if args.debug_counters == "0":
+    replace_once(
+        "    Dpdk->RxCounter += BuffersCount;",
+        "    /* GREENQUIC-P5-SUPER: debugging RxCounter disabled. */",
+        "RX debugging counter",
+    )
+    replace_once(
+        "    Dpdk->TxEnqueueCounter++; // increase in any case, even if packet was dropped",
+        "    /* GREENQUIC-P5-SUPER: debugging TxEnqueueCounter disabled. */",
+        "TX enqueue debugging counter",
+    )
+    replace_once(
+        "    Dpdk->TxCounter += TxCount;",
+        "    /* GREENQUIC-P5-SUPER: debugging TxCounter disabled. */",
+        "TX debugging counter",
+    )
+
+# P5's transfer-window instrumentation calls clock_gettime plus relaxed atomics
+# for every non-empty BASIC/PLUS RX/TX burst. OFF already bypasses it. This
+# switch is for a goodput diagnostic that removes that measurement hot path;
+# normal external RAPL/frequency/C-state recording remains enabled by the test.
+if args.transfer_window == "0":
+    rx_track_old = '''        BuffersCount = GreenQuicTrackedRxBurst(
+            Interface->Port,
+            QueueId,
+            (struct rte_mbuf**)Buffers,
+            Dpdk->RxBurstSize);'''
+    rx_track_new = '''        BuffersCount = rte_eth_rx_burst(
+            Interface->Port,
+            QueueId,
+            (struct rte_mbuf**)Buffers,
+            Dpdk->RxBurstSize);'''
+    replace_once(rx_track_old, rx_track_new, "RX transfer-window hot path")
+
+    tx_track_old = '''            GreenQuicTrackedTxBurst(
+                Interface->Port, 0, Buffers, BufferCount);'''
+    tx_track_new = '''            rte_eth_tx_burst(
+                Interface->Port, 0, Buffers, BufferCount);'''
+    replace_once(tx_track_old, tx_track_new, "TX transfer-window hot path")
+    replace_once(
+        "__attribute__((destructor))\nstatic void\nGreenQuicTransferWindowWrite(void)",
+        "__attribute__((unused))\nstatic void\nGreenQuicTransferWindowWrite(void)",
+        "transfer-window destructor disable",
+    )
+
+# QuicTraceEvent may be compiled out, but if tracing is present these two count
+# calls add a ring snapshot solely for text diagnostics. Keep this independently
+# switchable so we can measure it rather than assuming its compile-time cost.
+if args.trace_ringcount == "0":
+    replace_once(
+        '''                "[data] TX packet (%u bytes) enqueued in ring (now %u entries).",
+                Packet->Mbuf->data_len,
+                rte_ring_count(Interface->TxRingBuffer));''',
+        '''                "[data] TX packet (%u bytes) enqueued in ring (ring count disabled=%u).",
+                Packet->Mbuf->data_len,
+                0U);''',
+        "TX enqueue trace ring count",
+    )
+    replace_once(
+        '''        "[data] %u packets dequeued from TX ring (now %u entries).",
+        BufferCount,
+        rte_ring_count(Interface->TxRingBuffer));''',
+        '''        "[data] %u packets dequeued from TX ring (ring count disabled=%u).",
+        BufferCount,
+        0U);''',
+        "TX dequeue trace ring count",
+    )
+
+# Linux MsQuic amortizes allocation/crossing costs by batching. The raw DPDK
+# path cannot safely gain Linux UDP GSO without changing the raw packet contract,
+# but we can remove one separate metadata-pool allocation from each packet. DPDK
+# mbuf private storage has the same lifetime as the mbuf and is the natural place
+# for metadata that lives exactly until RX return or TX enqueue.
+if args.tx_meta == "mbuf":
+    replace_once(
+        '"MBUF_POOL_TX", Dpdk->TxMbufPoolSize, Dpdk->MbufCacheSize, 0,',
+        '"MBUF_POOL_TX", Dpdk->TxMbufPoolSize, Dpdk->MbufCacheSize,\n                    RTE_ALIGN_CEIL(sizeof(DPDK_TX_PACKET), RTE_MBUF_PRIV_ALIGN),',
+        "TX mbuf private metadata size",
+    )
+    tx_alloc_old = '''    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Socket->RawDatapath;
+    DPDK_TX_PACKET* Packet = CxPlatPoolAlloc(&Dpdk->AdditionalInfoPool);
+    QUIC_ADDRESS_FAMILY Family = QuicAddrGetFamily(&Config->Route->RemoteAddress);
+    DPDK_INTERFACE* Interface = (DPDK_INTERFACE*)Config->Route->Queue;
+
+    if (likely(Packet)) {
+        Packet->Interface = Interface;
+        Packet->Mbuf = rte_pktmbuf_alloc(Interface->TxMemoryPool);
+        if (likely(Packet->Mbuf)) {
+            HEADER_BACKFILL HeaderFill = CxPlatDpRawCalculateHeaderBackFill(Family, Socket->UseTcp);
+            Packet->Dpdk = Dpdk;
+            Packet->Buffer.Length = Config->MaxPacketSize;
+            Packet->Mbuf->data_off = 0;
+            Packet->Buffer.Buffer = ((uint8_t*)Packet->Mbuf->buf_addr) + HeaderFill.AllLayer;
+            Packet->Mbuf->l2_len = HeaderFill.LinkLayer;
+            Packet->Mbuf->l3_len = HeaderFill.NetworkLayer;
+            Packet->DatapathType = Config->Route->DatapathType = CXPLAT_DATAPATH_TYPE_RAW;
+        } else {
+            CxPlatPoolFree(&Dpdk->AdditionalInfoPool, Packet);
+            Packet = NULL;
+            QuicTraceEvent(
+                    LibraryError,
+                    "[ lib] ERROR, %s.",
+                    "Failed to allocate mbuf in TxMemoryPool");
+        }
+    }
+    return (CXPLAT_SEND_DATA*)Packet;'''
+    tx_alloc_new = '''    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Socket->RawDatapath;
+    QUIC_ADDRESS_FAMILY Family = QuicAddrGetFamily(&Config->Route->RemoteAddress);
+    DPDK_INTERFACE* Interface = (DPDK_INTERFACE*)Config->Route->Queue;
+    struct rte_mbuf* Mbuf = rte_pktmbuf_alloc(Interface->TxMemoryPool);
+    DPDK_TX_PACKET* Packet = NULL;
+
+    if (likely(Mbuf)) {
+        Packet = (DPDK_TX_PACKET*)rte_mbuf_to_priv(Mbuf);
+        CxPlatZeroMemory(Packet, sizeof(*Packet));
+        Packet->Interface = Interface;
+        Packet->Mbuf = Mbuf;
+        HEADER_BACKFILL HeaderFill = CxPlatDpRawCalculateHeaderBackFill(Family, Socket->UseTcp);
+        Packet->Dpdk = Dpdk;
+        Packet->Buffer.Length = Config->MaxPacketSize;
+        Packet->Mbuf->data_off = 0;
+        Packet->Buffer.Buffer = ((uint8_t*)Packet->Mbuf->buf_addr) + HeaderFill.AllLayer;
+        Packet->Mbuf->l2_len = HeaderFill.LinkLayer;
+        Packet->Mbuf->l3_len = HeaderFill.NetworkLayer;
+        Packet->DatapathType = Config->Route->DatapathType = CXPLAT_DATAPATH_TYPE_RAW;
+    } else {
+        QuicTraceEvent(
+                LibraryError,
+                "[ lib] ERROR, %s.",
+                "Failed to allocate mbuf in TxMemoryPool");
+    }
+    return (CXPLAT_SEND_DATA*)Packet;'''
+    replace_once(tx_alloc_old, tx_alloc_new, "TX metadata-in-mbuf allocation")
+    replace_once(
+        '''    rte_pktmbuf_free(Packet->Mbuf);
+    CxPlatPoolFree(&Packet->Dpdk->AdditionalInfoPool, SendData);''',
+        '''    rte_pktmbuf_free(Packet->Mbuf);
+    /* TX metadata is private storage owned by Packet->Mbuf. */''',
+        "TX metadata-in-mbuf free",
+    )
+    replace_once(
+        '''    CxPlatPoolFree(&Dpdk->AdditionalInfoPool, Packet);
+}
+
+
+static
+void
+CxPlatDpdkTx(''',
+        '''    /* TX metadata is private storage owned by the enqueued mbuf. */
+}
+
+
+static
+void
+CxPlatDpdkTx(''',
+        "TX metadata-in-mbuf enqueue lifetime",
+    )
+
+if args.rx_meta == "mbuf":
+    replace_once(
+        '"MBUF_POOL_RX", Dpdk->RxMbufPoolSize, Dpdk->MbufCacheSize, 0,',
+        '"MBUF_POOL_RX", Dpdk->RxMbufPoolSize, Dpdk->MbufCacheSize,\n                    RTE_ALIGN_CEIL(sizeof(DPDK_RX_PACKET), RTE_MBUF_PRIV_ALIGN),',
+        "RX mbuf private metadata size",
+    )
+    rx_alloc_old = '''            uint32_t RetryCount = 0;
+            do {
+                NewPacket = CxPlatPoolAlloc(&Dpdk->AdditionalInfoPool);
+            } while (NewPacket == NULL && ++RetryCount < 10);
+            if (NewPacket == NULL) {
+                QuicTraceEvent(
+                    AllocFailure,
+                    "Allocation of '%s' failed. (%llu bytes)",
+                    "DPDK_RX_PACKET",
+                    0);
+                rte_pktmbuf_free(Buffer);
+                continue;
+            }
+
+            CxPlatCopyMemory(NewPacket, &Packet, sizeof(DPDK_RX_PACKET));
+            NewPacket->RecvData.Allocated = TRUE;
+            NewPacket->Mbuf = Buffer;
+            NewPacket->OwnerPool = &Dpdk->AdditionalInfoPool;'''
+    rx_alloc_new = '''            NewPacket = (DPDK_RX_PACKET*)rte_mbuf_to_priv(Buffer);
+            CxPlatCopyMemory(NewPacket, &Packet, sizeof(DPDK_RX_PACKET));
+            NewPacket->RecvData.Allocated = TRUE;
+            NewPacket->Mbuf = Buffer;
+            NewPacket->OwnerPool = NULL;'''
+    replace_once(rx_alloc_old, rx_alloc_new, "RX metadata-in-mbuf allocation")
+    replace_once(
+        '''        rte_pktmbuf_free(Packet->Mbuf);
+        CxPlatPoolFree(Packet->OwnerPool, (void*)Packet);''',
+        '''        rte_pktmbuf_free(Packet->Mbuf);
+        /* RX metadata is private storage owned by Packet->Mbuf. */''',
+        "RX metadata-in-mbuf free",
     )
 
 ring_before_original = "    const uint32_t RingBefore = rte_ring_count(Interface->TxRingBuffer);"
@@ -179,7 +386,10 @@ marker = (
     f"cache={args.cache} rxb={args.rx_burst} txb={args.tx_burst} "
     f"ring={args.ring_size} sync={args.ring_sync} "
     f"drain={args.drain_bursts} threshold={args.drain_threshold} "
-    f"mtu={args.mtu} skipoffcount={args.skip_off_ringcount} capdiag={args.cap_diag}"
+    f"mtu={args.mtu} skipoffcount={args.skip_off_ringcount} "
+    f"debugcounters={args.debug_counters} transferwindow={args.transfer_window} "
+    f"traceringcount={args.trace_ringcount} txmeta={args.tx_meta} rxmeta={args.rx_meta} "
+    f"capdiag={args.cap_diag}"
 )
 include_anchor = "#include <rte_hexdump.h>\n"
 replace_once(
