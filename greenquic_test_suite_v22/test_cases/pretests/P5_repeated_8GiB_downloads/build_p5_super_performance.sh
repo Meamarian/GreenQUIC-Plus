@@ -19,6 +19,11 @@ P5_SUPER_DRAIN_BURSTS="${P5_SUPER_DRAIN_BURSTS:-1}"
 P5_SUPER_DRAIN_THRESHOLD="${P5_SUPER_DRAIN_THRESHOLD:-0}"
 P5_SUPER_MTU="${P5_SUPER_MTU:-0}"
 P5_SUPER_SKIP_OFF_RINGCOUNT="${P5_SUPER_SKIP_OFF_RINGCOUNT:-0}"
+P5_SUPER_DEBUG_COUNTERS="${P5_SUPER_DEBUG_COUNTERS:-1}"
+P5_SUPER_TRANSFER_WINDOW="${P5_SUPER_TRANSFER_WINDOW:-1}"
+P5_SUPER_TRACE_RINGCOUNT="${P5_SUPER_TRACE_RINGCOUNT:-1}"
+P5_SUPER_TX_META="${P5_SUPER_TX_META:-pool}"
+P5_SUPER_RX_META="${P5_SUPER_RX_META:-pool}"
 P5_SUPER_CAP_DIAG="${P5_SUPER_CAP_DIAG:-1}"
 
 case "$REUSE" in 0|1) ;; *) echo "ERROR: P5_BUILD_REUSE must be 0 or 1" >&2; exit 2;; esac
@@ -28,7 +33,8 @@ case "$REUSE" in 0|1) ;; *) echo "ERROR: P5_BUILD_REUSE must be 0 or 1" >&2; exi
 echo "P5 SUPER PERFORMANCE BUILD"
 echo "cache=$P5_SUPER_CACHE rxb=$P5_SUPER_RX_BURST txb=$P5_SUPER_TX_BURST ring=$P5_SUPER_RING_SIZE"
 echo "sync=$P5_SUPER_RING_SYNC drain=$P5_SUPER_DRAIN_BURSTS threshold=$P5_SUPER_DRAIN_THRESHOLD mtu=$P5_SUPER_MTU"
-echo "skip_off_ringcount=$P5_SUPER_SKIP_OFF_RINGCOUNT cap_diag=$P5_SUPER_CAP_DIAG"
+echo "skip_off_ringcount=$P5_SUPER_SKIP_OFF_RINGCOUNT debug_counters=$P5_SUPER_DEBUG_COUNTERS transfer_window=$P5_SUPER_TRANSFER_WINDOW"
+echo "trace_ringcount=$P5_SUPER_TRACE_RINGCOUNT tx_meta=$P5_SUPER_TX_META rx_meta=$P5_SUPER_RX_META cap_diag=$P5_SUPER_CAP_DIAG"
 echo "GreenQUIC / GreenQUIC+ policy internals: unchanged"
 
 P5_STATIC_PROFILE=native P5_BUILD_REUSE="$REUSE" bash "$HERE/build_p5_client.sh"
@@ -49,6 +55,11 @@ python3 "$TRANSFORM" "$DATAPATH" \
     --drain-threshold "$P5_SUPER_DRAIN_THRESHOLD" \
     --mtu "$P5_SUPER_MTU" \
     --skip-off-ringcount "$P5_SUPER_SKIP_OFF_RINGCOUNT" \
+    --debug-counters "$P5_SUPER_DEBUG_COUNTERS" \
+    --transfer-window "$P5_SUPER_TRANSFER_WINDOW" \
+    --trace-ringcount "$P5_SUPER_TRACE_RINGCOUNT" \
+    --tx-meta "$P5_SUPER_TX_META" \
+    --rx-meta "$P5_SUPER_RX_META" \
     --cap-diag "$P5_SUPER_CAP_DIAG"
 
 python3 -m py_compile "$TRANSFORM"
