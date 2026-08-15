@@ -12,7 +12,9 @@ RESULTS_FIX="$HERE/apply_p5_datapath_fix.py"
 STATIC_PERF="$HERE/apply_p5_static_performance.py"
 SOURCE="$P5_SOURCE/src/tools/interop/interop.cpp"
 DATAPATH="$P5_SOURCE/src/platform/datapath_raw_dpdk_linux.c"
+MAIN_DATAPATH="$MAIN_MSQUIC/src/platform/datapath_raw_dpdk_linux.c"
 P5_STATIC_PROFILE="${P5_STATIC_PROFILE:-native}"
+P5_BUILD_REUSE="${P5_BUILD_REUSE:-0}"
 
 [[ -d "$MAIN_MSQUIC" ]] || {
     echo "ERROR: MsQuic source not found: $MAIN_MSQUIC" >&2
@@ -30,7 +32,12 @@ P5_STATIC_PROFILE="${P5_STATIC_PROFILE:-native}"
     echo "ERROR: P5 datapath transformer not found: $RESULTS_FIX" >&2
     exit 2
 }
+[[ -f "$MAIN_DATAPATH" ]] || {
+    echo "ERROR: main DPDK datapath source not found: $MAIN_DATAPATH" >&2
+    exit 2
+}
 
+case "$P5_BUILD_REUSE" in 0|1) ;; *) echo "ERROR: P5_BUILD_REUSE must be 0 or 1" >&2; exit 2;; esac
 case "$P5_STATIC_PROFILE" in
     native) ;;
     burst64|rx64|tx64|burst128|cache128|cache512|desc2048|ring2048|ring8192|pool8191)
@@ -45,28 +52,36 @@ case "$P5_STATIC_PROFILE" in
         ;;
 esac
 
-# Keep the main MsQuic source and build-greenquic binaries unchanged. Create a
-# separate P5 source copy and a separate P5 build directory.
-rm -rf "$P5_SOURCE" "$BUILD"
-mkdir -p "$P5_SOURCE"
+REUSE_ACTIVE=0
+if [[ "$P5_BUILD_REUSE" == 1 && -f "$BUILD/CMakeCache.txt" && -f "$SOURCE" && -f "$DATAPATH" ]]; then
+    if grep -Fq 'GreenQUIC-P5-SEQUENCE-V2' "$SOURCE"; then
+        REUSE_ACTIVE=1
+    fi
+fi
 
-tar -C "$MAIN_MSQUIC" \
-    --exclude='./.git' \
-    --exclude='./build*' \
-    --exclude='./deps/dpdk-install' \
-    -cf - . |
-tar -C "$P5_SOURCE" -xf -
+if [[ "$REUSE_ACTIVE" == 0 ]]; then
+    rm -rf "$P5_SOURCE" "$BUILD"
+    mkdir -p "$P5_SOURCE"
 
-mkdir -p "$P5_SOURCE/deps"
-ln -s "$DPDK" "$P5_SOURCE/deps/dpdk-install"
+    tar -C "$MAIN_MSQUIC" \
+        --exclude='./.git' \
+        --exclude='./build*' \
+        --exclude='./deps/dpdk-install' \
+        -cf - . |
+    tar -C "$P5_SOURCE" -xf -
 
-python3 "$TRANSFORM" "$SOURCE"
-python3 "$RESULTS_FIX" "$DATAPATH"
+    mkdir -p "$P5_SOURCE/deps"
+    ln -s "$DPDK" "$P5_SOURCE/deps/dpdk-install"
 
-# Critical fairness rule: native does not run any performance transformer.
-# Therefore the native binary is built from the same transformed source path as
-# the known-good d699f06 baseline. Tuned profiles change only compile-time DPDK
-# constants; they add no runtime branch/counter/retry/offload/lock logic.
+    python3 "$TRANSFORM" "$SOURCE"
+    python3 "$RESULTS_FIX" "$DATAPATH"
+    echo "P5 build source: clean isolated copy"
+else
+    cp -f "$MAIN_DATAPATH" "$DATAPATH"
+    python3 "$RESULTS_FIX" "$DATAPATH"
+    echo "P5 build source: incremental reuse; datapath restored from main before tuning"
+fi
+
 if [[ "$P5_STATIC_PROFILE" != native ]]; then
     python3 "$STATIC_PERF" "$P5_STATIC_PROFILE" "$DATAPATH"
 fi
@@ -119,14 +134,18 @@ export PKG_CONFIG_PATH="$DPDK/lib/pkgconfig:$DPDK/lib/x86_64-linux-gnu/pkgconfig
 export LIBRARY_PATH="$DPDK/lib:$DPDK/lib/x86_64-linux-gnu${LIBRARY_PATH:+:$LIBRARY_PATH}"
 export LD_LIBRARY_PATH="$DPDK/lib:$DPDK/lib/x86_64-linux-gnu:$DPDK/lib/dpdk/pmds-22.0${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-cmake -S "$P5_SOURCE" -B "$BUILD" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DQUIC_TLS=openssl \
-    -DQUIC_BUILD_SHARED=OFF \
-    -DQUIC_BUILD_TOOLS=ON \
-    -DQUIC_BUILD_TEST=OFF \
-    -DQUIC_BUILD_PERF=OFF \
-    -DQUIC_LINUX_DPDK_ENABLED=ON
+if [[ "$REUSE_ACTIVE" == 0 ]]; then
+    cmake -S "$P5_SOURCE" -B "$BUILD" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DQUIC_TLS=openssl \
+        -DQUIC_BUILD_SHARED=OFF \
+        -DQUIC_BUILD_TOOLS=ON \
+        -DQUIC_BUILD_TEST=OFF \
+        -DQUIC_BUILD_PERF=OFF \
+        -DQUIC_LINUX_DPDK_ENABLED=ON
+else
+    echo "P5 build configure: reused existing CMake/OpenSSL build tree"
+fi
 
 cmake --build "$BUILD" \
     --target quicinterop quicinteropserver \
@@ -158,8 +177,6 @@ grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$SERVER_BIN" || {
     exit 2
 }
 
-# Guard against the previous failed design. None of its runtime hot-path
-# instrumentation/offload markers may exist in either the native or static build.
 for bad in \
     'P5_DPDK_UDP_CHECKSUM_OFFLOAD' \
     'P5_DPDK_TX_RETRIES' \
@@ -175,12 +192,14 @@ done
 echo
 echo "P5 server binary:"
 echo "PROFILE: $P5_STATIC_PROFILE"
+echo "REUSE: $REUSE_ACTIVE"
 echo "PATH: $(readlink -f "$SERVER_BIN")"
 sha256sum "$SERVER_BIN"
 
 echo
 echo "P5 client binary:"
 echo "PROFILE: $P5_STATIC_PROFILE"
+echo "REUSE: $REUSE_ACTIVE"
 echo "NAME: $(basename "$BIN")"
 echo "PATH: $(readlink -f "$BIN")"
 sha256sum "$BIN"
