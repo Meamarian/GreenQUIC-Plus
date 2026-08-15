@@ -11,15 +11,20 @@ p.add_argument("--rx-burst", type=int, default=32)
 p.add_argument("--tx-burst", type=int, default=16)
 p.add_argument("--ring-size", type=int, default=4096)
 p.add_argument("--ring-sync", choices=("legacy", "mp", "hts", "rts"), default="legacy")
-p.add_argument("--drain-bursts", type=int, default=1)
+p.add_argument("--drain-bursts", type=int, default=4)
 p.add_argument("--drain-threshold", type=int, default=0)
 p.add_argument("--mtu", type=int, default=0)
 p.add_argument("--skip-off-ringcount", choices=("0", "1"), default="0")
 p.add_argument("--debug-counters", choices=("0", "1"), default="1")
 p.add_argument("--transfer-window", choices=("0", "1"), default="1")
 p.add_argument("--trace-ringcount", choices=("0", "1"), default="1")
-p.add_argument("--tx-meta", choices=("pool", "mbuf"), default="pool")
-p.add_argument("--rx-meta", choices=("pool", "mbuf"), default="pool")
+p.add_argument("--tx-meta", choices=("pool", "mbuf"), default="mbuf")
+p.add_argument("--rx-meta", choices=("pool", "mbuf"), default="mbuf")
+p.add_argument(
+    "--tx-lock-mode",
+    choices=("legacy", "capability", "single_owner"),
+    default="single_owner",
+)
 p.add_argument("--cap-diag", choices=("0", "1"), default="1")
 args = p.parse_args()
 
@@ -31,8 +36,8 @@ if args.tx_burst not in (16, 32, 64, 128):
     raise SystemExit("ERROR: --tx-burst must be 16, 32, 64 or 128")
 if args.ring_size not in (1024, 2048, 4096, 8192):
     raise SystemExit("ERROR: --ring-size must be 1024, 2048, 4096 or 8192")
-if args.drain_bursts not in (1, 2, 4, 8):
-    raise SystemExit("ERROR: --drain-bursts must be 1, 2, 4 or 8")
+if not 1 <= args.drain_bursts <= 8:
+    raise SystemExit("ERROR: --drain-bursts must be in [1, 8]")
 if args.drain_threshold < 0 or args.drain_threshold > args.ring_size:
     raise SystemExit("ERROR: --drain-threshold must be between 0 and ring-size")
 if args.drain_bursts == 1 and args.drain_threshold != 0:
@@ -45,6 +50,7 @@ text = path.read_text(encoding="utf-8")
 
 bad_markers = (
     "GREENQUIC-P5-SUPER-PERF-V1",
+    "GREENQUIC-P5-SUPER-PERF-V2",
     "GREENQUIC-P5-STATIC-PERF-V2",
     "GREENQUIC-P5-RING-",
     "GREENQUIC-P5-ISO-",
@@ -117,9 +123,36 @@ if args.mtu == 1500:
         "P5/P7 MTU alignment",
     )
 
-# The three DPDK-wide counters below are explicitly marked as debugging-only in
-# the tracked datapath and have no readers. TxEnqueueCounter is especially bad
-# for the MP producer path because every QUIC worker writes the same cache line.
+if args.tx_lock_mode != "legacy":
+    fast_free_old = '''    if (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE) {
+        printf("Mbuf fast free offload activated\\n");
+        PortConfig.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+        Dpdk->Interface.OffloadStatus.Transmit.Lockfree = TRUE;
+    }'''
+    fast_free_new = '''    if (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE) {
+        printf("Mbuf fast free offload activated\\n");
+        PortConfig.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+        /* MBUF_FAST_FREE does not imply RTE_ETH_TX_OFFLOAD_MT_LOCKFREE. */
+    }'''
+    replace_once(fast_free_old, fast_free_new, "MBUF_FAST_FREE/MT_LOCKFREE bookkeeping")
+
+if args.tx_lock_mode == "single_owner":
+    replace_once(
+        '''    if (!Dpdk->Interface.OffloadStatus.Transmit.Lockfree) {
+        CxPlatLockAcquire(&Interface->TxLock);
+    }''',
+        '''    /* GREENQUIC-P5-SUPER: the configured DPDK TX owner is the only
+     * data-path caller of rte_eth_tx_burst, so no per-burst lock is needed. */''',
+        "single-owner TX lock acquire elision",
+    )
+    replace_once(
+        '''    if (!Dpdk->Interface.OffloadStatus.Transmit.Lockfree) {
+        CxPlatLockRelease(&Interface->TxLock);
+    }''',
+        '''    /* GREENQUIC-P5-SUPER: matching single-owner TX lock release elided. */''',
+        "single-owner TX lock release elision",
+    )
+
 if args.debug_counters == "0":
     replace_once(
         "    Dpdk->RxCounter += BuffersCount;",
@@ -137,10 +170,6 @@ if args.debug_counters == "0":
         "TX debugging counter",
     )
 
-# P5's transfer-window instrumentation calls clock_gettime plus relaxed atomics
-# for every non-empty BASIC/PLUS RX/TX burst. OFF already bypasses it. This
-# switch is for a goodput diagnostic that removes that measurement hot path;
-# normal external RAPL/frequency/C-state recording remains enabled by the test.
 if args.transfer_window == "0":
     rx_track_old = '''        BuffersCount = GreenQuicTrackedRxBurst(
             Interface->Port,
@@ -165,9 +194,6 @@ if args.transfer_window == "0":
         "transfer-window destructor disable",
     )
 
-# QuicTraceEvent may be compiled out, but if tracing is present these two count
-# calls add a ring snapshot solely for text diagnostics. Keep this independently
-# switchable so we can measure it rather than assuming its compile-time cost.
 if args.trace_ringcount == "0":
     replace_once(
         '''                "[data] TX packet (%u bytes) enqueued in ring (now %u entries).",
@@ -188,11 +214,6 @@ if args.trace_ringcount == "0":
         "TX dequeue trace ring count",
     )
 
-# Linux MsQuic amortizes allocation/crossing costs by batching. The raw DPDK
-# path cannot safely gain Linux UDP GSO without changing the raw packet contract,
-# but we can remove one separate metadata-pool allocation from each packet. DPDK
-# mbuf private storage has the same lifetime as the mbuf and is the natural place
-# for metadata that lives exactly until RX return or TX enqueue.
 if args.tx_meta == "mbuf":
     replace_once(
         '"MBUF_POOL_TX", Dpdk->TxMbufPoolSize, Dpdk->MbufCacheSize, 0,',
@@ -355,8 +376,7 @@ GreenQuicSuperDrainAgain: ;
             "DPDK TX burst failed to send all packets");
     }}
     if (GreenQuicSuperDrainBudget > 1 && TxCount == BufferCount) {{
-        const uint32_t GreenQuicSuperBacklog =
-            rte_ring_count(Interface->TxRingBuffer);
+        const uint32_t GreenQuicSuperBacklog = rte_ring_count(Interface->TxRingBuffer);
         if (
             GreenQuicSuperBacklog > 0 &&
             ({threshold}U == 0U || GreenQuicSuperBacklog >= {threshold}U)) {{
@@ -369,27 +389,43 @@ GreenQuicSuperDrainAgain: ;
 
 if args.cap_diag == "1":
     cap_anchor = "    Dpdk->Interface.IfIndex = DeviceInfo.if_index;"
-    cap_new = r'''    printf(
-        "[GreenQUIC-P5-SUPER-CAPS] max_mtu=%u tx_offload_capa=0x%llx rx_offload_capa=0x%llx mt_lockfree=%u mbuf_fast_free=%u udp_cksum=%u ipv4_cksum=%u\n",
+    cap_new = f'''#ifdef RTE_ETH_TX_OFFLOAD_MULTI_SEGS
+    const unsigned GreenQuicCapMultiSegs =
+        (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MULTI_SEGS) != 0 ? 1U : 0U;
+#else
+    const unsigned GreenQuicCapMultiSegs = 0U;
+#endif
+#ifdef RTE_ETH_TX_OFFLOAD_UDP_TSO
+    const unsigned GreenQuicCapUdpTso =
+        (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_UDP_TSO) != 0 ? 1U : 0U;
+#else
+    const unsigned GreenQuicCapUdpTso = 0U;
+#endif
+    printf(
+        "[GreenQUIC-P5-SUPER-CAPS] max_mtu=%u tx_offload_capa=0x%llx rx_offload_capa=0x%llx mt_lockfree=%u mbuf_fast_free=%u udp_cksum=%u ipv4_cksum=%u multi_segs=%u udp_tso=%u max_rxq=%u max_txq=%u tx_lock_mode={args.tx_lock_mode}\\n",
         (unsigned)DeviceInfo.max_mtu,
         (unsigned long long)DeviceInfo.tx_offload_capa,
         (unsigned long long)DeviceInfo.rx_offload_capa,
         (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MT_LOCKFREE) != 0 ? 1U : 0U,
         (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE) != 0 ? 1U : 0U,
         (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_UDP_CKSUM) != 0 ? 1U : 0U,
-        (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_IPV4_CKSUM) != 0 ? 1U : 0U);
+        (DeviceInfo.tx_offload_capa & RTE_ETH_TX_OFFLOAD_IPV4_CKSUM) != 0 ? 1U : 0U,
+        GreenQuicCapMultiSegs,
+        GreenQuicCapUdpTso,
+        (unsigned)DeviceInfo.max_rx_queues,
+        (unsigned)DeviceInfo.max_tx_queues);
     Dpdk->Interface.IfIndex = DeviceInfo.if_index;'''
     replace_once(cap_anchor, cap_new, "startup capability diagnostics")
 
 marker = (
-    "GREENQUIC-P5-SUPER-PERF-V1 "
+    "GREENQUIC-P5-SUPER-PERF-V2 "
     f"cache={args.cache} rxb={args.rx_burst} txb={args.tx_burst} "
     f"ring={args.ring_size} sync={args.ring_sync} "
     f"drain={args.drain_bursts} threshold={args.drain_threshold} "
     f"mtu={args.mtu} skipoffcount={args.skip_off_ringcount} "
     f"debugcounters={args.debug_counters} transferwindow={args.transfer_window} "
     f"traceringcount={args.trace_ringcount} txmeta={args.tx_meta} rxmeta={args.rx_meta} "
-    f"capdiag={args.cap_diag}"
+    f"txlock={args.tx_lock_mode} capdiag={args.cap_diag}"
 )
 include_anchor = "#include <rte_hexdump.h>\n"
 replace_once(
