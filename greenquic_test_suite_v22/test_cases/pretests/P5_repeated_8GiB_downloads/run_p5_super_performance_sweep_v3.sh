@@ -4,7 +4,7 @@ set -Eeuo pipefail
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)}"
 CLIENT_HOST="${CLIENT_HOST:-tinyman}"
-DOWNLOADS="${P5_SUPER_DOWNLOADS:-2}"
+DOWNLOADS="${P5_SUPER_DOWNLOADS:-3}"
 PLAN="${P5_SUPER_PLAN:-refine}"
 CUSTOM_TESTS="${P5_SUPER_TESTS:-}"
 RESULT_ROOT="${RESULT_ROOT:-/tmp/P5_SUPER_SWEEP_${STAMP}}"
@@ -27,23 +27,23 @@ mkdir -p "$RESULT_ROOT/logs" "$MATRIX_ROOT"
 
 cat > "$CONFIGS" <<'EOF'
 index	profile	group	cache	rxb	txb	ring	sync	drain	threshold	mtu	skipoff	debug	window	trace	txmeta	rxmeta	txlock
-00	high_default	refine	128	32	16	4096	legacy	4	0	0	0	1	1	1	mbuf	mbuf	single_owner
+00	high_default	refine	128	32	16	4096	legacy	2	0	0	0	1	1	1	mbuf	mbuf	single_owner
 01	old_measured_baseline	refine	128	32	16	4096	legacy	1	0	0	0	1	1	1	pool	pool	legacy
-02	drain2_meta	refine	128	32	16	4096	legacy	2	0	0	0	1	1	1	mbuf	mbuf	single_owner
+02	drain1_meta	refine	128	32	16	4096	legacy	1	0	0	0	1	1	1	mbuf	mbuf	single_owner
 03	drain3_meta	refine	128	32	16	4096	legacy	3	0	0	0	1	1	1	mbuf	mbuf	single_owner
-04	drain5_meta	refine	128	32	16	4096	legacy	5	0	0	0	1	1	1	mbuf	mbuf	single_owner
-05	threshold64_meta	refine	128	32	16	4096	legacy	4	64	0	0	1	1	1	mbuf	mbuf	single_owner
-06	no_debug_meta	refine	128	32	16	4096	legacy	4	0	0	0	0	1	1	mbuf	mbuf	single_owner
-07	no_window_meta	refine	128	32	16	4096	legacy	4	0	0	0	1	0	1	mbuf	mbuf	single_owner
-08	no_trace_meta	refine	128	32	16	4096	legacy	4	0	0	0	1	1	0	mbuf	mbuf	single_owner
-09	txmeta_pool	refine	128	32	16	4096	legacy	4	0	0	0	1	1	1	pool	mbuf	single_owner
-10	rxmeta_pool	refine	128	32	16	4096	legacy	4	0	0	0	1	1	1	mbuf	pool	single_owner
-11	lock_capability	refine	128	32	16	4096	legacy	4	0	0	0	1	1	1	mbuf	mbuf	capability
-20	clean_high	combo	128	32	16	4096	legacy	4	0	0	1	0	0	0	mbuf	mbuf	single_owner
+04	drain4_meta	refine	128	32	16	4096	legacy	4	0	0	0	1	1	1	mbuf	mbuf	single_owner
+05	threshold64_meta	refine	128	32	16	4096	legacy	2	64	0	0	1	1	1	mbuf	mbuf	single_owner
+06	no_debug_meta	refine	128	32	16	4096	legacy	2	0	0	0	0	1	1	mbuf	mbuf	single_owner
+07	no_window_meta	refine	128	32	16	4096	legacy	2	0	0	0	1	0	1	mbuf	mbuf	single_owner
+08	no_trace_meta	refine	128	32	16	4096	legacy	2	0	0	0	1	1	0	mbuf	mbuf	single_owner
+09	txmeta_pool	refine	128	32	16	4096	legacy	2	0	0	0	1	1	1	pool	mbuf	single_owner
+10	rxmeta_pool	refine	128	32	16	4096	legacy	2	0	0	0	1	1	1	mbuf	pool	single_owner
+11	lock_capability	refine	128	32	16	4096	legacy	2	0	0	0	1	1	1	mbuf	mbuf	capability
+20	clean_high	combo	128	32	16	4096	legacy	2	0	0	1	0	0	0	mbuf	mbuf	single_owner
 21	drain3_clean	combo	128	32	16	4096	legacy	3	0	0	1	0	0	0	mbuf	mbuf	single_owner
-22	drain2_clean	combo	128	32	16	4096	legacy	2	0	0	1	0	0	0	mbuf	mbuf	single_owner
-23	threshold64_clean	combo	128	32	16	4096	legacy	4	64	0	1	0	0	0	mbuf	mbuf	single_owner
-24	mtu1500_high	combo	128	32	16	4096	legacy	4	0	1500	0	1	1	1	mbuf	mbuf	single_owner
+22	drain4_clean	combo	128	32	16	4096	legacy	4	0	0	1	0	0	0	mbuf	mbuf	single_owner
+23	threshold64_clean	combo	128	32	16	4096	legacy	2	64	0	1	0	0	0	mbuf	mbuf	single_owner
+24	mtu1500_high	combo	128	32	16	4096	legacy	2	0	1500	0	1	1	1	mbuf	mbuf	single_owner
 EOF
 
 printf 'index\tprofile\tmode\taggregate_gbps\td1_gbps\tsteady_gbps\trc\n' > "$SUMMARY"
@@ -269,7 +269,7 @@ run_one() {
 echo "======================================================================"
 echo "P5 SUPER PERFORMANCE SWEEP V3"
 echo "PLAN=$PLAN CUSTOM_TESTS=${CUSTOM_TESTS:-none} DOWNLOADS=$DOWNLOADS"
-echo "HIGH DEFAULT: cache128 + txburst16 + drain4 + TX/RX metadata in mbuf + single TX-owner lock elision."
+echo "HIGH DEFAULT: cache128 + txburst16 + drain2 + TX/RX metadata in mbuf + single TX-owner lock elision."
 echo "Ranking uses steady D2+ goodput first; aggregate still includes D1 and is retained."
 echo "GreenQUIC / GreenQUIC+ policy internals remain unchanged."
 echo "======================================================================"
