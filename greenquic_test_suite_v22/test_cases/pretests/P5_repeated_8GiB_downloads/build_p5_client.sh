@@ -40,7 +40,7 @@ P5_BUILD_REUSE="${P5_BUILD_REUSE:-0}"
 case "$P5_BUILD_REUSE" in 0|1) ;; *) echo "ERROR: P5_BUILD_REUSE must be 0 or 1" >&2; exit 2;; esac
 case "$P5_STATIC_PROFILE" in
     native) ;;
-    burst64|rx64|tx64|burst128|cache128|cache512|desc2048|ring2048|ring8192|pool8191)
+    burst64|rx64|tx64|burst128|cache128|cache512|desc2048|ring2048|ring8192|pool8191|cache128_pool8191)
         [[ -f "$STATIC_PERF" ]] || {
             echo "ERROR: P5 static performance transformer not found: $STATIC_PERF" >&2
             exit 2
