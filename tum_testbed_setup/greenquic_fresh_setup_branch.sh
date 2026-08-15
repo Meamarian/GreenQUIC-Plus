@@ -6,239 +6,97 @@ REPO_ROOT="$(git -C "$HERE/.." rev-parse --show-toplevel 2>/dev/null || true)"
 BASE="$HERE/greenquic_fresh_setup_p4_p5_p6_p7.sh"
 FINAL_RUNNER="$HERE/mac_run_final_selected_branch.sh"
 BASTION="mohsen@coinbase"
-REMOTE_BUNDLE="/tmp/GreenQUIC_branch_ready.bundle"
 SSH_OPTS=(-o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new)
-
 fail(){ echo "ERROR: $*" >&2; exit 1; }
-remote(){ local host="$1"; shift; ssh "${SSH_OPTS[@]}" -J "$BASTION" root@"$host" "$@"; }
+remote(){ local h="$1"; shift; ssh "${SSH_OPTS[@]}" -J "$BASTION" root@"$h" "$@"; }
 
-usage() {
-    cat <<'USAGE'
+usage(){ cat <<'USAGE'
 Usage:
   bash tum_testbed_setup/greenquic_fresh_setup_branch.sh main
   bash tum_testbed_setup/greenquic_fresh_setup_branch.sh performance
   bash tum_testbed_setup/greenquic_fresh_setup_branch.sh performance2
-
-Accepted aliases:
-  main         -> main
-  performance  -> performance/p5-max-goodput
-  performance2 -> performance2/p5-max-goodput
-
-The established TUM setup scripts are not modified. This wrapper first runs the
-existing complete setup, then switches both nodes to the selected branch and
-rebuilds/verifies the branch-specific P5 plus isolated P7 binaries.
+Aliases: performance=performance/p5-max-goodput, performance2=performance2/p5-max-goodput
 USAGE
 }
-
 [[ $# -eq 1 ]] || { usage >&2; exit 2; }
 INPUT="$1"
 case "$INPUT" in
-    main) TARGET_BRANCH="main"; BRANCH_TAG="main" ;;
-    performance|performance/p5-max-goodput)
-        TARGET_BRANCH="performance/p5-max-goodput"; BRANCH_TAG="performance" ;;
-    performance2|performance2/p5-max-goodput)
-        TARGET_BRANCH="performance2/p5-max-goodput"; BRANCH_TAG="performance2" ;;
-    *) fail "branch must be main, performance, or performance2" ;;
+  main) TARGET_BRANCH=main; TAG=main ;;
+  performance|performance/p5-max-goodput) TARGET_BRANCH=performance/p5-max-goodput; TAG=performance ;;
+  performance2|performance2/p5-max-goodput) TARGET_BRANCH=performance2/p5-max-goodput; TAG=performance2 ;;
+  *) fail "branch must be main, performance, or performance2" ;;
 esac
-
-[[ -n "$REPO_ROOT" && -d "$REPO_ROOT/.git" ]] || fail "run this from a GreenQUIC Git clone"
-[[ -f "$BASE" ]] || fail "missing preserved TUM setup: $BASE"
-[[ -f "$FINAL_RUNNER" ]] || fail "missing final branch runner: $FINAL_RUNNER"
-command -v git >/dev/null || fail "git is required on the Mac"
-command -v ssh >/dev/null || fail "ssh is required on the Mac"
-command -v scp >/dev/null || fail "scp is required on the Mac"
-
+[[ -n "$REPO_ROOT" && -d "$REPO_ROOT/.git" ]] || fail "run from a GreenQUIC Git clone"
+[[ -f "$BASE" && -f "$FINAL_RUNNER" ]] || fail "missing TUM setup/final runner"
+command -v git >/dev/null; command -v ssh >/dev/null; command -v scp >/dev/null
 cd "$REPO_ROOT"
-echo "======================================================================"
-echo "GREENQUIC TUM BRANCH-AWARE FRESH SETUP"
-echo "requested=$INPUT"
-echo "target=$TARGET_BRANCH"
-echo "The existing TUM setup scripts remain unchanged."
-echo "======================================================================"
 
 git fetch origin "$TARGET_BRANCH"
 TARGET_SHA="$(git rev-parse "origin/$TARGET_BRANCH")"
 [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "cannot resolve origin/$TARGET_BRANCH"
-echo "TARGET SHA=$TARGET_SHA"
+printf 'Selected branch: %s\nSelected SHA:    %s\n' "$TARGET_BRANCH" "$TARGET_SHA"
 
-echo
-echo "======================================================================"
-echo "PHASE A â€” RUN ESTABLISHED COMPLETE TUM SETUP"
-echo "======================================================================"
+echo "=== RUNNING PRESERVED COMPLETE TUM SETUP ==="
 bash "$BASE"
 
-echo
-echo "======================================================================"
-echo "PHASE B â€” DISTRIBUTE SELECTED BRANCH WITHOUT REQUIRING NODE GITHUB KEYS"
-echo "======================================================================"
+echo "=== DISTRIBUTING SELECTED BRANCH TO BOTH NODES ==="
 STAMP="$(date +%Y%m%d_%H%M%S)"
-BUNDLE="/tmp/GreenQUIC_${BRANCH_TAG}_${STAMP}.bundle"
-TMP_REF="refs/heads/__greenquic_branch_setup_${STAMP}_$$"
-cleanup() {
-    git -C "$REPO_ROOT" update-ref -d "$TMP_REF" >/dev/null 2>&1 || true
-    rm -f "$BUNDLE"
-}
+BUNDLE="/tmp/GreenQUIC_${TAG}_${STAMP}.bundle"
+REMOTE_BUNDLE="/tmp/GreenQUIC_selected_branch.bundle"
+TMP_REF="refs/heads/__greenquic_setup_${STAMP}_$$"
+cleanup(){ git update-ref -d "$TMP_REF" >/dev/null 2>&1 || true; rm -f "$BUNDLE"; }
 trap cleanup EXIT
-
 git update-ref "$TMP_REF" "$TARGET_SHA"
 git bundle create "$BUNDLE" "$TMP_REF"
 git bundle verify "$BUNDLE" >/dev/null
-ls -lh "$BUNDLE"
 scp "${SSH_OPTS[@]}" -o ProxyJump="$BASTION" "$BUNDLE" root@idex:"$REMOTE_BUNDLE"
 scp "${SSH_OPTS[@]}" -o ProxyJump="$BASTION" "$BUNDLE" root@tinyman:"$REMOTE_BUNDLE"
 
-checkout_target() {
-    local host="$1"
-    echo "=== CHECKOUT $TARGET_BRANCH on $host ==="
-    remote "$host" bash -s -- "$TARGET_BRANCH" "$TARGET_SHA" "$REMOTE_BUNDLE" "$TMP_REF" <<'REMOTE_CHECKOUT'
+for HOST in idex tinyman; do
+  remote "$HOST" bash -s -- "$TARGET_BRANCH" "$TARGET_SHA" "$REMOTE_BUNDLE" "$TMP_REF" <<'CHECKOUT'
 set -Eeuo pipefail
-TARGET_BRANCH="$1"
-TARGET_SHA="$2"
-BUNDLE="$3"
-TMP_REF="$4"
-ROOT=/root/mohsen
-cd "$ROOT"
+BRANCH="$1"; SHA="$2"; BUNDLE="$3"; REF="$4"
+cd /root/mohsen
 git reset --hard
-git fetch "$BUNDLE" "$TMP_REF"
-git checkout -B "$TARGET_BRANCH" FETCH_HEAD
-ACTUAL="$(git rev-parse HEAD)"
-[[ "$ACTUAL" == "$TARGET_SHA" ]] || { echo "ERROR: target SHA mismatch" >&2; exit 2; }
-echo "HOST=$(hostname) BRANCH=$(git branch --show-current) HEAD=$ACTUAL"
-REMOTE_CHECKOUT
-}
-checkout_target idex
-checkout_target tinyman
-
-build_selected() {
-    local host="$1"
-    echo
-echo "======================================================================"
-    echo "BRANCH BUILD + VERIFY: $host ($BRANCH_TAG)"
-    echo "======================================================================"
-    remote "$host" bash -s -- "$BRANCH_TAG" "$TARGET_SHA" <<'REMOTE_BUILD'
-set -Eeuo pipefail
-KIND="$1"
-TARGET_SHA="$2"
-ROOT=/root/mohsen
-P5="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads"
-P7="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline"
-P5_BUILD="$ROOT/msquic/build-greenquic-p5"
-P5_CLIENT="$P5_BUILD/bin/Release/quicinterop"
-P5_SERVER="$P5_BUILD/bin/Release/quicinteropserver"
-P7_BUILD="$ROOT/msquic/build-linux-p7"
-P7_CLIENT="$P7_BUILD/bin/Release/quicinterop"
-P7_SERVER="$P7_BUILD/bin/Release/quicinteropserver"
-PCI=0000:18:00.0
-cd "$ROOT"
-[[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]]
-[[ -d "$P5" && -d "$P7" ]]
-chmod 0755 "$P5"/*.sh "$P7"/*.sh 2>/dev/null || true
-
-case "$KIND" in
-    main)
-        echo "Building stock/main P5"
-        bash "$P5/build_p5_client.sh"
-        grep -aFq -- 'GreenQUIC-P5-SEQUENCE-V2' "$P5_CLIENT"
-        if grep -aFq -- 'GREENQUIC-P5-SUPER-PERF-V2' "$P5_CLIENT"; then
-            echo "ERROR: performance marker contaminated main P5 binary" >&2
-            exit 3
-        fi
-        ;;
-    performance)
-        echo "Building measured performance P5 defaults"
-        bash "$P5/build_p5_super_performance.sh"
-        grep -aFq -- 'GREENQUIC-P5-SUPER-PERF-V2' "$P5_CLIENT"
-        if grep -aFq -- 'GREENQUIC-P5-PERFORMANCE2-V1' "$P5_CLIENT"; then
-            echo "ERROR: performance2 marker contaminated performance binary" >&2
-            exit 3
-        fi
-        ;;
-    performance2)
-        echo "Building performance2 baseline (all new P2 switches default OFF)"
-        env \
-            P5_P2_DIAG_INTERVAL_US=0 \
-            P5_P2_TX_HANDOFF=shared \
-            P5_P2_RX_PREFETCH=0 \
-            P5_P2_UDP_SEG=0 \
-            bash "$P5/build_p5_performance2.sh"
-        grep -aFq -- 'GREENQUIC-P5-SUPER-PERF-V2' "$P5_CLIENT"
-        grep -aFq -- 'GREENQUIC-P5-PERFORMANCE2-V1' "$P5_CLIENT"
-        ;;
-    *) echo "ERROR: unknown branch kind: $KIND" >&2; exit 2 ;;
-esac
-
-test -x "$P5_CLIENT"
-test -x "$P5_SERVER"
-grep -aFq -- 'GreenQUIC-P5-SEQUENCE-V2' "$P5_CLIENT"
-grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$P5_CLIENT"
-grep -aFq -- 'GreenQUIC PACKETS source=datapath_totals' "$P5_SERVER"
-P5_CLIENT_SHA="$(sha256sum "$P5_CLIENT" | awk '{print $1}')"
-P5_SERVER_SHA="$(sha256sum "$P5_SERVER" | awk '{print $1}')"
-
-echo "Building isolated normal-Linux P7 from selected branch"
-bash "$P7/build_p7_linux.sh"
-test -x "$P7_CLIENT"
-test -x "$P7_SERVER"
-if ldd "$P7_CLIENT" 2>/dev/null | grep -qi dpdk || ldd "$P7_SERVER" 2>/dev/null | grep -qi dpdk; then
-    echo "ERROR: P7 Linux binaries unexpectedly link DPDK" >&2
-    exit 4
-fi
-[[ "$(sha256sum "$P5_CLIENT" | awk '{print $1}')" == "$P5_CLIENT_SHA" ]]
-[[ "$(sha256sum "$P5_SERVER" | awk '{print $1}')" == "$P5_SERVER_SHA" ]]
-
-DRIVER="$(basename "$(readlink -f "/sys/bus/pci/devices/$PCI/driver" 2>/dev/null || true)")"
-case "$DRIVER" in igb_uio|vfio-pci) ;; *) echo "ERROR: test NIC not left on a DPDK driver: ${DRIVER:-none}" >&2; exit 5;; esac
-command -v zip >/dev/null
-python3 -c 'import matplotlib, numpy'
-echo "READY HOST=$(hostname) KIND=$KIND HEAD=$(git rev-parse HEAD) DPDK_DRIVER=$DRIVER"
-sha256sum "$P5_CLIENT" "$P5_SERVER" "$P7_CLIENT" "$P7_SERVER"
-REMOTE_BUILD
-}
-
-build_selected idex
-build_selected tinyman
+git fetch "$BUNDLE" "$REF"
+git checkout -B "$BRANCH" FETCH_HEAD
+[[ "$(git rev-parse HEAD)" == "$SHA" ]]
+printf 'CHECKOUT READY host=%s branch=%s head=%s\n' "$(hostname)" "$(git branch --show-current)" "$(git rev-parse HEAD)"
+CHECKOUT
+  remote "$HOST" bash "/root/mohsen/tum_testbed_setup/greenquic_prepare_selected_branch_host.sh" "$TAG" "$TARGET_SHA"
+done
 
 IDEX_SHA="$(remote idex 'git -C /root/mohsen rev-parse HEAD')"
-TINYMAN_SHA="$(remote tinyman 'git -C /root/mohsen rev-parse HEAD')"
-[[ "$IDEX_SHA" == "$TARGET_SHA" ]] || fail "IDEX is not at selected branch SHA"
-[[ "$TINYMAN_SHA" == "$TARGET_SHA" ]] || fail "Tinyman is not at selected branch SHA"
+TINY_SHA="$(remote tinyman 'git -C /root/mohsen rev-parse HEAD')"
+[[ "$IDEX_SHA" == "$TARGET_SHA" && "$TINY_SHA" == "$TARGET_SHA" ]] || fail "node SHA mismatch"
 remote idex 'ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman true'
 
-remote idex bash -s <<'INSTALL_LAUNCHERS'
+remote idex bash -s <<'LAUNCHERS'
 set -Eeuo pipefail
 cat > /root/run_p5.sh <<'P5EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 P5=/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
 cd "$P5"
-exec ./run_matrix_with_sheet.sh \
-    --client-host tinyman \
-    --client-dir "$P5" \
-    --client-bin /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop \
-    "$@"
+exec ./run_matrix_with_sheet.sh --client-host tinyman --client-dir "$P5" --client-bin /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop "$@"
 P5EOF
 cat > /root/run_p7.sh <<'P7EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 P7=/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline
 cd "$P7"
-exec ./run_matrix_with_report.sh \
-    --client-host tinyman \
-    --client-dir /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline \
-    "$@"
+exec ./run_matrix_with_report.sh --client-host tinyman --client-dir "$P7" "$@"
 P7EOF
 chmod 700 /root/run_p5.sh /root/run_p7.sh
 /root/run_p5.sh --help >/dev/null
 /root/run_p7.sh --help >/dev/null
-echo "IDEX launchers installed: /root/run_p5.sh /root/run_p7.sh"
-INSTALL_LAUNCHERS
+LAUNCHERS
 
-echo
 echo "######################################################################"
 echo "### BRANCH READY ON BOTH TUM NODES"
-echo "### input:  $INPUT"
 echo "### branch: $TARGET_BRANCH"
 echo "### commit: $TARGET_SHA"
-echo"222R'&æ6‚×7V6–f–2&–æ'“¢$TE’ ¦V6†ò ### P7 isolated Linux binary: READY"
-echo "### NICs: DPDk-bound and ready for P5"
-echo "###################################################################### ¦V6†ð§&–çFbtÔ24ôÔÔäB(	Bd”äÂBDU5E2Âb%Tå2‚RDõtäÄôE3¥ÆåÆâp§&–çFbu$UóÒW²DsÒ"B†FFR²RU’RVÒRVEòRT‚RTÒRU2’#²ÄôsÒ"D„ôÔRôF÷væÆöG2ôw&VVåT”5ôd”äÅòW5òGµDwÒæÆör#²”Dd”ÄSÒ"D„ôÔRôF÷væÆöG2ôw&VVåT”5ôd”äÅòW5òGµDwÒç–B#²–b6B"E$Uò#²F†Vâæö‡W6ffV–æFRÖF–×7R&6‚GVÕ÷FW7F&VE÷6WGWöÖ5÷'Våöf–æÅ÷6VÆV7FVEö'&æ6‚ç6‚WÒ×'Vç2bÒÖF÷væÆöG2Râ"DÄôr"#âcÂöFWböçVÆÂb”CÒB²V6†ò"E”B"â"E”Dd”ÄR#²F—6÷vâ"E”B"#âöFWböçVÆÂÇÂG'VS²V6†ò%5D%DTB”CÒE”B#²V6†ò$ÄôsÒDÄôr#²V6†ò%”Dd”ÄSÒE”Dd”ÄR#²V6†ò%–÷R6â6Æ÷6RF†—2FW&Ö–æÂâ#²VÇ6RV6†ò$U%$õ#¢6ææ÷B6BFòE$Uò"âc#²f•ÆârÀ¢"E$Uõõ$ôõB""D%$ä4…õDr""D%$ä4…õDr""D”åUB ¦V6†ð
+echo "### P5 + isolated P7: READY; NICs DPDK-bound"
+echo "######################################################################"
+printf '\nMAC COMMAND â€” FINAL 4 TESTS, 6 RUNS x 5 DOWNLOADS:\n\n'
+printf 'REPO=%q; TAG="$(date +%%Y%%m%%d_%%H%%M%%S)"; LOG="$HOME/Downloads/GreenQUIC_FINAL_%s_${TAG}.log"; PIDFILE="$HOME/Downloads/GreenQUIC_FINAL_%s_${TAG}.pid"; if cd "$REPO"; then nohup caffeinate -dimsu bash tum_testbed_setup/mac_run_final_selected_branch.sh %q --runs 6 --downloads 5 >"$LOG" 2>&1 < /dev/null & PID=$!; echo "$PID" >"$PIDFILE"; disown "$PID" 2>/dev/null || true; echo "STARTED PID=$PID"; echo "LOG=$LOG"; echo "PIDFILE=$PIDFILE"; echo "You can close this Terminal."; else echo "ERROR: cannot cd to $REPO" >&2; fi\n' "$REPO_ROOT" "$TAG" "$TAG" "$INPUT"
