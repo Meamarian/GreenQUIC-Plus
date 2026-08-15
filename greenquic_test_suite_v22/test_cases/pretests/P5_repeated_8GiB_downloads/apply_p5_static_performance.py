@@ -6,7 +6,7 @@ isolated P5 source copy. It adds no runtime branches, counters, retries, checksu
 logic, locks, or GreenQUIC policy changes to the datapath hot path.
 
 The native profile must not invoke this file at all; build_p5_client.sh preserves
-the exact known-good d699f06 P5 build path for that case.
+the known-good native P5 build path for that case.
 """
 
 from pathlib import Path
@@ -30,6 +30,11 @@ PROFILES = {
     "ring2048": {"tx_ring": 2048},
     "ring8192": {"tx_ring": 8192},
     "pool8191": {"rx_pool": 8191, "tx_pool": 8191},
+    "cache128_pool8191": {
+        "mbuf_cache": 128,
+        "rx_pool": 8191,
+        "tx_pool": 8191,
+    },
 }
 
 if profile not in PROFILES:
