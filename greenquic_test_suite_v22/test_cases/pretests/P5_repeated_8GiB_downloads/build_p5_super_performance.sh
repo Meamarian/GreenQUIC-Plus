@@ -16,28 +16,30 @@ P5_SUPER_RX_BURST="${P5_SUPER_RX_BURST:-32}"
 P5_SUPER_TX_BURST="${P5_SUPER_TX_BURST:-16}"
 P5_SUPER_RING_SIZE="${P5_SUPER_RING_SIZE:-4096}"
 P5_SUPER_RING_SYNC="${P5_SUPER_RING_SYNC:-legacy}"
-P5_SUPER_DRAIN_BURSTS="${P5_SUPER_DRAIN_BURSTS:-1}"
+P5_SUPER_DRAIN_BURSTS="${P5_SUPER_DRAIN_BURSTS:-4}"
 P5_SUPER_DRAIN_THRESHOLD="${P5_SUPER_DRAIN_THRESHOLD:-0}"
 P5_SUPER_MTU="${P5_SUPER_MTU:-0}"
 P5_SUPER_SKIP_OFF_RINGCOUNT="${P5_SUPER_SKIP_OFF_RINGCOUNT:-0}"
 P5_SUPER_DEBUG_COUNTERS="${P5_SUPER_DEBUG_COUNTERS:-1}"
 P5_SUPER_TRANSFER_WINDOW="${P5_SUPER_TRANSFER_WINDOW:-1}"
 P5_SUPER_TRACE_RINGCOUNT="${P5_SUPER_TRACE_RINGCOUNT:-1}"
-P5_SUPER_TX_META="${P5_SUPER_TX_META:-pool}"
-P5_SUPER_RX_META="${P5_SUPER_RX_META:-pool}"
+P5_SUPER_TX_META="${P5_SUPER_TX_META:-mbuf}"
+P5_SUPER_RX_META="${P5_SUPER_RX_META:-mbuf}"
+P5_SUPER_TX_LOCK_MODE="${P5_SUPER_TX_LOCK_MODE:-single_owner}"
 P5_SUPER_CAP_DIAG="${P5_SUPER_CAP_DIAG:-1}"
 
 case "$REUSE" in 0|1) ;; *) echo "ERROR: P5_BUILD_REUSE must be 0 or 1" >&2; exit 2;; esac
+case "$P5_SUPER_TX_LOCK_MODE" in legacy|capability|single_owner) ;; *) echo "ERROR: invalid P5_SUPER_TX_LOCK_MODE=$P5_SUPER_TX_LOCK_MODE" >&2; exit 2;; esac
 [[ -d "$DPDK" ]] || { echo "ERROR: DPDK installation not found: $DPDK" >&2; exit 2; }
 [[ -f "$TRANSFORM" ]] || { echo "ERROR: missing transformer $TRANSFORM" >&2; exit 2; }
 [[ -f "$COUNTER_GUARD" ]] || { echo "ERROR: missing counter guard $COUNTER_GUARD" >&2; exit 2; }
 
-echo "P5 SUPER PERFORMANCE BUILD"
+echo "P5 SUPER PERFORMANCE BUILD V3"
+echo "MEASURED HIGH-PERFORMANCE DEFAULT: cache128 txburst16 drain4 metadata-in-mbuf both directions"
 echo "cache=$P5_SUPER_CACHE rxb=$P5_SUPER_RX_BURST txb=$P5_SUPER_TX_BURST ring=$P5_SUPER_RING_SIZE"
 echo "sync=$P5_SUPER_RING_SYNC drain=$P5_SUPER_DRAIN_BURSTS threshold=$P5_SUPER_DRAIN_THRESHOLD mtu=$P5_SUPER_MTU"
 echo "skip_off_ringcount=$P5_SUPER_SKIP_OFF_RINGCOUNT debug_counters=$P5_SUPER_DEBUG_COUNTERS transfer_window=$P5_SUPER_TRANSFER_WINDOW"
-echo "trace_ringcount=$P5_SUPER_TRACE_RINGCOUNT tx_meta=$P5_SUPER_TX_META rx_meta=$P5_SUPER_RX_META cap_diag=$P5_SUPER_CAP_DIAG"
-echo "P5 packet-total RxCounter/TxCounter are always preserved; debug_counters=0 removes only unused TxEnqueueCounter hot-path writes."
+echo "trace_ringcount=$P5_SUPER_TRACE_RINGCOUNT tx_meta=$P5_SUPER_TX_META rx_meta=$P5_SUPER_RX_META tx_lock_mode=$P5_SUPER_TX_LOCK_MODE cap_diag=$P5_SUPER_CAP_DIAG"
 echo "GreenQUIC / GreenQUIC+ policy internals: unchanged"
 
 P5_STATIC_PROFILE=native P5_BUILD_REUSE="$REUSE" bash "$HERE/build_p5_client.sh"
@@ -63,13 +65,14 @@ python3 "$TRANSFORM" "$DATAPATH" \
     --trace-ringcount "$P5_SUPER_TRACE_RINGCOUNT" \
     --tx-meta "$P5_SUPER_TX_META" \
     --rx-meta "$P5_SUPER_RX_META" \
+    --tx-lock-mode "$P5_SUPER_TX_LOCK_MODE" \
     --cap-diag "$P5_SUPER_CAP_DIAG"
 
 python3 "$COUNTER_GUARD" "$P5_SUPER_DEBUG_COUNTERS" "$DATAPATH"
 python3 -m py_compile "$TRANSFORM" "$COUNTER_GUARD"
 
-grep -Fq 'GREENQUIC-P5-SUPER-PERF-V1' "$DATAPATH" || {
-    echo "ERROR: super performance marker missing from generated datapath" >&2
+grep -Fq 'GREENQUIC-P5-SUPER-PERF-V2' "$DATAPATH" || {
+    echo "ERROR: super performance V2 marker missing from generated datapath" >&2
     exit 2
 }
 grep -Fq 'Dpdk->RxCounter += BuffersCount;' "$DATAPATH" || {
@@ -83,6 +86,18 @@ grep -Fq 'Dpdk->TxCounter += TxCount;' "$DATAPATH" || {
 if [[ "$P5_SUPER_DEBUG_COUNTERS" == 0 ]]; then
     ! grep -Fq 'Dpdk->TxEnqueueCounter++;' "$DATAPATH" || {
         echo "ERROR: TxEnqueueCounter update still present" >&2
+        exit 2
+    }
+fi
+if [[ "$P5_SUPER_TX_LOCK_MODE" != legacy ]]; then
+    ! grep -A4 -F 'RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE' "$DATAPATH" | grep -Fq 'OffloadStatus.Transmit.Lockfree = TRUE' || {
+        echo "ERROR: MBUF_FAST_FREE is still incorrectly setting MT-lockfree status" >&2
+        exit 2
+    }
+fi
+if [[ "$P5_SUPER_TX_LOCK_MODE" == single_owner ]]; then
+    grep -Fq 'matching single-owner TX lock release elided' "$DATAPATH" || {
+        echo "ERROR: single-owner TX lock elision marker missing" >&2
         exit 2
     }
 fi
@@ -101,8 +116,8 @@ test -x "$CLIENT"
 test -x "$SERVER"
 
 for bin in "$CLIENT" "$SERVER"; do
-    grep -aFq -- 'GREENQUIC-P5-SUPER-PERF-V1' "$bin" || {
-        echo "ERROR: super performance marker missing from $bin" >&2
+    grep -aFq -- 'GREENQUIC-P5-SUPER-PERF-V2' "$bin" || {
+        echo "ERROR: super performance V2 marker missing from $bin" >&2
         exit 2
     }
     for bad in \
@@ -123,7 +138,7 @@ for bin in "$CLIENT" "$SERVER"; do
 done
 
 echo
-echo "P5 SUPER BUILD PASS"
+echo "P5 SUPER BUILD V3 PASS"
 echo "CLIENT: $(readlink -f "$CLIENT")"
 sha256sum "$CLIENT"
 echo "SERVER: $(readlink -f "$SERVER")"
