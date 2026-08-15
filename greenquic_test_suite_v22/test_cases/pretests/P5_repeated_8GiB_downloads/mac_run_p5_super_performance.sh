@@ -2,26 +2,25 @@
 set -Eeuo pipefail
 
 BRANCH="performance/p5-max-goodput"
-PLAN="screen"
+PLAN="refine"
 TESTS=""
-DOWNLOADS=3
+DOWNLOADS=2
 
 usage() {
     cat <<'EOF'
 Usage:
-  bash ./mac_run_p5_super_performance.sh [--plan screen|combo|all] [--tests comma,list] [--downloads N]
+  bash ./mac_run_p5_super_performance.sh [--plan refine|combo|all] [--tests comma,list] [--downloads N]
 
-Recommended next run:
-  --plan screen
+Default next experiment:
+  --plan refine --downloads 2
 
-The screen plan changes one property at a time from the measured cache128 +
-TX-burst16 baseline. Combination profiles exist but are not run by default.
+V3 reports both the normal aggregate goodput and steady D2+ goodput so the
+slower first transfer does not hide steady datapath performance.
 
 Examples:
   bash ./mac_run_p5_super_performance.sh
   bash ./mac_run_p5_super_performance.sh --plan combo
-  bash ./mac_run_p5_super_performance.sh --plan all
-  bash ./mac_run_p5_super_performance.sh --tests measured_default,no_debug_counters,txmeta_mbuf
+  bash ./mac_run_p5_super_performance.sh --tests high_default,drain3_meta,no_debug_meta
 EOF
 }
 
@@ -35,36 +34,37 @@ while (($#)); do
     esac
 done
 
-case "$PLAN" in screen|combo|all) ;; *) echo "ERROR: --plan must be screen|combo|all" >&2; exit 2;; esac
-[[ "$DOWNLOADS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: --downloads must be positive" >&2; exit 2; }
+case "$PLAN" in refine|combo|all) ;; *) echo "ERROR: --plan must be refine|combo|all" >&2; exit 2;; esac
+[[ "$DOWNLOADS" =~ ^[2-9][0-9]*$ ]] || { echo "ERROR: --downloads must be at least 2" >&2; exit 2; }
 
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(cd -- "$HERE/../../../.." && pwd)"
 P5="/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads"
 STAMP="$(date +%Y%m%d_%H%M%S)"
-BUNDLE="/tmp/GreenQUIC_P5_SUPER_${STAMP}.bundle"
-REMOTE_BUNDLE="/tmp/GreenQUIC_P5_SUPER_${STAMP}.bundle"
+BUNDLE="/tmp/GreenQUIC_P5_SUPER_V3_${STAMP}.bundle"
+REMOTE_BUNDLE="/tmp/GreenQUIC_P5_SUPER_V3_${STAMP}.bundle"
 RESULT="/tmp/P5_SUPER_SWEEP_${STAMP}"
 MATRIX="$P5/matrix_results/P5_SUPER_SWEEP_${STAMP}"
 CHARTS="/tmp/P5_SUPER_SWEEP_CHARTS_${STAMP}.tar.gz"
 LOCAL="$HOME/Downloads/P5_SUPER_SWEEP_${STAMP}"
-RUNNER="run_p5_super_performance_sweep_v2.sh"
+RUNNER="run_p5_super_performance_sweep_v3.sh"
 
 cd "$REPO_ROOT"
 cleanup_local_bundle() { rm -f "$BUNDLE"; }
 trap cleanup_local_bundle EXIT
 
 echo "======================================================================"
-echo "P5 SUPER PERFORMANCE V2"
+echo "P5 SUPER PERFORMANCE V3"
 echo "PLAN=$PLAN"
 echo "TESTS=${TESTS:-plan-default}"
 echo "DOWNLOADS=$DOWNLOADS"
 echo "RUNNER=$RUNNER"
+echo "HIGH DEFAULT=cache128 + txburst16 + drain4 + TX/RX metadata-in-mbuf"
 echo "======================================================================"
 
 if [ -n "$(git status --porcelain)" ]; then
     echo "Saving local Mac working-tree changes..."
-    git stash push -u -m "pre-p5-super-${STAMP}"
+    git stash push -u -m "pre-p5-super-v3-${STAMP}"
 fi
 
 git fetch origin main "$BRANCH"
@@ -90,11 +90,9 @@ fi
 
 rm -f "$BUNDLE"
 if [ -n "$BASE" ] && [ "$BASE" = "$EXPECTED" ]; then
-    echo "Server HEADs already match expected HEAD $EXPECTED; creating single-commit bundle."
     if PARENT="$(git rev-parse "$EXPECTED^" 2>/dev/null)"; then
         git bundle create "$BUNDLE" "$BRANCH" "^$PARENT"
     else
-        echo "Expected commit has no parent; creating full branch bundle."
         git bundle create "$BUNDLE" "$BRANCH"
     fi
 elif [ -n "$BASE" ]; then
@@ -106,9 +104,9 @@ else
 fi
 ls -lh "$BUNDLE"
 
-if ssh idex 'ps -eo args= | grep -Eq "[r]un_p5_super_performance_sweep(_v2)?\.sh|[r]un_cache128_ring_sweep\.sh|[r]un_cache128_isolated_feature_sweep\.sh"'; then
+if ssh idex 'ps -eo args= | grep -Eq "[r]un_p5_super_performance_sweep(_v[23])?\.sh|[r]un_cache128_ring_sweep\.sh|[r]un_cache128_isolated_feature_sweep\.sh"'; then
     echo "ERROR: an old P5 performance sweep is still running on idex."
-    ssh idex 'ps -eo pid=,args= | grep -E "[r]un_p5_super_performance_sweep(_v2)?\.sh|[r]un_cache128_ring_sweep\.sh|[r]un_cache128_isolated_feature_sweep\.sh"'
+    ssh idex 'ps -eo pid=,args= | grep -E "[r]un_p5_super_performance_sweep(_v[23])?\.sh|[r]un_cache128_ring_sweep\.sh|[r]un_cache128_isolated_feature_sweep\.sh"'
     exit 40
 fi
 
@@ -118,7 +116,7 @@ ssh idex "scp '$REMOTE_BUNDLE' root@tinyman:'$REMOTE_BUNDLE'"
 ssh idex "EXPECTED='$EXPECTED' BRANCH='$BRANCH' BUNDLE='$REMOTE_BUNDLE' STAMP='$STAMP' bash -s" <<'REMOTE'
 set -euo pipefail
 cd /root/mohsen
-PATCH="/tmp/GreenQUIC_before_p5_super_${STAMP}_idex.patch"
+PATCH="/tmp/GreenQUIC_before_p5_super_v3_${STAMP}_idex.patch"
 git diff HEAD > "$PATCH" || true
 [ -s "$PATCH" ] || rm -f "$PATCH"
 git reset --hard
@@ -132,7 +130,7 @@ REMOTE
 ssh idex "ssh root@tinyman \"EXPECTED='$EXPECTED' BRANCH='$BRANCH' BUNDLE='$REMOTE_BUNDLE' STAMP='$STAMP' bash -s\"" <<'REMOTE'
 set -euo pipefail
 cd /root/mohsen
-PATCH="/tmp/GreenQUIC_before_p5_super_${STAMP}_tinyman.patch"
+PATCH="/tmp/GreenQUIC_before_p5_super_v3_${STAMP}_tinyman.patch"
 git diff HEAD > "$PATCH" || true
 [ -s "$PATCH" ] || rm -f "$PATCH"
 git reset --hard
@@ -143,8 +141,8 @@ echo "TINYMAN:"
 git log -1 --format='HEAD=%H%nSUBJECT=%s'
 REMOTE
 
-ssh idex "cd '$P5' && bash -n ./build_p5_super_performance.sh && bash -n ./$RUNNER && python3 -m py_compile ./apply_p5_super_performance.py && echo 'IDEX SUPER V2 PREFLIGHT PASS'"
-ssh idex "ssh root@tinyman \"cd '$P5' && bash -n ./build_p5_super_performance.sh && bash -n ./$RUNNER && python3 -m py_compile ./apply_p5_super_performance.py && echo 'TINYMAN SUPER V2 PREFLIGHT PASS'\""
+ssh idex "cd '$P5' && bash -n ./build_p5_super_performance.sh && bash -n ./$RUNNER && python3 -m py_compile ./apply_p5_super_performance.py && echo 'IDEX SUPER V3 PREFLIGHT PASS'"
+ssh idex "ssh root@tinyman \"cd '$P5' && bash -n ./build_p5_super_performance.sh && bash -n ./$RUNNER && python3 -m py_compile ./apply_p5_super_performance.py && echo 'TINYMAN SUPER V3 PREFLIGHT PASS'\""
 
 echo
 echo "======================================================================"
@@ -169,7 +167,7 @@ fi
 
 echo
 echo "======================================================================"
-echo "FINAL TABLE"
+echo "FINAL TABLE — AGGREGATE + STEADY D2+"
 echo "======================================================================"
 if [ -f "$LOCAL/comparison_table.tsv" ]; then column -t -s $'\t' "$LOCAL/comparison_table.tsv" 2>/dev/null || cat "$LOCAL/comparison_table.tsv"; else echo "comparison_table.tsv missing"; fi
 
@@ -178,12 +176,6 @@ echo "======================================================================"
 echo "DPDK CAPABILITIES"
 echo "======================================================================"
 if [ -f "$LOCAL/dpdk_capabilities.txt" ]; then sort -u "$LOCAL/dpdk_capabilities.txt"; fi
-
-echo
-echo "======================================================================"
-echo "NUMA"
-echo "======================================================================"
-if [ -f "$LOCAL/numa_topology.txt" ]; then cat "$LOCAL/numa_topology.txt"; fi
 
 echo
 echo "======================================================================"
