@@ -2,126 +2,140 @@
 
 This directory contains a build-time-only performance experiment framework for the P5 DPDK datapath. It does not change GreenQUIC or GreenQUIC+ power-policy logic.
 
-## Measured defaults
+## Measured high-performance default
 
-The default super-performance build uses only settings that already won in the completed 2026-08-15 measurements:
+The super-performance build now defaults to the strongest balanced configuration supported by the completed 2026-08-15 measurements while keeping the normal P5 measurement instrumentation enabled:
 
 - mbuf cache: 128
 - RX burst: 32
 - TX burst: 16
 - software TX ring: 4096
 - producer behavior: legacy explicit MP enqueue
-- bounded extra drain: disabled
+- bounded TX drain: 4 bursts per worker-loop visit
+- drain threshold: 0 (continue while backlog remains and the previous NIC burst was fully accepted)
+- TX metadata: mbuf private storage
+- RX metadata: mbuf private storage
 - MTU override: disabled
-- OFF ring-count optimization: disabled
-- producer-side enqueue counter: preserved until independently measured
-- transfer-window hot-path instrumentation: preserved until independently measured
-- trace-only ring counts: preserved until independently measured
-- RX/TX metadata: original `AdditionalInfoPool`
+- transfer-window instrumentation: enabled
+- trace ring-count instrumentation: enabled
+- packet-total counters: preserved
+- TX lock mode: `single_owner`
 
-In the cache128 ring sweep, TX burst 16 had the highest three-mode average and highest worst-mode result:
+The measured `drain4_meta_both` result that motivated this default was:
 
-| profile | OFF | BASIC | PLUS | 3-mode avg | worst |
-|---|---:|---:|---:|---:|---:|
-| control | 9.110494 | 8.641395 | 8.454125 | 8.735338 | 8.454125 |
-| txburst16 | 9.118058 | 8.724396 | 9.237178 | 9.026544 | 8.724396 |
-| mp_classic | 9.064712 | 8.537628 | 9.433802 | 9.012047 | 8.537628 |
-| txburst64 | 8.904870 | 8.585006 | 9.540167 | 9.010014 | 8.585006 |
+| OFF | BASIC | PLUS | 3-mode avg | worst |
+|---:|---:|---:|---:|---:|
+| 9.145927 | 8.927281 | 10.023780 | 9.365663 | 8.927281 |
 
-The earlier static sweep found cache128 to be the strongest common static configuration: OFF 8.956036, BASIC 8.813568, PLUS 9.743661 Gbit/s.
+A second strong candidate, `clean_hotpath_meta_both`, achieved OFF 9.275855, BASIC 8.970720, PLUS 9.401196 Gbit/s. It is not the default because it removes measurement/debug hot-path work. Those switches remain independent experiments so measurement fidelity and performance can be evaluated separately.
 
-NUMA is not the current problem: both endpoints, the selected CPUs, and the 18:00.0 E810 are on NUMA node 0.
+Earlier measurements established the static foundation:
+
+- `cache128` was the strongest common cache configuration.
+- TX burst 16 was the strongest common TX-burst configuration in the ring sweep.
+- large TX-ring backlog occurred before the NIC while NIC partial TX bursts and drops were zero.
+- NUMA is not the current problem: the selected CPUs and E810 are on NUMA node 0 on both endpoints.
+
+## Why download 1 is reported separately
+
+P5 repeatedly showed a slower first transfer than later transfers in the same QUIC connection. V3 therefore keeps download 1 for correctness and aggregate reporting but also computes a separate steady-state metric from downloads 2..N.
+
+The committed Mac runner defaults to **2 downloads per mode**. With that setting:
+
+- `aggregate_gbps` includes D1 and D2.
+- `d1_gbps` reports only the first transfer.
+- `steady_gbps` is exactly D2.
+
+With more than two downloads, `steady_gbps` is calculated over all downloads from D2 onward.
 
 ## Linux-path findings
 
-P7 uses the normal MsQuic Linux UDP datapath. That datapath can amortize per-packet work before entering the kernel: it probes UDP segmentation and receive coalescing, can send a large segmented buffer through one `sendmsg`, falls back to `sendmmsg` batching, and can split a GRO-coalesced receive into multiple QUIC datagrams.
+P7 uses the normal MsQuic Linux UDP datapath. That path can amortize work before entering the kernel: it probes UDP segmentation and receive coalescing, can send a segmented buffer through one `sendmsg`, falls back to `sendmmsg` batching, and can process GRO-coalesced receive data.
 
-The current raw DPDK path instead allocates one DPDK metadata object plus one mbuf for a QUIC packet, enqueues that mbuf individually to a shared software TX ring, and the DPDK worker normally drains one burst per worker-loop visit. Previous diagnostics showed server TX-ring high-water of 2226 in PLUS while NIC partial TX bursts and drops were zero. The bottleneck is therefore plausibly the userspace handoff and per-packet overhead before the NIC rather than `rte_eth_tx_burst` capacity.
+The raw DPDK path instead handles a QUIC packet as an mbuf and hands that mbuf through a software TX ring. Earlier code also allocated a separate `DPDK_TX_PACKET`/`DPDK_RX_PACKET` from `AdditionalInfoPool` for every packet. The measured metadata-in-mbuf experiments remove that extra allocation/free pair while preserving packet ownership and lifetime.
 
-A true Linux-style UDP GSO implementation in the raw DPDK path is deliberately not forced into this experiment framework: it would change the raw packetization contract and needs separate correctness work. The current framework first tests safer improvements that address the same sources of overhead.
+A true Linux-style UDP GSO/batching design for the raw DPDK path remains a separate future correctness/performance project. V3 first refines the safer handoff and drain improvements already supported by measurement.
 
-## Additional hot-path problems found
+## TX capability bookkeeping correction
 
-The tracked raw DPDK source contains `RxCounter`, `TxCounter`, and `TxEnqueueCounter`. The P5 datapath fix uses `RxCounter` and `TxCounter` at teardown to emit validated packet totals, so those two updates must remain. `TxEnqueueCounter`, however, has no reader and is written by the QUIC producer path for every packet. With multiple producers this creates an unnecessary shared cache-line write. For compatibility, the existing `P5_SUPER_DEBUG_COUNTERS=0` switch now removes only `TxEnqueueCounter`; a build guard restores and verifies the required `RxCounter`/`TxCounter` updates before compilation.
+The tracked raw DPDK source historically treated `RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE` as if it implied `RTE_ETH_TX_OFFLOAD_MT_LOCKFREE`. They are different capabilities. The measured E810 reported `mbuf_fast_free=1` but `mt_lockfree=0`.
 
-BASIC and PLUS also call the P5 transfer-window tracker for each non-empty RX/TX burst. That tracker calls `clock_gettime(CLOCK_MONOTONIC)` and relaxed atomics. OFF already bypasses the tracker. `P5_SUPER_TRANSFER_WINDOW=0` removes only this transfer-window measurement hot path; the external RAPL, C-state and frequency samplers remain enabled. Transfer-window-specific RAPL plots will naturally be unavailable for that diagnostic profile.
+The super framework now exposes three compile-time TX-lock modes:
 
-The original raw DPDK path also allocates a separate `DPDK_TX_PACKET`/`DPDK_RX_PACKET` metadata object from `AdditionalInfoPool` in addition to the mbuf. DPDK mbuf private storage has the same required packet lifetime, so `P5_SUPER_TX_META=mbuf` and `P5_SUPER_RX_META=mbuf` independently place this metadata in mbuf-private storage and eliminate the corresponding extra allocation/free pair. These are experimental and remain disabled in the measured default until tested.
+- `legacy`: reproduce the historical behavior exactly.
+- `capability`: correct the MBUF_FAST_FREE bookkeeping and retain the TX lock when the PMD does not advertise MT_LOCKFREE.
+- `single_owner`: correct the bookkeeping and remove the per-burst data TX lock because the configured DPDK TX-owner lcore is the only data-path caller of `rte_eth_tx_burst` in this P5 design.
+
+`single_owner` is the measured-high-performance default. This does **not** claim that the E810 PMD supports MT-lockfree TX.
+
+Startup diagnostics also report MT-lockfree, MBUF fast-free, checksum, multi-segment/UDP-TSO availability when exposed by the installed DPDK headers, and the device RX/TX queue limits.
 
 ## Build-time options
 
-`build_p5_super_performance.sh` accepts these environment variables:
+`build_p5_super_performance.sh` accepts:
 
 - `P5_SUPER_CACHE=128|256|512`
 - `P5_SUPER_RX_BURST=16|32|64|128`
 - `P5_SUPER_TX_BURST=16|32|64|128`
 - `P5_SUPER_RING_SIZE=1024|2048|4096|8192`
 - `P5_SUPER_RING_SYNC=legacy|mp|hts|rts`
-- `P5_SUPER_DRAIN_BURSTS=1|2|4|8`
+- `P5_SUPER_DRAIN_BURSTS=1..8`
 - `P5_SUPER_DRAIN_THRESHOLD=N`
 - `P5_SUPER_MTU=0|1500`
 - `P5_SUPER_SKIP_OFF_RINGCOUNT=0|1`
-- `P5_SUPER_DEBUG_COUNTERS=0|1` (`0` means remove only unused `TxEnqueueCounter` in P5)
+- `P5_SUPER_DEBUG_COUNTERS=0|1`
 - `P5_SUPER_TRANSFER_WINDOW=0|1`
 - `P5_SUPER_TRACE_RINGCOUNT=0|1`
 - `P5_SUPER_TX_META=pool|mbuf`
 - `P5_SUPER_RX_META=pool|mbuf`
+- `P5_SUPER_TX_LOCK_MODE=legacy|capability|single_owner`
 - `P5_SUPER_CAP_DIAG=0|1`
 
-Every build first restores the disposable P5 datapath from tracked MsQuic, then applies exactly the requested configuration. The switches are compile/build-time experiments, not new per-packet runtime environment branches.
+Every build restores the disposable P5 datapath from tracked MsQuic and applies only the requested build-time configuration. No new per-packet runtime environment branches are introduced. GreenQUIC/GreenQUIC+ policy logic is unchanged.
 
-### Ring synchronization
+`P5_SUPER_DEBUG_COUNTERS=0` removes only the unused producer-side `TxEnqueueCounter` update in P5. The P5-required `RxCounter` and `TxCounter` packet totals are restored and verified by `apply_p5_super_packet_counter_guard.py`.
 
-- `legacy`: preserves the currently measured `RING_F_MP_HTS_ENQ` creation flag plus explicit `rte_ring_mp_enqueue`.
-- `mp`: removes HTS creation and uses classic MP behavior.
-- `hts`: keeps the HTS creation flag and switches to generic `rte_ring_enqueue`, which dispatches through configured HTS mode.
-- `rts`: creates an RTS producer ring and uses generic enqueue.
+## V3 refinement plan
 
-### Bounded drain
+`run_p5_super_performance_sweep_v3.sh` is now the recommended runner.
 
-When `P5_SUPER_DRAIN_BURSTS > 1`, the DPDK TX worker may drain more than one ring burst before returning to the worker loop. It continues only when the previous NIC TX burst accepted every dequeued packet. `P5_SUPER_DRAIN_THRESHOLD` can require a minimum remaining backlog before another drain. `GreenQuicOnTxPoll` still observes every drained burst; `GreenQuicApplyPolicy` remains in the unchanged outer worker loop.
+Default plan: `P5_SUPER_PLAN=refine`.
 
-## V2 test plan
+The default refinement profiles are:
 
-`run_p5_super_performance_sweep_v2.sh` supports:
+1. `high_default` — measured high-performance default.
+2. `old_measured_baseline` — cache128/TX16 but old one-drain, pool metadata, legacy lock behavior.
+3. `drain2_meta` — only drain depth changes to 2.
+4. `drain3_meta` — only drain depth changes to 3.
+5. `drain5_meta` — only drain depth changes to 5.
+6. `threshold64_meta` — only adds a 64-packet threshold to the drain4 policy.
+7. `no_debug_meta` — only removes the unused producer debug counter.
+8. `no_window_meta` — only removes the transfer-window hot path.
+9. `no_trace_meta` — only removes trace-only ring-count snapshots.
+10. `txmeta_pool` — only returns TX metadata to `AdditionalInfoPool`.
+11. `rxmeta_pool` — only returns RX metadata to `AdditionalInfoPool`.
+12. `lock_capability` — only changes TX locking from `single_owner` to PMD-capability locking.
 
-- `P5_SUPER_PLAN=screen`: recommended next run; every row differs from `measured_default` in one property only.
-- `P5_SUPER_PLAN=combo`: measured baseline plus predefined combinations for a later run.
-- `P5_SUPER_PLAN=all`: screen and combination profiles together.
-- `P5_SUPER_TESTS=a,b,c`: explicit profile list, overriding the plan.
+This plan preserves one-variable-at-a-time interpretation around the measured high-performance default.
 
-The default screen plan is:
+The separate `combo` plan contains only follow-up combinations such as cleaned hot path with drain2/drain3/threshold64 and an MTU-1500 check. It is not part of the default refinement run.
 
-1. `measured_default`
-2. `classic_mp`
-3. `drain2`
-4. `drain4`
-5. `drain8`
-6. `adaptive64`
-7. `mtu1500`
-8. `skipoffcount`
-9. `no_debug_counters` — P5-safe producer-counter removal only
-10. `no_transfer_window`
-11. `no_trace_ringcount`
-12. `txmeta_mbuf`
-13. `rxmeta_mbuf`
-
-The combination plan is present but intentionally separate. It includes `classic_mp_drain4`, `clean_hotpath`, `meta_both`, drain+metadata variants, and a final `super_combo`. Run it only after the screen table tells us which individual changes are actually beneficial.
+The final V3 table ranks configurations by three-mode **steady D2+ average**, then steady worst-mode goodput, then full aggregate goodput. The normal aggregate metric remains present for direct comparison with earlier P5 results.
 
 ## Mac orchestration
 
-From any location inside a normal Mac clone, invoke the committed script after checking out the performance branch. The script fetches the performance branch, creates an incremental git bundle when possible, updates idex and tinyman, preflights the V2 code, runs the selected plan, copies the summary/logs to `~/Downloads`, and restores native P5 binaries at the end.
-
-From the P5 directory:
+From the repository root on the Mac, the committed helper updates idex and tinyman, preflights the code, runs the V3 refinement sweep, copies the table/logs/charts to `~/Downloads`, and restores native P5 binaries after the sweep:
 
 ```bash
-bash ./mac_run_p5_super_performance.sh
+bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_super_performance.sh
 ```
+
+Defaults are `--plan refine --downloads 2`.
 
 Examples:
 
 ```bash
-bash ./mac_run_p5_super_performance.sh --plan combo
-bash ./mac_run_p5_super_performance.sh --plan all
-bash ./mac_run_p5_super_performance.sh --tests measured_default,no_debug_counters,txmeta_mbuf
+bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_super_performance.sh --plan combo
+bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_super_performance.sh --tests high_default,drain3_meta,no_debug_meta
+bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_super_performance.sh --downloads 5
 ```
