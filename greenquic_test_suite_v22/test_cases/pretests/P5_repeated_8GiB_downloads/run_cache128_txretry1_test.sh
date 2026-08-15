@@ -54,7 +54,13 @@ restore_native() {
     echo "NATIVE RESTORE RC: idex=$r1 tinyman=$r2"
 }
 
-trap 'rc=$?; restore_native || true; exit $rc' EXIT INT TERM
+on_exit() {
+    rc=$?
+    trap - EXIT INT TERM
+    restore_native || true
+    exit "$rc"
+}
+trap on_exit EXIT INT TERM
 
 echo "======================================================================"
 echo "P5 ISOLATED FEATURE TEST"
