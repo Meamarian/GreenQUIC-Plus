@@ -234,17 +234,11 @@ echo "IDEX launchers installed: /root/run_p5.sh /root/run_p7.sh"
 INSTALL_LAUNCHERS
 
 echo
-echo "#########################################################################"
+echo "######################################################################"
 echo "### BRANCH READY ON BOTH TUM NODES"
 echo "### input:  $INPUT"
 echo "### branch: $TARGET_BRANCH"
 echo "### commit: $TARGET_SHA"
-echo "### P5 branch-specific binary: READY"
-echo "### P7 isolated Linux binary: READY"
-echo "### NICs: DPDK-bound and ready for P5"
-echo "######################################################################"
-echo
-printf 'MAC COMMAND â€” FINAL 4 TESTS, 6 RUNS x 5 DOWNLOADS:\n\n'
-printf 'cd %q || exit 1; TAG="$(date +%%Y%%m%%d_%%H%%M%%S)"; LOG="$HOME/Downloads/GreenQUIC_FINAL_%s_${TAG}.log"; PIDFILE="$HOME/Downloads/GreenQUIC_FINAL_%s_${TAG}.pid"; nohup caffeinate -dimsu bash tum_testbed_setup/mac_run_final_selected_branch.sh %q --runs 6 --downloads 5 >"$LOG" 2>&1 < /dev/null & PID=$!; echo "$PID" >"$PIDFILE"; disown "$PID" 2>/dev/null || true; echo "STARTED PID=$PID"; echo "LOG=$LOG"; echo "PIDFILE=$PIDFILE"; echo "You can close this Terminal."\n' \
-    "$REPO_ROOT" "$BRANCH_TAG" "$BRANCH_TAG" "$INPUT"
-echo
+echo"222R'&æ6‚×7V6–f–2&–æ'“¢$TE’ ¦V6†ò ### P7 isolated Linux binary: READY"
+echo "### NICs: DPDk-bound and ready for P5"
+echo "###################################################################### ¦V6†ð§&–çFbtÔ24ôÔÔäB(	Bd”äÂBDU5E2Âb%Tå2‚RDõtäÄôE3¥ÆåÆâp§&–çFbu$UóÒW²DsÒ"B†FFR²RU’RVÒRVEòRT‚RTÒRU2’#²ÄôsÒ"D„ôÔRôF÷væÆöG2ôw&VVåT”5ôd”äÅòW5òGµDwÒæÆör#²”Dd”ÄSÒ"D„ôÔRôF÷væÆöG2ôw&VVåT”5ôd”äÅòW5òGµDwÒç–B#²–b6B"E$Uò#²F†Vâæö‡W6ffV–æFRÖF–×7R&6‚GVÕ÷FW7F&VE÷6WGWöÖ5÷'Våöf–æÅ÷6VÆV7FVEö'&æ6‚ç6‚WÒ×'Vç2bÒÖF÷væÆöG2Râ"DÄôr"#âcÂöFWböçVÆÂb”CÒB²V6†ò"E”B"â"E”Dd”ÄR#²F—6÷vâ"E”B"#âöFWböçVÆÂÇÂG'VS²V6†ò%5D%DTB”CÒE”B#²V6†ò$ÄôsÒDÄôr#²V6†ò%”Dd”ÄSÒE”Dd”ÄR#²V6†ò%–÷R6â6Æ÷6RF†—2FW&Ö–æÂâ#²VÇ6RV6†ò$U%$õ#¢6ææ÷B6BFòE$Uò"âc#²f•ÆârÀ¢"E$Uõõ$ôõB""D%$ä4…õDr""D%$ä4…õDr""D”åUB ¦V6†ð
