@@ -14,7 +14,7 @@ The default super-performance build uses only settings that already won in the c
 - bounded extra drain: disabled
 - MTU override: disabled
 - OFF ring-count optimization: disabled
-- debugging counters: preserved until independently measured
+- producer-side enqueue counter: preserved until independently measured
 - transfer-window hot-path instrumentation: preserved until independently measured
 - trace-only ring counts: preserved until independently measured
 - RX/TX metadata: original `AdditionalInfoPool`
@@ -42,7 +42,7 @@ A true Linux-style UDP GSO implementation in the raw DPDK path is deliberately n
 
 ## Additional hot-path problems found
 
-Three tracked DPDK counters are marked in the source as debugging-only: `RxCounter`, `TxCounter`, and `TxEnqueueCounter`. There are no readers of these fields. `TxEnqueueCounter` is written by the QUIC producer path for every packet, so multiple producers can dirty the same shared cache line. `P5_SUPER_DEBUG_COUNTERS=0` removes these writes for an isolated measurement.
+The tracked raw DPDK source contains `RxCounter`, `TxCounter`, and `TxEnqueueCounter`. The P5 datapath fix uses `RxCounter` and `TxCounter` at teardown to emit validated packet totals, so those two updates must remain. `TxEnqueueCounter`, however, has no reader and is written by the QUIC producer path for every packet. With multiple producers this creates an unnecessary shared cache-line write. For compatibility, the existing `P5_SUPER_DEBUG_COUNTERS=0` switch now removes only `TxEnqueueCounter`; a build guard restores and verifies the required `RxCounter`/`TxCounter` updates before compilation.
 
 BASIC and PLUS also call the P5 transfer-window tracker for each non-empty RX/TX burst. That tracker calls `clock_gettime(CLOCK_MONOTONIC)` and relaxed atomics. OFF already bypasses the tracker. `P5_SUPER_TRANSFER_WINDOW=0` removes only this transfer-window measurement hot path; the external RAPL, C-state and frequency samplers remain enabled. Transfer-window-specific RAPL plots will naturally be unavailable for that diagnostic profile.
 
@@ -61,7 +61,7 @@ The original raw DPDK path also allocates a separate `DPDK_TX_PACKET`/`DPDK_RX_P
 - `P5_SUPER_DRAIN_THRESHOLD=N`
 - `P5_SUPER_MTU=0|1500`
 - `P5_SUPER_SKIP_OFF_RINGCOUNT=0|1`
-- `P5_SUPER_DEBUG_COUNTERS=0|1`
+- `P5_SUPER_DEBUG_COUNTERS=0|1` (`0` means remove only unused `TxEnqueueCounter` in P5)
 - `P5_SUPER_TRANSFER_WINDOW=0|1`
 - `P5_SUPER_TRACE_RINGCOUNT=0|1`
 - `P5_SUPER_TX_META=pool|mbuf`
@@ -100,7 +100,7 @@ The default screen plan is:
 6. `adaptive64`
 7. `mtu1500`
 8. `skipoffcount`
-9. `no_debug_counters`
+9. `no_debug_counters` — P5-safe producer-counter removal only
 10. `no_transfer_window`
 11. `no_trace_ringcount`
 12. `txmeta_mbuf`
