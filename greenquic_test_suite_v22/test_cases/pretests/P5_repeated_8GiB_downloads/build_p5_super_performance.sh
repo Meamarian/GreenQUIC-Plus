@@ -8,6 +8,7 @@ DPDK="$MAIN_MSQUIC/deps/dpdk-install"
 BUILD="$MAIN_MSQUIC/build-greenquic-p5"
 DATAPATH="$REPO_ROOT/msquic-p5-source/src/platform/datapath_raw_dpdk_linux.c"
 TRANSFORM="$HERE/apply_p5_super_performance.py"
+COUNTER_GUARD="$HERE/apply_p5_super_packet_counter_guard.py"
 REUSE="${P5_BUILD_REUSE:-1}"
 
 P5_SUPER_CACHE="${P5_SUPER_CACHE:-128}"
@@ -29,12 +30,14 @@ P5_SUPER_CAP_DIAG="${P5_SUPER_CAP_DIAG:-1}"
 case "$REUSE" in 0|1) ;; *) echo "ERROR: P5_BUILD_REUSE must be 0 or 1" >&2; exit 2;; esac
 [[ -d "$DPDK" ]] || { echo "ERROR: DPDK installation not found: $DPDK" >&2; exit 2; }
 [[ -f "$TRANSFORM" ]] || { echo "ERROR: missing transformer $TRANSFORM" >&2; exit 2; }
+[[ -f "$COUNTER_GUARD" ]] || { echo "ERROR: missing counter guard $COUNTER_GUARD" >&2; exit 2; }
 
 echo "P5 SUPER PERFORMANCE BUILD"
 echo "cache=$P5_SUPER_CACHE rxb=$P5_SUPER_RX_BURST txb=$P5_SUPER_TX_BURST ring=$P5_SUPER_RING_SIZE"
 echo "sync=$P5_SUPER_RING_SYNC drain=$P5_SUPER_DRAIN_BURSTS threshold=$P5_SUPER_DRAIN_THRESHOLD mtu=$P5_SUPER_MTU"
 echo "skip_off_ringcount=$P5_SUPER_SKIP_OFF_RINGCOUNT debug_counters=$P5_SUPER_DEBUG_COUNTERS transfer_window=$P5_SUPER_TRANSFER_WINDOW"
 echo "trace_ringcount=$P5_SUPER_TRACE_RINGCOUNT tx_meta=$P5_SUPER_TX_META rx_meta=$P5_SUPER_RX_META cap_diag=$P5_SUPER_CAP_DIAG"
+echo "P5 packet-total RxCounter/TxCounter are always preserved; debug_counters=0 removes only unused TxEnqueueCounter hot-path writes."
 echo "GreenQUIC / GreenQUIC+ policy internals: unchanged"
 
 P5_STATIC_PROFILE=native P5_BUILD_REUSE="$REUSE" bash "$HERE/build_p5_client.sh"
@@ -62,11 +65,27 @@ python3 "$TRANSFORM" "$DATAPATH" \
     --rx-meta "$P5_SUPER_RX_META" \
     --cap-diag "$P5_SUPER_CAP_DIAG"
 
-python3 -m py_compile "$TRANSFORM"
+python3 "$COUNTER_GUARD" "$P5_SUPER_DEBUG_COUNTERS" "$DATAPATH"
+python3 -m py_compile "$TRANSFORM" "$COUNTER_GUARD"
+
 grep -Fq 'GREENQUIC-P5-SUPER-PERF-V1' "$DATAPATH" || {
     echo "ERROR: super performance marker missing from generated datapath" >&2
     exit 2
 }
+grep -Fq 'Dpdk->RxCounter += BuffersCount;' "$DATAPATH" || {
+    echo "ERROR: P5 RxCounter packet-total update disappeared" >&2
+    exit 2
+}
+grep -Fq 'Dpdk->TxCounter += TxCount;' "$DATAPATH" || {
+    echo "ERROR: P5 TxCounter packet-total update disappeared" >&2
+    exit 2
+}
+if [[ "$P5_SUPER_DEBUG_COUNTERS" == 0 ]]; then
+    ! grep -Fq 'Dpdk->TxEnqueueCounter++;' "$DATAPATH" || {
+        echo "ERROR: TxEnqueueCounter update still present" >&2
+        exit 2
+    }
+fi
 
 export PKG_CONFIG_PATH="$DPDK/lib/pkgconfig:$DPDK/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export LIBRARY_PATH="$DPDK/lib:$DPDK/lib/x86_64-linux-gnu${LIBRARY_PATH:+:$LIBRARY_PATH}"
