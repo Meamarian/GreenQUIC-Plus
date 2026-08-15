@@ -4,7 +4,7 @@ set -Eeuo pipefail
 BRANCH="performance/p5-max-goodput"
 PLAN="refine"
 TESTS=""
-DOWNLOADS=2
+DOWNLOADS=3
 
 usage() {
     cat <<'EOF'
@@ -12,10 +12,11 @@ Usage:
   bash ./mac_run_p5_super_performance.sh [--plan refine|combo|all] [--tests comma,list] [--downloads N]
 
 Default next experiment:
-  --plan refine --downloads 2
+  --plan refine --downloads 3
 
 V3 reports both the normal aggregate goodput and steady D2+ goodput so the
-slower first transfer does not hide steady datapath performance.
+slower first transfer does not hide steady datapath performance. With the
+3-download default, steady goodput is D2+D3.
 
 Examples:
   bash ./mac_run_p5_super_performance.sh
@@ -59,7 +60,7 @@ echo "PLAN=$PLAN"
 echo "TESTS=${TESTS:-plan-default}"
 echo "DOWNLOADS=$DOWNLOADS"
 echo "RUNNER=$RUNNER"
-echo "HIGH DEFAULT=cache128 + txburst16 + drain4 + TX/RX metadata-in-mbuf"
+echo "HIGH DEFAULT=cache128 + txburst16 + drain2 + TX/RX metadata-in-mbuf"
 echo "======================================================================"
 
 if [ -n "$(git status --porcelain)" ]; then
