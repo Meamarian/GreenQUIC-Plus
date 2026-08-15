@@ -89,7 +89,15 @@ if [ -n "$IDEX_HEAD" ] && [ "$IDEX_HEAD" = "$TINY_HEAD" ] && git cat-file -e "$I
 fi
 
 rm -f "$BUNDLE"
-if [ -n "$BASE" ]; then
+if [ -n "$BASE" ] && [ "$BASE" = "$EXPECTED" ]; then
+    echo "Server HEADs already match expected HEAD $EXPECTED; creating single-commit bundle."
+    if PARENT="$(git rev-parse "$EXPECTED^" 2>/dev/null)"; then
+        git bundle create "$BUNDLE" "$BRANCH" "^$PARENT"
+    else
+        echo "Expected commit has no parent; creating full branch bundle."
+        git bundle create "$BUNDLE" "$BRANCH"
+    fi
+elif [ -n "$BASE" ]; then
     echo "Creating incremental bundle from server HEAD $BASE"
     git bundle create "$BUNDLE" "$BRANCH" "^$BASE"
 else
