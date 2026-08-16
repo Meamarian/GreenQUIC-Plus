@@ -5,6 +5,7 @@ HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 V3="$HERE/mac_chain_p1_resume_p2_best_and_sweep_v3.sh"
 [[ -f "$V3" ]] || { echo "ERROR: missing $V3" >&2; exit 2; }
 [[ -f "$HERE/run_p5_performance2_selected_profiles.sh" ]] || { echo "ERROR: missing selected-profile P2 runner" >&2; exit 2; }
+[[ -f "$HERE/summarize_p5_performance2_sweep.py" ]] || { echo "ERROR: missing P2 sweep capability summarizer" >&2; exit 2; }
 
 if [[ "${1:-}" == "--detach" ]]; then
     shift
@@ -89,6 +90,7 @@ for line in lines:
     else
         STAMP="\$STAMP" RESULT_ROOT="\$RESULT" P5_P2_DOWNLOADS="\$DOWNLOADS" P5_P2_RUNS="\$RUNS" P5_P2_TESTS="\$PROFILE" bash ./run_p5_performance2_sweep.sh
         RRC=\$?
+        python3 ./summarize_p5_performance2_sweep.py "\$RESULT" || true
     fi
     printf 'RUNNER_RC=%s\nPROFILE=%s\nRUNS=%s\nDOWNLOADS=%s\n' "\$RRC" "\${PROFILE:-ALL_12}" "\$RUNS" "\$DOWNLOADS" >> "\$EX/result_rc.txt"
 fi'''.replace('\\"', '"').replace('\\\\$', '\\$').splitlines())
