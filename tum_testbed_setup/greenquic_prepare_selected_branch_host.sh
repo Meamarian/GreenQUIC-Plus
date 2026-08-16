@@ -21,6 +21,13 @@ cd "$ROOT"
 [[ -d "$P5" && -d "$P7" ]]
 chmod 0755 "$P5"/*.sh "$P7"/*.sh 2>/dev/null || true
 
+# acpi.sh samples through the `sensors` command supplied by Debian's lm-sensors package.
+test -x "$ROOT/acpi.sh"
+command -v sensors >/dev/null || {
+  echo "ERROR: sensors command missing; install Debian package lm-sensors" >&2
+  exit 2
+}
+
 case "$KIND" in
   main)
     bash "$P5/build_p5_client.sh"
@@ -31,12 +38,16 @@ case "$KIND" in
     bash "$P5/build_p5_super_performance.sh"
     grep -aFq -- 'GREENQUIC-P5-SUPER-PERF-V2' "$P5_CLIENT"
     ! grep -aFq -- 'GREENQUIC-P5-PERFORMANCE2-V1' "$P5_CLIENT"
+    ! grep -aFq -- 'GREENQUIC-P5-PERFORMANCE2-V2' "$P5_CLIENT"
     ;;
   performance2)
     env P5_P2_DIAG_INTERVAL_US=0 P5_P2_TX_HANDOFF=shared P5_P2_RX_PREFETCH=0 P5_P2_UDP_SEG=0 \
+      P5_P2_TX_ALLOC_BATCH=1 P5_P2_TX_ENQUEUE_COUNTER=1 P5_P2_TX_META_ZERO=1 \
+      P5_P2_RX_PIPE_PREFETCH=0 P5_P2_SHARD_ACTIVE_MASK=0 \
       bash "$P5/build_p5_performance2.sh"
     grep -aFq -- 'GREENQUIC-P5-SUPER-PERF-V2' "$P5_CLIENT"
     grep -aFq -- 'GREENQUIC-P5-PERFORMANCE2-V1' "$P5_CLIENT"
+    grep -aFq -- 'GREENQUIC-P5-PERFORMANCE2-V2' "$P5_CLIENT"
     ;;
   *) echo "ERROR: unknown branch kind: $KIND" >&2; exit 2 ;;
 esac
@@ -61,5 +72,6 @@ DRIVER="$(basename "$(readlink -f "/sys/bus/pci/devices/$PCI/driver" 2>/dev/null
 case "$DRIVER" in igb_uio|vfio-pci) ;; *) echo "ERROR: test NIC not DPDK-bound: ${DRIVER:-none}" >&2; exit 5;; esac
 command -v zip >/dev/null
 python3 -c 'import matplotlib, numpy'
-printf 'READY host=%s kind=%s head=%s driver=%s\n' "$(hostname)" "$KIND" "$(git rev-parse HEAD)" "$DRIVER"
+printf 'READY host=%s kind=%s head=%s driver=%s sensors=%s\n' \
+  "$(hostname)" "$KIND" "$(git rev-parse HEAD)" "$DRIVER" "$(command -v sensors)"
 sha256sum "$P5_CLIENT" "$P5_SERVER" "$P7_CLIENT" "$P7_SERVER"
