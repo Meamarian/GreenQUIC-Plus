@@ -90,6 +90,18 @@ if text.count(old_total) != 1:
 text = text.replace(old_total, 'TOTAL_TESTS=$RUNS', 1)
 text = text.replace('position=$position/3', 'position=$position/1')
 text = text.replace('POSITION $position/3', 'POSITION $position/1')
+# The standard finalizer intentionally requires OFF+BASIC+PLUS counter CSVs for
+# comparison charts. This dedicated screen is PLUS-only, so keep the standard
+# aggregate_p5_matrix.py tables but skip only the incompatible three-mode chart
+# finalization step. Normal P5 runners are unchanged.
+finalize = 'python3 "$HERE/p5_finalize_matrix.py" --matrix "$OUTPUT_DIR"'
+if text.count(finalize) != 1:
+    raise SystemExit(f'ERROR: finalizer anchor count={text.count(finalize)}')
+text = text.replace(
+    finalize,
+    'notice "PLUS-only screen: aggregate tables complete; skipping three-mode final charts"',
+    1,
+)
 core.write_text(text, encoding='utf-8')
 
 w = wrapper.read_text(encoding='utf-8')
