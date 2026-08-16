@@ -18,6 +18,7 @@ python3 -m py_compile \
   "$HERE/clock_sync.py" \
   "$HERE/rebuild_d1d2_power_timeseries.py" \
   "$HERE/audit_d1d2plus_clock_drift.py"
+bash -n "$HERE/diagnose_d1d2plus_failure.sh"
 for b in "$ROOT/msquic/build-greenquic-p5/bin/Release/quicinterop" "$ROOT/msquic/build-greenquic-p5/bin/Release/quicinteropserver"; do
   grep -aFq -- "$MARK" "$b" || { echo "ERROR: local snapshot marker missing in $b" >&2; exit 3; }
 done
@@ -27,7 +28,11 @@ set +e
 bash "$HERE/run_matrix_with_sheet.sh" "$@" --env GQ_P5_POSITION_SNAPSHOT=1
 rc=$?
 set -e
-if [[ $rc -ne 0 ]]; then echo "ERROR: base P5 matrix failed rc=$rc; D1/D2+ report not generated" >&2; exit "$rc"; fi
+if [[ $rc -ne 0 ]]; then
+  echo "ERROR: base P5 matrix failed rc=$rc; D1/D2+ report not generated" >&2
+  bash "$HERE/diagnose_d1d2plus_failure.sh" "$OUT" || true
+  exit "$rc"
+fi
 
 report_rc=0
 timeseries_rc=0
