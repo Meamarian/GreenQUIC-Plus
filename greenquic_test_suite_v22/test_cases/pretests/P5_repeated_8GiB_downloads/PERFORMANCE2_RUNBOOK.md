@@ -1,5 +1,7 @@
 # P5 Performance2 runbook
 
+For copy-paste operational commands (start, live status, build logs, active processes, completion markers, verified SCP, and safe stale-PID checks), see [`P5_COMMAND_GUIDE.md`](P5_COMMAND_GUIDE.md).
+
 Use `mac_chain_p1_p2_latest.sh` for the Mac-side chain. It points to V4. Do not use V3 for new runs.
 
 V4 fixes the failures seen during the 2026-08-16 run:
