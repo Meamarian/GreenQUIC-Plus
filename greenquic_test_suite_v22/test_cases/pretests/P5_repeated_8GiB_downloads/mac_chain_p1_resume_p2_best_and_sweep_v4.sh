@@ -6,6 +6,9 @@ V3="$HERE/mac_chain_p1_resume_p2_best_and_sweep_v3.sh"
 [[ -f "$V3" ]] || { echo "ERROR: missing $V3" >&2; exit 2; }
 [[ -f "$HERE/run_p5_performance2_selected_profiles.sh" ]] || { echo "ERROR: missing selected-profile P2 runner" >&2; exit 2; }
 [[ -f "$HERE/summarize_p5_performance2_sweep.py" ]] || { echo "ERROR: missing P2 sweep capability summarizer" >&2; exit 2; }
+SELECTED_P2_PROFILE="${P5_P2_BEST_PROFILE:-}"
+[[ -n "$SELECTED_P2_PROFILE" ]] || { echo "ERROR: set P5_P2_BEST_PROFILE explicitly after reviewing the P2 screening sweep; V4 no longer guesses sharded_udp4" >&2; exit 2; }
+export P5_P2_BEST_PROFILE="$SELECTED_P2_PROFILE"
 
 if [[ "${1:-}" == "--detach" ]]; then
     shift
@@ -22,7 +25,7 @@ if [[ "${1:-}" == "--detach" ]]; then
     nohup caffeinate -dimsu env \
         GREENQUIC_REPO="${GREENQUIC_REPO:-$(git -C "$HERE" rev-parse --show-toplevel)}" \
         CHAIN_TAG="$TAG" \
-        P5_P2_BEST_PROFILE="${P5_P2_BEST_PROFILE:-sharded_udp4}" \
+        P5_P2_BEST_PROFILE="$SELECTED_P2_PROFILE" \
         CHAIN_START_DELAY_SECONDS="${CHAIN_START_DELAY_SECONDS:-10}" \
         CHAIN_INTER_STAGE_DELAY_SECONDS="${CHAIN_INTER_STAGE_DELAY_SECONDS:-300}" \
         bash "$0" --foreground "$@" >"$LOG" 2>&1 </dev/null &
