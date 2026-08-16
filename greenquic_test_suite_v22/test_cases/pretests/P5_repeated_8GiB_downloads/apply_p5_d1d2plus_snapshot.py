@@ -2,109 +2,250 @@
 from pathlib import Path
 import sys
 
-MARK='GREENQUIC-P5-D1D2PLUS-SNAPSHOT-V1'
+MARK='GREENQUIC-P5-D1D2PLUS-SNAPSHOT-V2'
+OLD_MARK='GREENQUIC-P5-D1D2PLUS-SNAPSHOT-V1'
+
 if len(sys.argv)!=5:
     raise SystemExit('usage: apply_p5_d1d2plus_snapshot.py CLIENT_CPP SERVER_CPP SERVER_H DATAPATH_C')
 client,server,header,datapath=map(Path,sys.argv[1:])
 
-def once(text,old,new,label):
+def once(text, old, new, label):
     n=text.count(old)
-    if n!=1: raise SystemExit(f'ERROR: {label}: expected 1 anchor, found {n}')
+    if n!=1:
+        raise SystemExit(f'ERROR: {label}: expected 1 anchor, found {n}')
     return text.replace(old,new,1)
 
-def ensure_clean(p):
-    t=p.read_text()
-    if MARK in t: raise SystemExit(f'ERROR: {p} already contains {MARK}')
-    return t
+def clean(path):
+    text=path.read_text()
+    for marker in (MARK, OLD_MARK):
+        if marker in text:
+            raise SystemExit(f'ERROR: {path} already contains {marker}')
+    return text
 
-# Client: calls are outside the transport hot path, exactly at request boundaries.
-t=ensure_clean(client)
-t=once(t,'#include "greenquic_plus.h"\n', '#include "greenquic_plus.h"\nextern "C" void CxPlatGreenQuicP5PositionSnapshot(const char* Label, uint32_t RequestIndex);\nstatic const char GreenQuicP5PositionSnapshotMarker[] __attribute__((used)) = "'+MARK+'";\n\nstatic bool GreenQuicP5PositionSnapshotEnabled() {\n    const char* v = getenv("GQ_P5_POSITION_SNAPSHOT");\n    return v != nullptr && v[0] != \'\\0\' && strcmp(v, "0") != 0;\n}\n', 'client declaration')
-t=once(t,
-'''            const uint64_t StartUs = GreenQuicP5MonotonicUs();\n            printf(\n''',
-'''            const uint64_t StartUs = GreenQuicP5MonotonicUs();\n            if (GreenQuicP5PositionSnapshotEnabled()) {\n                CxPlatGreenQuicP5PositionSnapshot("start", (uint32_t)RequestIndex);\n            }\n            printf(\n''','client start snapshot')
-t=once(t,
-'''            const bool Success = Stream->SendHttpRequest(true);\n            const uint64_t CompleteUs = GreenQuicP5MonotonicUs();\n\n            printf(\n''',
-'''            const bool Success = Stream->SendHttpRequest(true);\n            if (GreenQuicP5PositionSnapshotEnabled()) {\n                CxPlatGreenQuicP5PositionSnapshot("end", (uint32_t)RequestIndex);\n            }\n            const uint64_t CompleteUs = GreenQuicP5MonotonicUs();\n\n            printf(\n''','client end snapshot')
+# Client boundary calls. Snapshot work is deliberately outside the goodput
+# timing window: start snapshot first; end timestamp first.
+t=clean(client)
+t=once(
+    t,
+    '#include "greenquic_plus.h"\n',
+    '#include "greenquic_plus.h"\n'
+    'extern "C" void CxPlatGreenQuicP5PositionSnapshot(const char* Label, uint32_t RequestIndex);\n'
+    f'static const char GreenQuicP5PositionSnapshotMarker[] __attribute__((used)) = "{MARK}";\n'
+    '\n'
+    'static bool GreenQuicP5PositionSnapshotEnabled() {\n'
+    '    const char* v = getenv("GQ_P5_POSITION_SNAPSHOT");\n'
+    '    return v != nullptr && v[0] != \'\\0\' && strcmp(v, "0") != 0;\n'
+    '}\n',
+    'client declaration')
+t=once(
+    t,
+    """            const uint64_t StartUs = GreenQuicP5MonotonicUs();
+            printf(
+""",
+    """            if (GreenQuicP5PositionSnapshotEnabled()) {
+                CxPlatGreenQuicP5PositionSnapshot("start", (uint32_t)RequestIndex);
+            }
+            const uint64_t StartUs = GreenQuicP5MonotonicUs();
+            printf(
+""",
+    'client start snapshot outside timing')
+t=once(
+    t,
+    """            const bool Success = Stream->SendHttpRequest(true);
+            const uint64_t CompleteUs = GreenQuicP5MonotonicUs();
+
+            printf(
+""",
+    """            const bool Success = Stream->SendHttpRequest(true);
+            const uint64_t CompleteUs = GreenQuicP5MonotonicUs();
+            if (GreenQuicP5PositionSnapshotEnabled()) {
+                CxPlatGreenQuicP5PositionSnapshot("end", (uint32_t)RequestIndex);
+            }
+
+            printf(
+""",
+    'client end snapshot outside timing')
 client.write_text(t)
 
-# Server header: retain request index until final QUIC send completion.
-h=ensure_clean(header)
-h=once(h,'    bool GreenQuicServerTxHintActive;\n','    bool GreenQuicServerTxHintActive;\n    uint32_t GreenQuicP5SnapshotIndex;\n    bool GreenQuicP5SnapshotDone; // '+MARK+'\n','server header fields')
+# Server request bookkeeping.
+h=clean(header)
+h=once(
+    h,
+    '    bool GreenQuicServerTxHintActive;\n',
+    '    bool GreenQuicServerTxHintActive;\n'
+    '    uint32_t GreenQuicP5SnapshotIndex;\n'
+    f'    bool GreenQuicP5SnapshotDone; // {MARK}\n',
+    'server header fields')
 header.write_text(h)
 
-# Server source.
-s=ensure_clean(server)
-s=once(s,'#include <unistd.h>  // for pause()\n','#include <unistd.h>  // for pause()\n#include <atomic>\n','server atomic include')
-s=once(s,'#include "greenquic_plus.h"\n','#include "greenquic_plus.h"\nextern "C" void CxPlatGreenQuicP5PositionSnapshot(const char* Label, uint32_t RequestIndex);\nstatic const char GreenQuicP5PositionSnapshotMarker[] __attribute__((used)) = "'+MARK+'";\nstatic std::atomic<uint32_t> GreenQuicP5ServerRequestIndex{0};\nstatic bool GreenQuicP5PositionSnapshotEnabled() {\n    const char* v=getenv("GQ_P5_POSITION_SNAPSHOT");\n    return v != nullptr && v[0] != \'\\0\' && strcmp(v,"0") != 0;\n}\n','server declaration')
-s=once(s,
-'''    Shutdown(false), WriteHttp11Header(false), GreenQuicServerTxHintActive(false)\n''',
-'''    Shutdown(false), WriteHttp11Header(false), GreenQuicServerTxHintActive(false),\n    GreenQuicP5SnapshotIndex(0), GreenQuicP5SnapshotDone(false)\n''','server constructor')
-s=once(s,
-'''    printf("[%s] GET '%s'\\n", GetRemoteAddr(MsQuic, QuicStream).Address, PathStart);\n    File = fopen(FullFilePath, "rb"); // In case of failure, SendData still works.\n''',
-'''    printf("[%s] GET '%s'\\n", GetRemoteAddr(MsQuic, QuicStream).Address, PathStart);\n    if (GreenQuicP5PositionSnapshotEnabled()) {\n        GreenQuicP5SnapshotIndex = GreenQuicP5ServerRequestIndex.fetch_add(1, std::memory_order_relaxed) + 1;\n        CxPlatGreenQuicP5PositionSnapshot("start", GreenQuicP5SnapshotIndex);\n    }\n    File = fopen(FullFilePath, "rb"); // In case of failure, SendData still works.\n''','server start snapshot')
-s=once(s,
-'''    case QUIC_STREAM_EVENT_SEND_COMPLETE:\n        pThis->SendData();\n        break;\n''',
-'''    case QUIC_STREAM_EVENT_SEND_COMPLETE:\n        if (pThis->Shutdown && pThis->GreenQuicP5SnapshotIndex != 0 && !pThis->GreenQuicP5SnapshotDone) {\n            CxPlatGreenQuicP5PositionSnapshot("end", pThis->GreenQuicP5SnapshotIndex);\n            pThis->GreenQuicP5SnapshotDone = true;\n        }\n        pThis->SendData();\n        break;\n''','server final send snapshot')
+s=clean(server)
+s=once(
+    s,
+    '#include <unistd.h>  // for pause()\n',
+    '#include <unistd.h>  // for pause()\n#include <atomic>\n',
+    'server atomic include')
+s=once(
+    s,
+    '#include "greenquic_plus.h"\n',
+    '#include "greenquic_plus.h"\n'
+    'extern "C" void CxPlatGreenQuicP5PositionSnapshot(const char* Label, uint32_t RequestIndex);\n'
+    f'static const char GreenQuicP5PositionSnapshotMarker[] __attribute__((used)) = "{MARK}";\n'
+    'static std::atomic<uint32_t> GreenQuicP5ServerRequestIndex{0};\n'
+    'static bool GreenQuicP5PositionSnapshotEnabled() {\n'
+    '    const char* v = getenv("GQ_P5_POSITION_SNAPSHOT");\n'
+    '    return v != nullptr && v[0] != \'\\0\' && strcmp(v, "0") != 0;\n'
+    '}\n',
+    'server declaration')
+s=once(
+    s,
+    """    Connection(connection), QuicStream(stream), File(nullptr),
+    Shutdown(false), WriteHttp11Header(false), GreenQuicServerTxHintActive(false)
+""",
+    """    Connection(connection), QuicStream(stream), File(nullptr),
+    Shutdown(false), WriteHttp11Header(false), GreenQuicServerTxHintActive(false),
+    GreenQuicP5SnapshotIndex(0), GreenQuicP5SnapshotDone(false)
+""",
+    'server constructor')
+s=once(
+    s,
+    """    printf("[%s] GET '%s'\\n", GetRemoteAddr(MsQuic, QuicStream).Address, PathStart);
+    File = fopen(FullFilePath, "rb"); // In case of failure, SendData still works.
+""",
+    """    printf("[%s] GET '%s'\\n", GetRemoteAddr(MsQuic, QuicStream).Address, PathStart);
+    if (GreenQuicP5PositionSnapshotEnabled()) {
+        GreenQuicP5SnapshotIndex =
+            GreenQuicP5ServerRequestIndex.fetch_add(1, std::memory_order_relaxed) + 1;
+        CxPlatGreenQuicP5PositionSnapshot("start", GreenQuicP5SnapshotIndex);
+    }
+    File = fopen(FullFilePath, "rb"); // In case of failure, SendData still works.
+""",
+    'server start snapshot')
+s=once(
+    s,
+    """    case QUIC_STREAM_EVENT_SEND_COMPLETE:
+        pThis->SendData();
+        break;
+""",
+    """    case QUIC_STREAM_EVENT_SEND_COMPLETE:
+        if (pThis->Shutdown &&
+            pThis->GreenQuicP5SnapshotIndex != 0 &&
+            !pThis->GreenQuicP5SnapshotDone) {
+            CxPlatGreenQuicP5PositionSnapshot("end", pThis->GreenQuicP5SnapshotIndex);
+            pThis->GreenQuicP5SnapshotDone = true;
+        }
+        pThis->SendData();
+        break;
+""",
+    'server final send snapshot')
 server.write_text(s)
 
-# Datapath: one read-only cumulative snapshot at each boundary. No packet/poll loop instrumentation.
-d=ensure_clean(datapath)
-struct_anchor='''} DPDK_DATAPATH;\n\ntypedef struct __attribute__((aligned(64))) DPDK_RX_PACKET {\n'''
-snapshot_code=r'''} DPDK_DATAPATH;
+# Datapath boundary recorder.
+#
+# Do NOT read worker-owned EPOLL/DVFS policy counters here: those fields are
+# updated with ordinary non-atomic writes by the DPDK worker. Also do NOT add
+# new per-poll/per-policy instrumentation just for this report.
+#
+# Reuse only already-existing atomics:
+#   * GreenQuicTransferRxPackets / GreenQuicTransferTxPackets
+#   * GreenQUIC+ hint counters via its getter
+# Store records in memory and print them only at process exit.
+d=clean(datapath)
+anchor="""} DPDK_DATAPATH;
 
-// GREENQUIC-P5-D1D2PLUS-SNAPSHOT-V1
-// Measurement-only boundary snapshots. They read cumulative counters at a
-// handful of request boundaries and add no branch or write to the DPDK hot path.
-static DPDK_DATAPATH* volatile GreenQuicP5SnapshotDatapath = NULL;
-static inline uint64_t GreenQuicP5LoadU64(const uint64_t* P) {
-    return __atomic_load_n(P, __ATOMIC_RELAXED);
-}
+typedef struct __attribute__((aligned(64))) DPDK_RX_PACKET {
+"""
+code=r''' } DPDK_DATAPATH;
+
+// GREENQUIC-P5-D1D2PLUS-SNAPSHOT-V2
+#define GREENQUIC_P5_POSITION_MAX_SNAPSHOTS 256U
+
+typedef struct GREENQUIC_P5_POSITION_SNAPSHOT {
+    uint32_t RequestIndex;
+    uint8_t IsEnd;
+    uint64_t MonotonicNs;
+    uint64_t RxPackets;
+    uint64_t TxPackets;
+    GQPLUS_HINT_COUNTERS Hints;
+} GREENQUIC_P5_POSITION_SNAPSHOT;
+
+static atomic_uint GreenQuicP5PositionSnapshotCount = ATOMIC_VAR_INIT(0);
+static GREENQUIC_P5_POSITION_SNAPSHOT
+    GreenQuicP5PositionSnapshots[GREENQUIC_P5_POSITION_MAX_SNAPSHOTS];
 
 void
 CxPlatGreenQuicP5PositionSnapshot(const char* Label, uint32_t RequestIndex)
 {
-    DPDK_DATAPATH* Dpdk = __atomic_load_n(&GreenQuicP5SnapshotDatapath, __ATOMIC_ACQUIRE);
-    if (Dpdk == NULL || Label == NULL || RequestIndex == 0) return;
-
-    uint64_t rx_pkts=GreenQuicP5LoadU64(&Dpdk->RxCounter);
-    uint64_t tx_pkts=GreenQuicP5LoadU64(&Dpdk->TxCounter);
-    uint64_t epoll_try=0,epoll_wake=0,epoll_timeout=0,epoll_rx_wake=0,epoll_control_wake=0,epoll_signal_wake=0;
-    uint64_t epoll_rx_fd_drain=0,epoll_rx_fd_drain_error=0,wake_signal=0;
-    uint64_t freq_policy_max_hard=0,freq_policy_max_control=0,freq_policy_up=0,freq_policy_down=0,freq_policy_min=0,freq_policy_txring_protect_up=0;
-    uint64_t freq_changed_max=0,freq_changed_up=0,freq_changed_down=0,freq_changed_min=0,freq_unchanged=0,freq_error=0;
-    for (uint16_t c=0;c<RTE_MAX_LCORE;++c) {
-        GREENQUIC_LCORE_STATE* S=&Dpdk->GreenQuicLcore[c];
-        epoll_try+=GreenQuicP5LoadU64(&S->EpollAttempts); epoll_wake+=GreenQuicP5LoadU64(&S->EpollWakeups); epoll_timeout+=GreenQuicP5LoadU64(&S->EpollTimeouts);
-        epoll_rx_wake+=GreenQuicP5LoadU64(&S->EpollRxWakeups); epoll_control_wake+=GreenQuicP5LoadU64(&S->EpollControlWakeups); epoll_signal_wake+=GreenQuicP5LoadU64(&S->EpollSignalWakeups);
-        epoll_rx_fd_drain+=GreenQuicP5LoadU64(&S->EpollRxFdDrains); epoll_rx_fd_drain_error+=GreenQuicP5LoadU64(&S->EpollRxFdDrainErrors); wake_signal+=GreenQuicP5LoadU64(&S->WakeSignals);
-        freq_policy_max_hard+=GreenQuicP5LoadU64(&S->FreqPolicyMaxHard); freq_policy_max_control+=GreenQuicP5LoadU64(&S->FreqPolicyMaxControl); freq_policy_up+=GreenQuicP5LoadU64(&S->FreqPolicyUp); freq_policy_down+=GreenQuicP5LoadU64(&S->FreqPolicyDown); freq_policy_min+=GreenQuicP5LoadU64(&S->FreqPolicyMin); freq_policy_txring_protect_up+=GreenQuicP5LoadU64(&S->FreqPolicyTxRingProtectUp);
-        freq_changed_max+=GreenQuicP5LoadU64(&S->FreqChangedMax); freq_changed_up+=GreenQuicP5LoadU64(&S->FreqChangedUp); freq_changed_down+=GreenQuicP5LoadU64(&S->FreqChangedDown); freq_changed_min+=GreenQuicP5LoadU64(&S->FreqChangedMin); freq_unchanged+=GreenQuicP5LoadU64(&S->FreqUnchanged); freq_error+=GreenQuicP5LoadU64(&S->FreqErrors);
+    if (Label == NULL || RequestIndex == 0U) {
+        return;
     }
-    GQPLUS_HINT_COUNTERS H={0}; CxPlatGreenQuicPlusGetHintCounters(&H);
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts);
-    const uint64_t mono_ns=(uint64_t)ts.tv_sec*1000000000ULL+(uint64_t)ts.tv_nsec;
-    printf("[GreenQUIC-P5-SNAPSHOT] schema=greenquic-p5-position-v1 label=%s request=%u monotonic_ns=%" PRIu64
-           " rx_pkts=%" PRIu64 " tx_pkts=%" PRIu64
-           " epoll_try=%" PRIu64 " epoll_wake=%" PRIu64 " epoll_timeout=%" PRIu64 " epoll_rx_wake=%" PRIu64 " epoll_control_wake=%" PRIu64 " epoll_signal_wake=%" PRIu64 " epoll_rx_fd_drain=%" PRIu64 " epoll_rx_fd_drain_error=%" PRIu64 " wake_signal=%" PRIu64
-           " freq_policy_max_hard=%" PRIu64 " freq_policy_max_control=%" PRIu64 " freq_policy_up=%" PRIu64 " freq_policy_down=%" PRIu64 " freq_policy_min=%" PRIu64 " freq_policy_txring_protect_up=%" PRIu64
-           " freq_changed_max=%" PRIu64 " freq_changed_up=%" PRIu64 " freq_changed_down=%" PRIu64 " freq_changed_min=%" PRIu64 " freq_unchanged=%" PRIu64 " freq_error=%" PRIu64
-           " hint_ack_pending=%" PRIu64 " hint_cubic_cwnd_blocked=%" PRIu64 " hint_cubic_recovery=%" PRIu64 " hint_cubic_recovery_end=%" PRIu64 " hint_cubic_ramping=%" PRIu64 " hint_server_file_tx_active=%" PRIu64 " hint_server_file_tx_end=%" PRIu64 " hint_client_file_rx_active=%" PRIu64 " hint_client_file_rx_end=%" PRIu64 "\n",
-           Label,RequestIndex,mono_ns,rx_pkts,tx_pkts,epoll_try,epoll_wake,epoll_timeout,epoll_rx_wake,epoll_control_wake,epoll_signal_wake,epoll_rx_fd_drain,epoll_rx_fd_drain_error,wake_signal,
-           freq_policy_max_hard,freq_policy_max_control,freq_policy_up,freq_policy_down,freq_policy_min,freq_policy_txring_protect_up,
-           freq_changed_max,freq_changed_up,freq_changed_down,freq_changed_min,freq_unchanged,freq_error,
-           H.AckPending,H.CubicCwndBlocked,H.CubicRecovery,H.CubicRecoveryEnd,H.CubicRamping,H.ServerFileTxActive,H.ServerFileTxEnd,H.ClientFileRxActive,H.ClientFileRxEnd);
+
+    const unsigned Slot = atomic_fetch_add_explicit(
+        &GreenQuicP5PositionSnapshotCount, 1U, memory_order_relaxed);
+    if (Slot >= GREENQUIC_P5_POSITION_MAX_SNAPSHOTS) {
+        return;
+    }
+
+    GREENQUIC_P5_POSITION_SNAPSHOT* Snapshot =
+        &GreenQuicP5PositionSnapshots[Slot];
+    CxPlatZeroMemory(Snapshot, sizeof(*Snapshot));
+    Snapshot->RequestIndex = RequestIndex;
+    Snapshot->IsEnd = strcmp(Label, "end") == 0 ? 1U : 0U;
+    Snapshot->MonotonicNs = GreenQuicTransferMonotonicNs();
+    Snapshot->RxPackets = atomic_load_explicit(
+        &GreenQuicTransferRxPackets, memory_order_relaxed);
+    Snapshot->TxPackets = atomic_load_explicit(
+        &GreenQuicTransferTxPackets, memory_order_relaxed);
+    CxPlatGreenQuicPlusGetHintCounters(&Snapshot->Hints);
+}
+
+__attribute__((destructor))
+static void
+GreenQuicP5PositionSnapshotDump(void)
+{
+    unsigned Count = atomic_load_explicit(
+        &GreenQuicP5PositionSnapshotCount, memory_order_relaxed);
+    if (Count > GREENQUIC_P5_POSITION_MAX_SNAPSHOTS) {
+        Count = GREENQUIC_P5_POSITION_MAX_SNAPSHOTS;
+    }
+
+    for (unsigned Index = 0; Index < Count; ++Index) {
+        const GREENQUIC_P5_POSITION_SNAPSHOT* S =
+            &GreenQuicP5PositionSnapshots[Index];
+        printf(
+            "[GreenQUIC-P5-SNAPSHOT] schema=greenquic-p5-position-v2 "
+            "label=%s request=%u monotonic_ns=%" PRIu64
+            " rx_pkts=%" PRIu64 " tx_pkts=%" PRIu64
+            " hint_ack_pending=%" PRIu64
+            " hint_cubic_cwnd_blocked=%" PRIu64
+            " hint_cubic_recovery=%" PRIu64
+            " hint_cubic_recovery_end=%" PRIu64
+            " hint_cubic_ramping=%" PRIu64
+            " hint_server_file_tx_active=%" PRIu64
+            " hint_server_file_tx_end=%" PRIu64
+            " hint_client_file_rx_active=%" PRIu64
+            " hint_client_file_rx_end=%" PRIu64 "\n",
+            S->IsEnd ? "end" : "start",
+            S->RequestIndex,
+            S->MonotonicNs,
+            S->RxPackets,
+            S->TxPackets,
+            S->Hints.AckPending,
+            S->Hints.CubicCwndBlocked,
+            S->Hints.CubicRecovery,
+            S->Hints.CubicRecoveryEnd,
+            S->Hints.CubicRamping,
+            S->Hints.ServerFileTxActive,
+            S->Hints.ServerFileTxEnd,
+            S->Hints.ClientFileRxActive,
+            S->Hints.ClientFileRxEnd);
+    }
     fflush(stdout);
 }
 
 typedef struct __attribute__((aligned(64))) DPDK_RX_PACKET {
 '''
-d=once(d,struct_anchor,snapshot_code,'datapath snapshot implementation')
-d=once(d,
-'''    Status = Dpdk->StartStatus;\n\n    Error:\n''',
-'''    Status = Dpdk->StartStatus;\n    if (QUIC_SUCCEEDED(Status)) {\n        __atomic_store_n(&GreenQuicP5SnapshotDatapath, Dpdk, __ATOMIC_RELEASE);\n    }\n\n    Error:\n''','datapath pointer install')
-d=once(d,
-'''    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Datapath;\n    Dpdk->Running = FALSE;\n''',
-'''    DPDK_DATAPATH* Dpdk = (DPDK_DATAPATH*)Datapath;\n    DPDK_DATAPATH* Expected = Dpdk;\n    __atomic_compare_exchange_n(&GreenQuicP5SnapshotDatapath, &Expected, NULL, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);\n    Dpdk->Running = FALSE;\n''','datapath pointer clear')
+# Remove the leading space before the closing brace introduced above.
+code=code.replace(''' } DPDK_DATAPATH;''','''} DPDK_DATAPATH;''',1)
+d=once(d,anchor,code,'datapath boundary recorder')
 datapath.write_text(d)
 print(MARK)
