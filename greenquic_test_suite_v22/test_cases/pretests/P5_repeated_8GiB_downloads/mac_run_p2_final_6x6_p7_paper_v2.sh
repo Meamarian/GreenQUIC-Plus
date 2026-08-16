@@ -19,6 +19,15 @@ set -Eeuo pipefail
 # itself used 6 runs x 5 downloads.
 
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
+REPO_ROOT="${GREENQUIC_REPO:-$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || true)}"
+[[ -n "$REPO_ROOT" && -d "$REPO_ROOT/.git" ]] || {
+    echo "ERROR: cannot resolve GreenQUIC repo root from $HERE" >&2
+    exit 2
+}
+# The generated runner lives under /tmp. Export the real checkout explicitly so
+# its repo-root detection does not incorrectly try `git -C /tmp`.
+export GREENQUIC_REPO="$REPO_ROOT"
+
 BASE="$HERE/mac_run_p2_final_6x6_p7_v1.sh"
 [[ -f "$BASE" ]] || { echo "ERROR: missing base final runner: $BASE" >&2; exit 2; }
 
