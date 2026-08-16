@@ -91,15 +91,12 @@ for line in lines:
         RRC=\$?
     fi
     printf 'RUNNER_RC=%s\nPROFILE=%s\nRUNS=%s\nDOWNLOADS=%s\n' "\$RRC" "\${PROFILE:-ALL_12}" "\$RUNS" "\$DOWNLOADS" >> "\$EX/result_rc.txt"
-fi'''.splitlines())
+fi'''.replace('\\"', '"').replace('\\\\$', '\\$').splitlines())
     else:
         out.append(line)
 if replaced_runner != 1:
     raise SystemExit(f"ERROR: V4 P2 runner patch expected one line, got {replaced_runner}")
 s = "\n".join(out) + "\n"
-
-# The old sweep remains the 1x3 screening tool; the 6x5 selected P2 stage now
-# uses the three-profile runner above. Keep its historical chart style untouched.
 p.write_text(s)
 print("V4 PATCH PASS")
 PY
