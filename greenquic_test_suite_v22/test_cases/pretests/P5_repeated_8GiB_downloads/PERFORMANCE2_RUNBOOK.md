@@ -9,13 +9,14 @@ V4 fixes the failures seen during the 2026-08-16 run:
 - only selects prior export directories that contain `DONE`;
 - keeps long remote stages detached from the Mac SSH session;
 - keeps SHA256-verified `.part` SCP behavior;
-- uses `run_p5_performance2_selected_profiles.sh` for a selected P2 configuration instead of misusing the one-run screening sweep for a 6-run final test.
+- uses `run_p5_performance2_selected_profiles.sh` for a selected P2 configuration instead of misusing the one-run screening sweep for a 6-run final test;
+- no longer silently assumes `sharded_udp4` is the best P2 configuration. `P5_P2_BEST_PROFILE` must be set explicitly after screening evidence is reviewed.
 
 ## Performance2 methodology
 
 `run_p5_performance2_sweep.sh` is the screening sweep. The intended use is 1 repetition × 3 downloads for each candidate configuration.
 
-A selected candidate must then be validated with `run_p5_performance2_selected_profiles.sh`. The default final validation is 6 repetitions × 5 downloads and runs the same three workload profiles as Performance1:
+After reviewing `effective_ranking.tsv`, choose a candidate explicitly and validate it with `run_p5_performance2_selected_profiles.sh`. The default final validation is 6 repetitions × 5 downloads and runs the same three workload profiles as Performance1:
 
 1. `idle_monitor_normal`: monitor idle mode, short fallback;
 2. `power_friendly`: frequency scaling + sleep enabled, epoll idle mode, short fallback;
