@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 CLIENT_HOST="${CLIENT_HOST:-tinyman}"
-P2_PROFILE="${P5_P2_PROFILE:-${1:-sharded_udp4}}"
+P2_PROFILE="${P5_P2_PROFILE:-${1:-}}"
+[[ -n "$P2_PROFILE" ]] || { echo "ERROR: choose a P2 profile explicitly after screening" >&2; exit 2; }
 RUNS="${P5_P2_RUNS:-6}"
 DOWNLOADS="${P5_P2_DOWNLOADS:-5}"
 STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)}"
