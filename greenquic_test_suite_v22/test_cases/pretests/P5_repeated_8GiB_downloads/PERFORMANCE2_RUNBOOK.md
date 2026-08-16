@@ -14,9 +14,25 @@ V4 fixes the failures seen during the 2026-08-16 run:
 
 ## Performance2 methodology
 
-`run_p5_performance2_sweep.sh` is the screening sweep. The intended use is 1 repetition × 3 downloads for each candidate configuration.
+`run_p5_performance2_sweep.sh` is the broad screening sweep. The intended use is 1 repetition × 3 downloads for each candidate configuration.
 
-After reviewing `effective_ranking.tsv`, choose a candidate explicitly and validate it with `run_p5_performance2_selected_profiles.sh`. The default final validation is 6 repetitions × 5 downloads and runs the same three workload profiles as Performance1:
+For focused comparison of the configurations that remain meaningful on the current E810/PMD setup, use `mac_run_p2_idle_power_screen.sh`. It tests exactly these six configurations:
+
+- `baseline`
+- `sharded_512`
+- `sharded_1024`
+- `sharded_2048`
+- `rx_prefetch`
+- `sharded_rxprefetch`
+
+The focused screen runs only two external workload profiles first:
+
+1. `idle_monitor_normal`: monitor idle mode, short fallback;
+2. `power_friendly`: frequency scaling + sleep enabled, epoll idle mode, short fallback.
+
+Its default is 1 repetition × 3 downloads per configuration/workload, `--chart-style both`, `GQ_LOG_LEVEL=0`, `ENABLE_RECORD=1`, and seed `20260806`. It writes `idle_power_summary.tsv` from the matrix all-runs tables using aggregate goodput excluding gaps. The Mac wrapper syncs the exact Performance2 branch SHA to both nodes, refuses to collide with a live P1/P2 chain, launches the remote test detached with `nohup`/`setsid`, and copies the result back with SHA256 verification.
+
+After reviewing the focused screen, choose the best one or two candidates and validate them with `run_p5_performance2_selected_profiles.sh`. The default final validation is 6 repetitions × 5 downloads and runs the same three workload profiles as Performance1:
 
 1. `idle_monitor_normal`: monitor idle mode, short fallback;
 2. `power_friendly`: frequency scaling + sleep enabled, epoll idle mode, short fallback;
@@ -24,10 +40,10 @@ After reviewing `effective_ranking.tsv`, choose a candidate explicitly and valid
 
 The selected-profile runner uses `--chart-style both`, `GQ_LOG_LEVEL=0`, `ENABLE_RECORD=1`, seed `20260806`, and writes a per-profile 6-run mean/standard-deviation summary from `tables/client_all_runs.csv`.
 
-Do not rank a multi-run experiment from the legacy `goodput_summary.tsv` produced by the screening script: that file is based on the last matching run in the controller log, not the six-run mean. Use the matrix all-runs tables or `selected_profiles_summary.tsv`.
+Do not rank a multi-run experiment from the legacy `goodput_summary.tsv` produced by the screening script: that file is based on the last matching run in the controller log, not the six-run mean. Use the matrix all-runs tables, `idle_power_summary.tsv`, or `selected_profiles_summary.tsv`.
 
 ## UDP segmentation capability
 
 The Performance2 transform enables experimental UDP segmentation only if the PMD advertises UDP TSO, multi-segment TX, IPv4 checksum, and UDP checksum capability. Always inspect `[P5-PERF2-USO]` at runtime.
 
-Run `summarize_p5_performance2_sweep.py <RESULT_ROOT>` after a screening sweep. It writes `effective_comparison.tsv` and `effective_ranking.tsv`. If USO was requested but inactive, the result is mapped to the configuration that actually ran, so an inactive UDP-seg row is not credited as a UDP-seg improvement.
+Run `summarize_p5_performance2_sweep.py <RESULT_ROOT>` after a broad screening sweep. It writes `effective_comparison.tsv` and `effective_ranking.tsv`. If USO was requested but inactive, the result is mapped to the configuration that actually ran, so an inactive UDP-seg row is not credited as a UDP-seg improvement.
