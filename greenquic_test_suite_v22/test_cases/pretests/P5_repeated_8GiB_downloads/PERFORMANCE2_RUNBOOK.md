@@ -16,7 +16,7 @@ V4 fixes the failures seen during the 2026-08-16 run:
 
 `run_p5_performance2_sweep.sh` is the broad screening sweep. The intended use is 1 repetition × 3 downloads for each candidate configuration.
 
-For focused comparison of the configurations that remain meaningful on the current E810/PMD setup, use `mac_run_p2_idle_power_screen.sh`. It tests exactly these six configurations:
+For focused comparison of the configurations that remain meaningful on the current E810/PMD setup, use `mac_run_p2_idle_power_screen_v2.sh`. It wraps the original focused runner and adds explicit retry behavior for transient idex-to-tinyman bundle-copy failures. It tests exactly these six configurations:
 
 - `baseline`
 - `sharded_512`
