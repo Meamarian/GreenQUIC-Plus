@@ -26,7 +26,10 @@ def read_events(path:Path):
     origin=min(r[0] for r in parsed);end=max(r[0] for r in parsed);events=[]
     for mono,cpu,khz,source,action in parsed:
         elapsed=(mono-origin)/1e9
-        events.append({"elapsed_s":elapsed,"elapsed_ms":elapsed*1000.0,"monotonic_ns":mono,
+        # elapsed_s is derived from the shared absolute CLOCK_MONOTONIC origin.
+        # Keep the output event schema compatible with frequency_trace_impl_v4;
+        # the raw timeline remains the authoritative source for monotonic_ns.
+        events.append({"elapsed_s":elapsed,"elapsed_ms":elapsed*1000.0,
                        "cpu":cpu,"freq_khz":khz,"source":source,"action":action})
     return events,max(0.0,(end-origin)/1e9)
 mod.read_events=read_events
