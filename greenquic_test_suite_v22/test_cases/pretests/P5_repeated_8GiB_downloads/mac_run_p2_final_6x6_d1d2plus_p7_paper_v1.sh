@@ -14,6 +14,133 @@ python3 -m py_compile \
   "$HERE/../P7_linux_udp_baseline/build_p7_d1_d2plus_report_v3.py" \
   "$HERE/../P7_linux_udp_baseline/p7_frequency_sampler.py"
 bash -n "$HERE/run_matrix_with_sheet_d1d2plus.sh" "$HERE/../P7_linux_udp_baseline/run_p7_d1d2plus.sh"
+
+# D1/D2+ measurements are sensitive to orphaned high-rate samplers. Previous
+# interrupted runs can leave 1 ms frequency, 6 ms RAPL, or C-state recorders
+# alive after the transport has gone away. Remove only those recorder processes,
+# and refuse to do any cleanup if a real GreenQUIC/P7 workload is still active.
+CLEAN_SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=3)
+cleanup_measurement_host() {
+  local host="$1"
+  local rc=0
+  if [[ "$host" == idex ]]; then
+    ssh "${CLEAN_SSH_OPTS[@]}" idex 'bash -s' <<'CLEAN' || rc=$?
+set -euo pipefail
+active_pids=()
+recorder_pids=()
+for proc in /proc/[0-9]*; do
+  pid="${proc##*/}"
+  [[ "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+  cmd="$(tr '\0' ' ' <"$proc/cmdline" 2>/dev/null || true)"
+  [[ -n "$cmd" ]] || continue
+  case "$cmd" in
+    *quicinterop*|*run_matrix_with_sheet*|*run_matrix_with_report*|*run_matrix_from_idex*|*run_p7_d1d2plus.sh*|*P5_P2_FINAL_REMOTE*)
+      active_pids+=("$pid")
+      ;;
+  esac
+  case "$cmd" in
+    *gq_rapl_msr_sampler*|*frequency_sampler.py*|*gq_cstate_trace*|*power_trace.py*)
+      recorder_pids+=("$pid")
+      ;;
+  esac
+done
+if ((${#active_pids[@]})); then
+  echo "ERROR: active test workload on $(hostname -s); refusing sampler cleanup: ${active_pids[*]}" >&2
+  for pid in "${active_pids[@]}"; do
+    tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true
+    echo
+  done >&2
+  exit 70
+fi
+if ((${#recorder_pids[@]} == 0)); then
+  echo "STALE_RECORDER_CLEANUP host=$(hostname -s) removed=0"
+  exit 0
+fi
+printf 'STALE_RECORDER_CLEANUP host=%s term_pids=%s\n' "$(hostname -s)" "${recorder_pids[*]}"
+kill -TERM "${recorder_pids[@]}" 2>/dev/null || true
+sleep 0.5
+for pid in "${recorder_pids[@]}"; do
+  kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
+done
+sleep 0.1
+remaining=()
+for proc in /proc/[0-9]*; do
+  pid="${proc##*/}"
+  [[ "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+  cmd="$(tr '\0' ' ' <"$proc/cmdline" 2>/dev/null || true)"
+  case "$cmd" in
+    *gq_rapl_msr_sampler*|*frequency_sampler.py*|*gq_cstate_trace*|*power_trace.py*) remaining+=("$pid") ;;
+  esac
+done
+if ((${#remaining[@]})); then
+  echo "ERROR: stale measurement recorders remain on $(hostname -s): ${remaining[*]}" >&2
+  exit 72
+fi
+echo "STALE_RECORDER_CLEANUP host=$(hostname -s) removed=${#recorder_pids[@]} verified=1"
+CLEAN
+  else
+    ssh "${CLEAN_SSH_OPTS[@]}" idex \
+      "ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=3 root@tinyman 'bash -s'" <<'CLEAN' || rc=$?
+set -euo pipefail
+active_pids=()
+recorder_pids=()
+for proc in /proc/[0-9]*; do
+  pid="${proc##*/}"
+  [[ "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+  cmd="$(tr '\0' ' ' <"$proc/cmdline" 2>/dev/null || true)"
+  [[ -n "$cmd" ]] || continue
+  case "$cmd" in
+    *quicinterop*|*run_matrix_with_sheet*|*run_matrix_with_report*|*run_matrix_from_idex*|*run_p7_d1d2plus.sh*|*P5_P2_FINAL_REMOTE*)
+      active_pids+=("$pid")
+      ;;
+  esac
+  case "$cmd" in
+    *gq_rapl_msr_sampler*|*frequency_sampler.py*|*gq_cstate_trace*|*power_trace.py*)
+      recorder_pids+=("$pid")
+      ;;
+  esac
+done
+if ((${#active_pids[@]})); then
+  echo "ERROR: active test workload on $(hostname -s); refusing sampler cleanup: ${active_pids[*]}" >&2
+  for pid in "${active_pids[@]}"; do
+    tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true
+    echo
+  done >&2
+  exit 70
+fi
+if ((${#recorder_pids[@]} == 0)); then
+  echo "STALE_RECORDER_CLEANUP host=$(hostname -s) removed=0"
+  exit 0
+fi
+printf 'STALE_RECORDER_CLEANUP host=%s term_pids=%s\n' "$(hostname -s)" "${recorder_pids[*]}"
+kill -TERM "${recorder_pids[@]}" 2>/dev/null || true
+sleep 0.5
+for pid in "${recorder_pids[@]}"; do
+  kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
+done
+sleep 0.1
+remaining=()
+for proc in /proc/[0-9]*; do
+  pid="${proc##*/}"
+  [[ "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+  cmd="$(tr '\0' ' ' <"$proc/cmdline" 2>/dev/null || true)"
+  case "$cmd" in
+    *gq_rapl_msr_sampler*|*frequency_sampler.py*|*gq_cstate_trace*|*power_trace.py*) remaining+=("$pid") ;;
+  esac
+done
+if ((${#remaining[@]})); then
+  echo "ERROR: stale measurement recorders remain on $(hostname -s): ${remaining[*]}" >&2
+  exit 72
+fi
+echo "STALE_RECORDER_CLEANUP host=$(hostname -s) removed=${#recorder_pids[@]} verified=1"
+CLEAN
+  fi
+  return "$rc"
+}
+
+cleanup_measurement_host idex
+cleanup_measurement_host tinyman
+
 TAG="$(date +%Y%m%d_%H%M%S)_$$"
 PATCHED="${TMPDIR:-/tmp}/mac_run_p2_d1d2plus_paper_${TAG}.sh"
 python3 - "$BASE" "$PATCHED" <<'PY'
