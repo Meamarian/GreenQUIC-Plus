@@ -13,9 +13,32 @@ P2MARK='GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpip
 [[ -f "$TRANSFORM_V2" && -f "$TRANSFORM_V3" ]] || { echo "ERROR: missing D1/D2+ transform" >&2; exit 2; }
 [[ -f "$BASE" ]] || { echo "ERROR: missing $BASE" >&2; exit 2; }
 python3 -m py_compile "$TRANSFORM_V2" "$TRANSFORM_V3"
-# Recreate the exact promoted Performance2 source/binary first. The D1/D2+
-# measurement transforms touch only the disposable P5 source tree.
-P5_BUILD_REUSE="${P5_BUILD_REUSE:-1}" bash "$BASE"
+
+# D1/D2+ V2/V3 instrumentation touches interop.cpp and InteropServer.cpp/.h in
+# addition to the DPDK datapath. The normal P5 reuse path restores only the
+# datapath, so reusing a source tree from an earlier D1/D2+ run would leave the
+# application-side markers behind and make the transforms non-idempotent.
+# Always recreate the isolated source/build tree for this measurement variant.
+P5_BUILD_REUSE=0 bash "$BASE"
+
+for source_file in \
+  "$SRC/src/tools/interop/interop.cpp" \
+  "$SRC/src/tools/interopserver/InteropServer.cpp" \
+  "$SRC/src/tools/interopserver/InteropServer.h" \
+  "$SRC/src/platform/datapath_raw_dpdk_linux.c"; do
+  [[ -f "$source_file" ]] || { echo "ERROR: clean D1/D2+ source missing: $source_file" >&2; exit 2; }
+done
+
+# A clean Performance2 build must not already contain a D1/D2+ marker.
+if grep -R -Fq -- 'GREENQUIC-P5-D1D2PLUS-SNAPSHOT-' \
+    "$SRC/src/tools/interop/interop.cpp" \
+    "$SRC/src/tools/interopserver/InteropServer.cpp" \
+    "$SRC/src/tools/interopserver/InteropServer.h" \
+    "$SRC/src/platform/datapath_raw_dpdk_linux.c"; then
+  echo "ERROR: clean Performance2 source unexpectedly contains D1/D2+ instrumentation" >&2
+  exit 2
+fi
+
 python3 "$TRANSFORM_V2" \
   "$SRC/src/tools/interop/interop.cpp" \
   "$SRC/src/tools/interopserver/InteropServer.cpp" \
