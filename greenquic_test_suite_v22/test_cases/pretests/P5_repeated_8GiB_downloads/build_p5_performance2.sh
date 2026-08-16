@@ -39,11 +39,17 @@ P5_P2_RX_PREFETCH="${P5_P2_RX_PREFETCH:-0}"
 P5_P2_UDP_SEG="${P5_P2_UDP_SEG:-0}"
 P5_P2_UDP_SEG_MAX="${P5_P2_UDP_SEG_MAX:-4}"
 
-# Performance2 V2 switches. Defaults reproduce the existing P2 baseline.
-P5_P2_TX_ALLOC_BATCH="${P5_P2_TX_ALLOC_BATCH:-1}"
-P5_P2_TX_ENQUEUE_COUNTER="${P5_P2_TX_ENQUEUE_COUNTER:-1}"
+# Performance2 V2 screen-selected default (2026-08-16).
+# PLUS-only idle-monitor control screen, 1 repetition x 5 downloads:
+#   baseline            9.791419 Gbit/s
+#   tx8 + no counter + RX pipeline2  10.033422 Gbit/s (+2.472%)
+# This is the strongest same-screen candidate and is promoted for the final
+# 6-run x 6-download validation. Keep safe full TX send-data zeroing enabled,
+# shared TX handoff, and sharded active-mask disabled.
+P5_P2_TX_ALLOC_BATCH="${P5_P2_TX_ALLOC_BATCH:-8}"
+P5_P2_TX_ENQUEUE_COUNTER="${P5_P2_TX_ENQUEUE_COUNTER:-0}"
 P5_P2_TX_META_ZERO="${P5_P2_TX_META_ZERO:-1}"
-P5_P2_RX_PIPE_PREFETCH="${P5_P2_RX_PIPE_PREFETCH:-0}"
+P5_P2_RX_PIPE_PREFETCH="${P5_P2_RX_PIPE_PREFETCH:-2}"
 P5_P2_SHARD_ACTIVE_MASK="${P5_P2_SHARD_ACTIVE_MASK:-0}"
 
 case "$P5_P2_TX_HANDOFF" in shared|sharded) ;; *) echo "ERROR: P5_P2_TX_HANDOFF must be shared|sharded" >&2; exit 2;; esac
