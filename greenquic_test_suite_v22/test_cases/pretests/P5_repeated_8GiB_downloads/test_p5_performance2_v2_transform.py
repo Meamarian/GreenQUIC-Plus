@@ -129,9 +129,10 @@ assert "Dpdk->TxEnqueueCounter++;" not in nocounter
 assert "Dpdk->RxCounter += BuffersCount;" in nocounter
 assert "Dpdk->TxCounter += TxCount;" in nocounter
 
-nozero = run(["--tx-meta-zero", "0"])
-assert "required non-USO TX fields are explicitly assigned below" in nozero
-assert "CxPlatZeroMemory(Packet, sizeof(*Packet));" not in nozero
+reduced_zero = run(["--tx-meta-zero", "0"])
+assert "DPDK-only trailing fields are assigned below" in reduced_zero
+assert "CxPlatZeroMemory(Packet, sizeof(*Packet));" not in reduced_zero
+assert "CxPlatZeroMemory((CXPLAT_SEND_DATA*)Packet, sizeof(CXPLAT_SEND_DATA));" in reduced_zero
 
 rxpipe = run(["--rx-pipe-prefetch", "4"])
 assert "GreenQuicP2V2PrefetchIndex" in rxpipe
@@ -142,11 +143,12 @@ mask = run(["--shard-active-mask", "1"], handoff="sharded")
 assert "GreenQuicP2V2TxActiveMask" in mask
 assert "atomic_fetch_or_explicit" in mask
 assert "rte_ring_empty" in mask
+assert "Close the clear/enqueue race" in mask
 
 lean = run(["--tx-alloc-batch", "16", "--tx-enqueue-counter", "0", "--tx-meta-zero", "0", "--rx-pipe-prefetch", "4"])
 assert "GREENQUIC_P2_V2_TX_ALLOC_BATCH 16U" in lean
 assert "TxEnqueueCounter write removed" in lean
-assert "CxPlatZeroMemory(Packet, sizeof(*Packet));" not in lean
+assert "CxPlatZeroMemory((CXPLAT_SEND_DATA*)Packet, sizeof(CXPLAT_SEND_DATA));" in lean
 assert "GreenQuicP2V2PrefetchIndex" in lean
 
 err = run(["--tx-meta-zero", "0"], udpseg=1, should_pass=False)
