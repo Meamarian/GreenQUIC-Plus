@@ -9,26 +9,33 @@ for ((i=0;i<${#args[@]};++i)); do
   if [[ "${args[i]}" == --output-dir ]]; then OUT="${args[i+1]:-}"; ((i++)); fi
 done
 [[ -n "$OUT" ]] || { echo 'ERROR: --output-dir is required' >&2; exit 2; }
-[[ -x "$BASE" && -f "$REPORTER" && -f "$SUMMARY" ]] || { echo 'ERROR: P7 runner/reporter/summary helper missing' >&2; exit 2; }
+for f in "$BASE" "$REPORTER" "$SUMMARY"; do
+  if [[ ! -f "$f" ]]; then
+    echo "ERROR: missing P7 helper: $f" >&2
+    ls -l "$HERE" >&2 || true
+    exit 2
+  fi
+done
 python3 -m py_compile "$HERE/build_p7_d1_d2plus_report_v3.py" "$HERE/p7_frequency_sampler.py" "$REPORTER" "$SUMMARY"
 
-# run_matrix_with_report.sh historically checked the Python reporter with -x
-# even though it executes it via `python3`. Keep this D1/D2+ wrapper compatible
-# without permanently changing the checkout's file mode.
+# The base P7 wrapper historically checks BASE and REPORTER with -x even though
+# both are invoked through bash/python3. Some bundle/worktree paths may not
+# preserve those mode bits. Make them executable only for this invocation and
+# restore the original modes on exit.
+base_was_executable=0
 reporter_was_executable=0
+[[ -x "$BASE" ]] && base_was_executable=1
 [[ -x "$REPORTER" ]] && reporter_was_executable=1
-if [[ "$reporter_was_executable" == 0 ]]; then
-  chmod u+x "$REPORTER"
-fi
-restore_reporter_mode() {
-  if [[ "$reporter_was_executable" == 0 ]]; then
-    chmod u-x "$REPORTER" 2>/dev/null || true
-  fi
+[[ "$base_was_executable" == 1 ]] || chmod u+x "$BASE"
+[[ "$reporter_was_executable" == 1 ]] || chmod u+x "$REPORTER"
+restore_helper_modes() {
+  [[ "$base_was_executable" == 1 ]] || chmod u-x "$BASE" 2>/dev/null || true
+  [[ "$reporter_was_executable" == 1 ]] || chmod u-x "$REPORTER" 2>/dev/null || true
 }
-trap restore_reporter_mode EXIT INT TERM
+trap restore_helper_modes EXIT INT TERM
 
 bash "$BASE" "$@"
-restore_reporter_mode
+restore_helper_modes
 trap - EXIT INT TERM
 python3 "$HERE/build_p7_d1_d2plus_report_v3.py" --input "$OUT"
 echo "D1_D2PLUS_REPORT=$OUT/the_sheet_rules_all/d1_d2plus"
