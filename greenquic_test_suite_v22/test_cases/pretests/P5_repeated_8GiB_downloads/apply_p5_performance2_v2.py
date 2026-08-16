@@ -97,7 +97,8 @@ GreenQuicP2V2TxMbufAlloc(
     GREENQUIC_P2_V2_TX_ALLOC_CACHE* Cache = &GreenQuicP2V2TxAllocCache;
 
     if (unlikely(Cache->Pool != Pool)) {{
-        // Do not use pointers cached for another datapath/mempool lifetime.
+        // A P5 process has one datapath lifetime. Reset the TLS stash if a
+        // different pool is ever observed rather than reusing stale pointers.
         Cache->Pool = Pool;
         Cache->Next = 0U;
         Cache->Count = 0U;
@@ -139,10 +140,15 @@ if args.tx_alloc_batch > 1:
     )
 
 if args.tx_meta_zero == "0":
+    # Keep all CXPLAT_SEND_DATA/CXPLAT_SEND_DATA_COMMON fields deterministic.
+    # Only skip clearing the trailing DPDK-only pointers because those are
+    # explicitly assigned immediately below. Completely removing initialization
+    # is unsafe: fields such as ECN/common send state are consumed later.
     replace_once(
         "        CxPlatZeroMemory(Packet, sizeof(*Packet));",
-        "        /* GREENQUIC-P5-PERFORMANCE2-V2: required non-USO TX fields are explicitly assigned below. */",
-        "TX private-metadata whole-struct zero",
+        "        CxPlatZeroMemory((CXPLAT_SEND_DATA*)Packet, sizeof(CXPLAT_SEND_DATA));\n"
+        "        /* GREENQUIC-P5-PERFORMANCE2-V2: DPDK-only trailing fields are assigned below. */",
+        "TX private-metadata reduced zero",
     )
 
 if args.tx_enqueue_counter == "0":
@@ -246,6 +252,8 @@ if args.shard_active_mask == "1":
             if (rte_ring_empty(GreenQuicP2TxProducers[Index].Ring)) {
                 atomic_fetch_and_explicit(
                     &GreenQuicP2V2TxActiveMask, ~Bit, memory_order_acq_rel);
+                // Close the clear/enqueue race: a producer can enqueue between
+                // the empty observation and the mask clear. Re-check and restore.
                 if (!rte_ring_empty(GreenQuicP2TxProducers[Index].Ring)) {
                     atomic_fetch_or_explicit(
                         &GreenQuicP2V2TxActiveMask, Bit, memory_order_release);
