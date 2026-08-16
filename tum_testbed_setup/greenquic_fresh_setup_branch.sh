@@ -97,6 +97,13 @@ echo "### BRANCH READY ON BOTH TUM NODES"
 echo "### branch: $TARGET_BRANCH"
 echo "### commit: $TARGET_SHA"
 echo "### P5 + isolated P7: READY; NICs DPDK-bound"
+echo "### acpi.sh dependency: sensors/lm-sensors READY"
 echo "######################################################################"
 printf '\nMAC COMMAND — FINAL 4 TESTS, 6 RUNS x 5 DOWNLOADS:\n\n'
 printf 'REPO=%q; TAG="$(date +%%Y%%m%%d_%%H%%M%%S)"; LOG="$HOME/Downloads/GreenQUIC_FINAL_%s_${TAG}.log"; PIDFILE="$HOME/Downloads/GreenQUIC_FINAL_%s_${TAG}.pid"; if cd "$REPO"; then nohup caffeinate -dimsu bash tum_testbed_setup/mac_run_final_selected_branch.sh %q --runs 6 --downloads 5 >"$LOG" 2>&1 < /dev/null & PID=$!; echo "$PID" >"$PIDFILE"; disown "$PID" 2>/dev/null || true; echo "STARTED PID=$PID"; echo "LOG=$LOG"; echo "PIDFILE=$PIDFILE"; echo "You can close this Terminal."; else echo "ERROR: cannot cd to $REPO" >&2; fi\n' "$REPO_ROOT" "$TAG" "$TAG" "$INPUT"
+
+if [[ "$TAG" == performance2 ]]; then
+  printf '\nMAC COMMAND — PERFORMANCE2 V2 GOODPUT SCREEN, 1 RUN x 3 DOWNLOADS:\n\n'
+  printf 'cd %q && P5_P2_RUNS=1 P5_P2_DOWNLOADS=3 bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p2_goodput_screen_v4.sh --detach\n' "$REPO_ROOT"
+  printf '\nSee P5_PERFORMANCE2.md for the live-check and results-so-far commands.\n'
+fi
