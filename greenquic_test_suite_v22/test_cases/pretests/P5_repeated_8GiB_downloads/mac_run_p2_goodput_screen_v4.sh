@@ -24,17 +24,42 @@ EXPORT_LOCAL="$HOME/Downloads/P5_P2_GOODPUT_EXPORT_${TAG}"
 
 log(){ printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 ssh_once(){ ssh "${SSH_OPTS[@]}" idex "$@"; }
-ssh_retry(){
-    while ! ssh_once "$@"; do
-        log "SSH transport/command failed; retrying in 30 s"
-        sleep 30
+
+# Retry only transport loss. A real remote command/self-test/build failure must
+# stop immediately instead of being mislabeled as an SSH outage forever.
+ssh_transport_retry(){
+    local rc
+    while true; do
+        if ssh_once "$@"; then
+            return 0
+        else
+            rc=$?
+        fi
+        if (( rc == 255 )); then
+            log "SSH transport failed; retrying in 30 s"
+            sleep 30
+            continue
+        fi
+        echo "ERROR: remote command failed rc=$rc (not an SSH transport failure)" >&2
+        return "$rc"
     done
 }
+
 scp_to_idex_retry(){
-    local src="$1" dst="$2"
-    while ! scp "${SSH_OPTS[@]}" "$src" "idex:$dst"; do
-        log "SCP to idex failed; retrying in 30 s"
-        sleep 30
+    local src="$1" dst="$2" rc
+    while true; do
+        if scp "${SSH_OPTS[@]}" "$src" "idex:$dst"; then
+            return 0
+        else
+            rc=$?
+        fi
+        if (( rc == 255 )); then
+            log "SCP transport to idex failed; retrying in 30 s"
+            sleep 30
+            continue
+        fi
+        echo "ERROR: SCP to idex failed rc=$rc for $src" >&2
+        return "$rc"
     done
 }
 
@@ -81,10 +106,7 @@ if [[ -d "$LOCAL_LOCK" ]]; then
 fi
 mkdir -p "$LOCAL_LOCK"
 echo $$ > "$LOCAL_LOCK/pid"
-cleanup(){
-    rm -rf "$LOCAL_LOCK"
-    rm -f "$BUNDLE" "$REMOTE_SCRIPT_LOCAL"
-}
+cleanup(){ rm -rf "$LOCAL_LOCK"; rm -f "$BUNDLE" "$REMOTE_SCRIPT_LOCAL"; }
 trap cleanup EXIT INT TERM
 
 for pf in \
@@ -140,6 +162,7 @@ wait_clean_both(){
 }
 
 fetch_bundle(){
+    local rc
     cd "$REPO_ROOT"
     while ! git fetch origin "$BRANCH"; do log "git fetch failed; retry in 30 s"; sleep 30; done
     SHA="$(git rev-parse "origin/$BRANCH")"
@@ -149,78 +172,64 @@ fetch_bundle(){
     git bundle create "$BUNDLE" "$REF"
     git update-ref -d "$REF"
     scp_to_idex_retry "$BUNDLE" "$REMOTE_BUNDLE"
-    until ssh "${SSH_OPTS[@]}" idex "scp -o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=3 '$REMOTE_BUNDLE' root@tinyman:'$REMOTE_BUNDLE'"; do
-        log "idex -> tinyman bundle SCP failed; retry in 30 s"
-        sleep 30
+    while true; do
+        if ssh "${SSH_OPTS[@]}" idex "scp -o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=3 '$REMOTE_BUNDLE' root@tinyman:'$REMOTE_BUNDLE'"; then
+            break
+        else
+            rc=$?
+        fi
+        if (( rc == 255 )); then
+            log "idex -> tinyman SCP transport failed; retry in 30 s"
+            sleep 30
+            continue
+        fi
+        echo "ERROR: idex -> tinyman bundle SCP failed rc=$rc" >&2
+        return "$rc"
     done
     log "P2_SHA=$SHA"
 }
 
 sync_branch(){
-    ssh_retry "cd /root/mohsen && git reset --hard && git fetch '$REMOTE_BUNDLE' '$REF' && git checkout -B '$BRANCH' FETCH_HEAD && test \"\$(git rev-parse HEAD)\" = '$SHA'"
-    ssh_retry "ssh -o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=3 root@tinyman 'cd /root/mohsen && git reset --hard && git fetch \"$REMOTE_BUNDLE\" \"$REF\" && git checkout -B \"$BRANCH\" FETCH_HEAD && test \"\$(git rev-parse HEAD)\" = \"$SHA\"'"
+    ssh_transport_retry "cd /root/mohsen && git reset --hard && git fetch '$REMOTE_BUNDLE' '$REF' && git checkout -B '$BRANCH' FETCH_HEAD && test \"\$(git rev-parse HEAD)\" = '$SHA'"
+    ssh_transport_retry "ssh -o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=3 root@tinyman 'cd /root/mohsen && git reset --hard && git fetch \"$REMOTE_BUNDLE\" \"$REF\" && git checkout -B \"$BRANCH\" FETCH_HEAD && test \"\$(git rev-parse HEAD)\" = \"$SHA\"'"
 }
 
 make_remote_runner(){
     cat > "$REMOTE_SCRIPT_LOCAL" <<'REMOTE'
 #!/usr/bin/env bash
 set +e
-TAG="$1"
-SELF_LOG="$2"
-SHA="$3"
-RUNS="$4"
-DOWNLOADS="$5"
+TAG="$1"; SELF_LOG="$2"; SHA="$3"; RUNS="$4"; DOWNLOADS="$5"
 P5=/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
 RESULT="/tmp/P5_P2_GOODPUT_SCREEN_${TAG}"
 MATRIX="$P5/matrix_results/P5_P2_GOODPUT_SCREEN_${TAG}"
 EX="/tmp/P5_P2_GOODPUT_EXPORT_${TAG}"
-rm -rf "$EX"
-mkdir -p "$EX"
-
+rm -rf "$EX"; mkdir -p "$EX"
 cd "$P5" || exit 90
-STAMP="$TAG" \
-RESULT_ROOT="$RESULT" \
-MATRIX_ROOT="$MATRIX" \
-P5_P2_RUNS="$RUNS" \
-P5_P2_DOWNLOADS="$DOWNLOADS" \
-P5_P2_CHART_STYLE=both \
+STAMP="$TAG" RESULT_ROOT="$RESULT" MATRIX_ROOT="$MATRIX" \
+P5_P2_RUNS="$RUNS" P5_P2_DOWNLOADS="$DOWNLOADS" P5_P2_CHART_STYLE=both \
 bash ./run_p5_performance2_goodput_screen.sh
 RRC=$?
-
 cp -f "$RESULT/goodput_screen_summary.tsv" "$EX/" 2>/dev/null || true
 cp -f "$RESULT/goodput_screen_vs_baseline.tsv" "$EX/" 2>/dev/null || true
 cp -f "$RESULT/status.env" "$EX/" 2>/dev/null || true
 cp -f "$SELF_LOG" "$EX/remote.log" 2>/dev/null || true
-if [ -d "$RESULT" ]; then
-    (cd /tmp && zip -qr "$EX/analysis__P5_P2_GOODPUT_SCREEN_${TAG}.zip" "P5_P2_GOODPUT_SCREEN_${TAG}")
-fi
-if [ -d "$MATRIX" ]; then
-    (cd "$(dirname "$MATRIX")" && zip -qr "$EX/matrix__P5_P2_GOODPUT_SCREEN_${TAG}.zip" "$(basename "$MATRIX")")
-fi
+[ -d "$RESULT" ] && (cd /tmp && zip -qr "$EX/analysis__P5_P2_GOODPUT_SCREEN_${TAG}.zip" "P5_P2_GOODPUT_SCREEN_${TAG}")
+[ -d "$MATRIX" ] && (cd "$(dirname "$MATRIX")" && zip -qr "$EX/matrix__P5_P2_GOODPUT_SCREEN_${TAG}.zip" "$(basename "$MATRIX")")
 printf 'REMOTE_SCRIPT_RC=%s\nP2_SHA=%s\nRUNS=%s\nDOWNLOADS=%s\n' "$RRC" "$SHA" "$RUNS" "$DOWNLOADS" > "$EX/result_rc.txt"
 
 cd "$EX" || exit 91
 rm -f SHA256SUMS SHA256SUMS.tmp DONE EXPORT_FAILED
+# This is a standalone remote script, not a nested quoted one-liner. -print0 is
+# therefore preserved correctly; this fixes the earlier "filename0filename" manifest bug.
 find . -maxdepth 1 -type f \
-    ! -name SHA256SUMS \
-    ! -name SHA256SUMS.tmp \
-    ! -name DONE \
-    ! -name EXPORT_FAILED \
-    -print0 \
-| sort -z \
-| xargs -0 -r sha256sum > SHA256SUMS.tmp
+    ! -name SHA256SUMS ! -name SHA256SUMS.tmp ! -name DONE ! -name EXPORT_FAILED \
+    -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS.tmp
 MRC=$?
-if [ "$MRC" -ne 0 ]; then
-    printf 'MANIFEST_RC=%s\n' "$MRC" > EXPORT_FAILED
-    exit 92
-fi
+if [ "$MRC" -ne 0 ]; then printf 'MANIFEST_RC=%s\n' "$MRC" > EXPORT_FAILED; exit 92; fi
 mv SHA256SUMS.tmp SHA256SUMS
 sha256sum -c SHA256SUMS >/dev/null 2>&1
 VRC=$?
-if [ "$VRC" -ne 0 ]; then
-    printf 'VERIFY_RC=%s\n' "$VRC" > EXPORT_FAILED
-    exit 93
-fi
+if [ "$VRC" -ne 0 ]; then printf 'VERIFY_RC=%s\n' "$VRC" > EXPORT_FAILED; exit 93; fi
 date -Is > DONE
 exit 0
 REMOTE
@@ -229,40 +238,38 @@ REMOTE
 
 start_remote_detached(){
     scp_to_idex_retry "$REMOTE_SCRIPT_LOCAL" "$REMOTE_SCRIPT"
-    ssh_retry "chmod +x '$REMOTE_SCRIPT'; rm -rf '$EXPORT_REMOTE'; nohup setsid bash '$REMOTE_SCRIPT' '$TAG' '$REMOTE_LOG' '$SHA' '$RUNS' '$DOWNLOADS' >'$REMOTE_LOG' 2>&1 </dev/null & echo \$! > '$REMOTE_PID'; echo REMOTE_PID=\$(cat '$REMOTE_PID')"
+    ssh_transport_retry "chmod +x '$REMOTE_SCRIPT'; rm -rf '$EXPORT_REMOTE'; nohup setsid bash '$REMOTE_SCRIPT' '$TAG' '$REMOTE_LOG' '$SHA' '$RUNS' '$DOWNLOADS' >'$REMOTE_LOG' 2>&1 </dev/null & echo \$! > '$REMOTE_PID'; echo REMOTE_PID=\$(cat '$REMOTE_PID')"
 }
 
 wait_remote_done(){
     while true; do
         if ssh_once "test -f '$EXPORT_REMOTE/DONE'" >/dev/null 2>&1; then
-            log "remote GOODPUT screen DONE detected"
-            return 0
+            log "remote GOODPUT screen DONE detected"; return 0
         fi
         if ssh_once "test -f '$EXPORT_REMOTE/EXPORT_FAILED'" >/dev/null 2>&1; then
             echo "ERROR: remote export failed:" >&2
             ssh_once "cat '$EXPORT_REMOTE/EXPORT_FAILED'; tail -100 '$REMOTE_LOG'" >&2 || true
             return 92
         fi
-        log "waiting for P2 goodput screen (SSH failure cannot kill remote nohup job)"
+        log "waiting for P2 goodput screen (Mac->idex SSH failure cannot kill remote nohup job)"
         sleep 60
     done
 }
 
 verify_or_copy_export(){
-    local remote="$1" localdir="$2"
+    local remote="$1" localdir="$2" rc
     mkdir -p "$localdir"
-
-    while ! scp "${SSH_OPTS[@]}" "idex:$remote/SHA256SUMS" "$localdir/SHA256SUMS"; do
-        log "manifest SCP failed; retry in 30 s"
-        sleep 30
+    while true; do
+        if scp "${SSH_OPTS[@]}" "idex:$remote/SHA256SUMS" "$localdir/SHA256SUMS"; then break; else rc=$?; fi
+        if (( rc == 255 )); then log "manifest SCP transport failed; retry in 30 s"; sleep 30; continue; fi
+        echo "ERROR: manifest SCP failed rc=$rc" >&2; return "$rc"
     done
 
     while read -r hash file; do
         [[ -n "${file:-}" ]] || continue
         rel="${file#./}"
         if [[ -f "$localdir/$rel" ]] && printf '%s  %s\n' "$hash" "$rel" | (cd "$localdir" && shasum -a 256 -c - >/dev/null 2>&1); then
-            log "already verified $rel"
-            continue
+            log "already verified $rel"; continue
         fi
         while true; do
             mkdir -p "$(dirname "$localdir/$rel")"
@@ -270,17 +277,16 @@ verify_or_copy_export(){
             log "copying $rel"
             if scp "${SSH_OPTS[@]}" "idex:$remote/$rel" "$localdir/$rel.part"; then
                 got="$(shasum -a 256 "$localdir/$rel.part" | awk '{print $1}')"
-                if [[ "$got" == "$hash" ]]; then
-                    mv "$localdir/$rel.part" "$localdir/$rel"
-                    log "verified $rel"
-                    break
-                fi
+                if [[ "$got" == "$hash" ]]; then mv "$localdir/$rel.part" "$localdir/$rel"; log "verified $rel"; break; fi
+                log "hash mismatch for $rel; retry in 60 s"
+            else
+                rc=$?
+                if (( rc != 255 )); then echo "ERROR: SCP failed rc=$rc for $rel" >&2; return "$rc"; fi
+                log "SCP transport failed for $rel; retry in 60 s"
             fi
-            log "SCP/hash failed for $rel; retry in 60 s"
             sleep 60
         done
     done < "$localdir/SHA256SUMS"
-
     (cd "$localdir" && shasum -a 256 -c SHA256SUMS)
     date "+%Y-%m-%dT%H:%M:%S%z" > "$localdir/SCP_DONE"
     log "SCP + SHA256 VERIFIED: $localdir"
@@ -293,8 +299,8 @@ fetch_bundle
 sync_branch
 wait_clean_both
 
-ssh_retry "cd '/root/mohsen/$P5_REL' && bash -n ./build_p5_performance2.sh && bash -n ./run_p5_performance2_goodput_screen.sh && python3 -m py_compile ./apply_p5_performance2_v2.py ./test_p5_performance2_v2_transform.py && python3 ./test_p5_performance2_v2_transform.py"
-ssh_retry "ssh -o ConnectTimeout=15 root@tinyman 'cd /root/mohsen/$P5_REL && bash -n ./build_p5_performance2.sh && bash -n ./run_p5_performance2_goodput_screen.sh && python3 -m py_compile ./apply_p5_performance2_v2.py ./test_p5_performance2_v2_transform.py && python3 ./test_p5_performance2_v2_transform.py'"
+ssh_transport_retry "cd '/root/mohsen/$P5_REL' && bash -n ./build_p5_performance2.sh && bash -n ./run_p5_performance2_goodput_screen.sh && python3 -m py_compile ./apply_p5_performance2_v2.py ./test_p5_performance2_v2_transform.py && python3 ./test_p5_performance2_v2_transform.py"
+ssh_transport_retry "ssh -o ConnectTimeout=15 root@tinyman 'cd /root/mohsen/$P5_REL && bash -n ./build_p5_performance2.sh && bash -n ./run_p5_performance2_goodput_screen.sh && python3 -m py_compile ./apply_p5_performance2_v2.py ./test_p5_performance2_v2_transform.py && python3 ./test_p5_performance2_v2_transform.py'"
 log "preflight PASS on idex + tinyman"
 
 make_remote_runner
@@ -308,7 +314,5 @@ log "EXPORT=$EXPORT_LOCAL"
 log "FAILURES=$FAILURES"
 cat "$EXPORT_LOCAL/goodput_screen_vs_baseline.tsv" 2>/dev/null || true
 
-if [[ "$FAILURES" =~ ^[0-9]+$ ]] && (( FAILURES == 0 )); then
-    exit 0
-fi
+if [[ "$FAILURES" =~ ^[0-9]+$ ]] && (( FAILURES == 0 )); then exit 0; fi
 exit 1
