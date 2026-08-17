@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
-BUILD="$HERE/build_p5_multicore_performance2.sh"
+BUILD="$HERE/build_p5_bottleneck_profile.sh"
 CASE_RUNNER="$HERE/run_p5_parallel_off_case.sh"
 SUMMARY="$HERE/summarize_p5_bottleneck_sweep.py"
 CLEANER="$HERE/safe_cleanup_p5_bottleneck_processes.py"
@@ -14,9 +14,12 @@ OUTPUT_ROOT="${P5_BOTTLENECK_OUTPUT_ROOT:-$HERE/matrix_results/P5_BOTTLENECK_SWE
 
 [[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: P5_BOTTLENECK_RUNS must be positive" >&2; exit 2; }
 [[ "$CONNECTIONS" =~ ^[2-9][0-9]*$ ]] || { echo "ERROR: P5_BOTTLENECK_CONNECTIONS must be >=2" >&2; exit 2; }
-for f in "$BUILD" "$CASE_RUNNER" "$SUMMARY" "$CLEANER"; do [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2; exit 2; }; done
-python3 -m py_compile "$SUMMARY" "$CLEANER"
+for f in "$BUILD" "$CASE_RUNNER" "$SUMMARY" "$CLEANER"; do
+  [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2; exit 2; }
+done
+python3 -m py_compile "$SUMMARY" "$CLEANER" "$HERE/cpu_busy_sampler.py" "$HERE/analyze_p5_bottleneck_case.py" "$HERE/apply_p5_bottleneck_txq.py"
 bash -n "$CASE_RUNNER"
+bash -n "$BUILD"
 mkdir -p "$OUTPUT_ROOT/build_logs"
 STATUS="$OUTPUT_ROOT/CASE_STATUS.tsv"
 printf 'case\treference\tbuild_profile\tbuild_rc\ttraffic_analysis_rc\n' > "$STATUS"
@@ -31,6 +34,9 @@ COMMON_PROFILE=(
   P5_SUPER_RING_SYNC=legacy
   P5_SUPER_DRAIN_BURSTS=2
   P5_SUPER_DRAIN_THRESHOLD=0
+  P5_SUPER_SKIP_OFF_RINGCOUNT=0
+  P5_SUPER_DEBUG_COUNTERS=1
+  P5_SUPER_TRACE_RINGCOUNT=1
   P5_SUPER_TX_LOCK_MODE=single_owner
   P5_P2_TX_HANDOFF=shared
   P5_P2_TX_PRODUCER_RING_SIZE=1024
@@ -63,7 +69,7 @@ build_profile(){
   local rc1=${PIPESTATUS[0]}
   printf -v q '%q ' "${args[@]}"
   ssh -o BatchMode=yes -o ConnectTimeout=20 root@tinyman \
-    "cd '$HERE' && env $q bash ./build_p5_multicore_performance2.sh" 2>&1 | tee "$OUTPUT_ROOT/build_logs/${profile}_tinyman.log"
+    "cd '$HERE' && env $q bash ./build_p5_bottleneck_profile.sh" 2>&1 | tee "$OUTPUT_ROOT/build_logs/${profile}_tinyman.log"
   local rc2=${PIPESTATUS[0]}
   set -e
   if (( rc1 != 0 || rc2 != 0 )); then
@@ -126,38 +132,40 @@ All traffic cases use OFF mode, $CONNECTIONS simultaneous QUIC connections,
 8 GiB per connection, $RUNS repetitions, MTU 1500, QUIC CPU set 21-24,
 max-throughput execution profile and identical measurement instrumentation.
 
-A_1c_baseline      : one DPDK lcore (19), current measured Performance2 design
-B_2c_baseline      : A + only DPDK lcore 20 / second RX+TX queue
-C_1c_ring_mp       : A + producer ring synchronization legacy-HTS -> classic MP
-D_1c_ring_rts      : A + producer ring synchronization legacy-HTS -> RTS
-E_2c_txalloc1      : B + TX mbuf allocation batch 8 -> 1
-F_2c_txalloc32     : B + TX mbuf allocation batch 8 -> 32
-G_2c_rxpipe0       : B + RX pipeline prefetch 2 -> 0
-H_2c_rxpipe4       : B + RX pipeline prefetch 2 -> 4
-I_2c_txburst32     : B + hardware TX burst 16 -> 32
-J_2c_drain4        : B + TX drain bursts per poll 2 -> 4
-K_2c_rxburst64     : B + hardware RX burst 32 -> 64
-L_2c_txmetazero0   : B + remove full TX metadata struct zeroing
+A_1c_baseline        : one DPDK lcore (19), current measured Performance2 design
+B_2c_baseline        : A + only DPDK lcore 20 / second RX+TX queue
+C_1c_ring_mp         : A + producer ring synchronization legacy-HTS -> classic MP
+D_1c_ring_rts        : A + producer ring synchronization legacy-HTS -> RTS
+E_2c_txalloc1        : B + TX mbuf allocation batch 8 -> 1
+F_2c_txalloc32       : B + TX mbuf allocation batch 8 -> 32
+G_2c_rxpipe0         : B + RX pipeline prefetch 2 -> 0
+H_2c_rxpipe4         : B + RX pipeline prefetch 2 -> 4
+I_2c_txburst32       : B + hardware TX burst 16 -> 32
+J_2c_txburst64       : B + hardware TX burst 16 -> 64
+K_2c_drain4          : B + TX drain bursts per poll 2 -> 4
+L_2c_rxburst64       : B + hardware RX burst 32 -> 64
+M_2c_txmetazero0     : B + remove full TX metadata struct zeroing
+N_2c_skipoffcount    : B + skip OFF-mode shared-ring count on hot path
+O_2c_debug0          : B + disable optional super-performance debug counters
+P_2c_ring8192        : B + software TX ring size 4096 -> 8192
 
 Reference rules:
   A -> B isolates DPDK core-count scaling using the exact same binary bits.
-  C,D compare with A because they alter the shared producer ring before one TX consumer.
-  E-L compare with B because they alter one datapath dimension with two active DPDK owners.
+  C,D compare with A because they alter the shared producer ring with one TX consumer.
+  E-P compare with B because they alter exactly one datapath/build dimension with two DPDK owners.
 
-The existing Performance2 sharded-producer experiment is intentionally excluded:
-its SPSC producer rings are designed around a single consumer cursor, so using it
-unchanged with two TX consumers would not be a clean bottleneck experiment.
+The Performance2 sharded-producer experiment is intentionally excluded from this
+first sweep: its SPSC producer rings have a single-consumer cursor, so enabling it
+unchanged with two TX consumers would confound the bottleneck diagnosis.
 EOF
 
-# Exact current baseline build. A and B use identical binaries; only runtime
-# topology changes, making A->B the clean core-count experiment.
+# A and B use IDENTICAL baseline binaries. Only runtime lcore topology changes.
 BUILD_RC=0
 build_profile baseline || BUILD_RC=$?
 run_case A_1c_baseline 19 self baseline "$BUILD_RC"
 run_case B_2c_baseline 19,20 A_1c_baseline baseline "$BUILD_RC"
 
-# Producer-ring synchronization is tested with one consumer so the selected
-# synchronization primitive is the only material change from A.
+# Producer-ring synchronization, one TX consumer, one variable relative to A.
 BUILD_RC=0
 build_profile ring_mp P5_SUPER_RING_SYNC=mp || BUILD_RC=$?
 run_case C_1c_ring_mp 19 A_1c_baseline ring_mp "$BUILD_RC" P5_SUPER_RING_SYNC=mp
@@ -166,7 +174,7 @@ BUILD_RC=0
 build_profile ring_rts P5_SUPER_RING_SYNC=rts || BUILD_RC=$?
 run_case D_1c_ring_rts 19 A_1c_baseline ring_rts "$BUILD_RC" P5_SUPER_RING_SYNC=rts
 
-# Two-core datapath perturbations: one build variable at a time relative to B.
+# Two-core perturbations: exactly one parameter relative to B.
 BUILD_RC=0
 build_profile txalloc1 P5_P2_TX_ALLOC_BATCH=1 || BUILD_RC=$?
 run_case E_2c_txalloc1 19,20 B_2c_baseline txalloc1 "$BUILD_RC" P5_P2_TX_ALLOC_BATCH=1
@@ -188,19 +196,35 @@ build_profile txburst32 P5_SUPER_TX_BURST=32 || BUILD_RC=$?
 run_case I_2c_txburst32 19,20 B_2c_baseline txburst32 "$BUILD_RC" P5_SUPER_TX_BURST=32
 
 BUILD_RC=0
+build_profile txburst64 P5_SUPER_TX_BURST=64 || BUILD_RC=$?
+run_case J_2c_txburst64 19,20 B_2c_baseline txburst64 "$BUILD_RC" P5_SUPER_TX_BURST=64
+
+BUILD_RC=0
 build_profile drain4 P5_SUPER_DRAIN_BURSTS=4 || BUILD_RC=$?
-run_case J_2c_drain4 19,20 B_2c_baseline drain4 "$BUILD_RC" P5_SUPER_DRAIN_BURSTS=4
+run_case K_2c_drain4 19,20 B_2c_baseline drain4 "$BUILD_RC" P5_SUPER_DRAIN_BURSTS=4
 
 BUILD_RC=0
 build_profile rxburst64 P5_SUPER_RX_BURST=64 || BUILD_RC=$?
-run_case K_2c_rxburst64 19,20 B_2c_baseline rxburst64 "$BUILD_RC" P5_SUPER_RX_BURST=64
+run_case L_2c_rxburst64 19,20 B_2c_baseline rxburst64 "$BUILD_RC" P5_SUPER_RX_BURST=64
 
 BUILD_RC=0
 build_profile txmetazero0 P5_P2_TX_META_ZERO=0 || BUILD_RC=$?
-run_case L_2c_txmetazero0 19,20 B_2c_baseline txmetazero0 "$BUILD_RC" P5_P2_TX_META_ZERO=0
+run_case M_2c_txmetazero0 19,20 B_2c_baseline txmetazero0 "$BUILD_RC" P5_P2_TX_META_ZERO=0
+
+BUILD_RC=0
+build_profile skipoffcount P5_SUPER_SKIP_OFF_RINGCOUNT=1 || BUILD_RC=$?
+run_case N_2c_skipoffcount 19,20 B_2c_baseline skipoffcount "$BUILD_RC" P5_SUPER_SKIP_OFF_RINGCOUNT=1
+
+BUILD_RC=0
+build_profile debug0 P5_SUPER_DEBUG_COUNTERS=0 || BUILD_RC=$?
+run_case O_2c_debug0 19,20 B_2c_baseline debug0 "$BUILD_RC" P5_SUPER_DEBUG_COUNTERS=0
+
+BUILD_RC=0
+build_profile ring8192 P5_SUPER_RING_SIZE=8192 || BUILD_RC=$?
+run_case P_2c_ring8192 19,20 B_2c_baseline ring8192 "$BUILD_RC" P5_SUPER_RING_SIZE=8192
 
 cleanup_between_cases
-python3 "$SUMMARY" --root "$OUTPUT_ROOT"
+python3 "$SUMMARY" --root "$OUTPUT_ROOT" || echo "WARN: final sweep summary failed; raw case data preserved"
 
 echo "======================================================================"
 echo "P5 BOTTLENECK SWEEP COMPLETE"
@@ -209,5 +233,5 @@ echo "SUMMARY=$OUTPUT_ROOT/BOTTLENECK_SWEEP_SUMMARY.txt"
 echo "CSV=$OUTPUT_ROOT/BOTTLENECK_SWEEP_SUMMARY.csv"
 echo "STATUS=$STATUS"
 echo "======================================================================"
-# Case failures are data. Do not fail the top-level sweep after other cases ran.
+# Individual experimental failures are retained as data; do not erase other cases.
 exit 0
