@@ -14,9 +14,10 @@ TXQ_TRANSFORM_V3="$HERE/apply_p5_multicore_txq_v3.py"
 TXQ_TRANSFORM_V2="$HERE/apply_p5_multicore_txq_v2.py"
 TXQ_TRANSFORM_BASE="$HERE/apply_p5_multicore_txq.py"
 LCORE_STATS_TRANSFORM="$HERE/apply_p5_multicore_lcore_stats.py"
+ARCH_POOL_TRANSFORM="$HERE/apply_p5_arch_mbuf_pool.py"
 VERIFY_BINARY="$HERE/verify_p5_parallel_multicore_binary.sh"
 
-for f in "$BASE" "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_V3" "$TXQ_TRANSFORM_V2" "$TXQ_TRANSFORM_BASE" "$LCORE_STATS_TRANSFORM" "$VERIFY_BINARY"; do
+for f in "$BASE" "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_V3" "$TXQ_TRANSFORM_V2" "$TXQ_TRANSFORM_BASE" "$LCORE_STATS_TRANSFORM" "$ARCH_POOL_TRANSFORM" "$VERIFY_BINARY"; do
     [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2; exit 2; }
 done
 [[ -d "$DPDK" ]] || { echo "ERROR: DPDK install missing: $DPDK" >&2; exit 2; }
@@ -32,6 +33,7 @@ echo "RX/TX: one queue per configured DPDK owner; stable per-flow TX queue mappi
 echo "Runtime proof: per-lcore RX/TX packet counters are mandatory"
 echo "Workload: one MsQuic/DPDK process, multiple simultaneous QUIC connections"
 echo "Fair-comparison MTU: $P5_SUPER_MTU"
+[[ -n "${P5_ARCH_MBUF_POOL_SIZE:-}" ]] && echo "Architecture mbuf pool: ${P5_ARCH_MBUF_POOL_SIZE} (source-level)"
 echo "======================================================================"
 
 # Build the exact current Performance2 configuration first. All additional
@@ -41,16 +43,24 @@ bash "$BASE"
 [[ -f "$SOURCE" ]] || { echo "ERROR: disposable interop source missing: $SOURCE" >&2; exit 2; }
 [[ -f "$DATAPATH" ]] || { echo "ERROR: disposable datapath missing: $DATAPATH" >&2; exit 2; }
 
+# Architecture-only fair pool sizing. Ordinary Performance2 callers that do
+# not set P5_ARCH_MBUF_POOL_SIZE retain the original datapath pool capacity.
+if [[ -n "${P5_ARCH_MBUF_POOL_SIZE:-}" ]]; then
+    [[ "$P5_ARCH_MBUF_POOL_SIZE" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid P5_ARCH_MBUF_POOL_SIZE=$P5_ARCH_MBUF_POOL_SIZE" >&2; exit 2; }
+    python3 "$ARCH_POOL_TRANSFORM" --count "$P5_ARCH_MBUF_POOL_SIZE" "$DATAPATH"
+fi
+
 python3 "$PARALLEL_TRANSFORM" "$SOURCE"
 python3 "$TXQ_TRANSFORM" "$DATAPATH"
 python3 "$LCORE_STATS_TRANSFORM" "$DATAPATH"
-python3 -m py_compile "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_V3" "$TXQ_TRANSFORM_V2" "$TXQ_TRANSFORM_BASE" "$LCORE_STATS_TRANSFORM"
+python3 -m py_compile "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_V3" "$TXQ_TRANSFORM_V2" "$TXQ_TRANSFORM_BASE" "$LCORE_STATS_TRANSFORM" "$ARCH_POOL_TRANSFORM"
 
-python3 - "$SOURCE" "$DATAPATH" <<'PY'
+python3 - "$SOURCE" "$DATAPATH" "${P5_ARCH_MBUF_POOL_SIZE:-}" <<'PY'
 from pathlib import Path
 import sys
 source=Path(sys.argv[1]).read_text(encoding='utf-8',errors='replace')
 dp=Path(sys.argv[2]).read_text(encoding='utf-8',errors='replace')
+arch_pool=sys.argv[3]
 required_source=(
     'GREENQUIC-P5-PARALLEL-CONNECTIONS-V1',
     'GreenQuicP5RunParallelConnections',
@@ -91,6 +101,12 @@ if not role or 'Dpdk->GreenQuicTxOwnerCount = NextTxQueue;' not in role:
     raise SystemExit('ERROR: cannot prove per-lcore TX role assignment in GreenQuicConfigureRoles')
 if 'PortConfig.rxmode.mtu = 1500;' not in dp:
     raise SystemExit('ERROR: P5 disposable datapath is not pinned to MTU 1500')
+if arch_pool:
+    marker=f'GREENQUIC-P5-ARCH-MBUF-POOL-V2 count={arch_pool}'
+    if marker not in dp:
+        raise SystemExit('ERROR: architecture source-level mbuf pool marker missing')
+    if f'{arch_pool}U' not in dp:
+        raise SystemExit('ERROR: architecture source-level mbuf pool count missing')
 if 'txhandoff=sharded' in dp:
     if 'GreenQuicP2TxDequeueBurst(' not in dp:
         raise SystemExit('ERROR: sharded build lost its single-consumer dequeue path')
