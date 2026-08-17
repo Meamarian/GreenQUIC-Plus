@@ -17,11 +17,16 @@ for f in "$BASE" "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_BASE"; d
 done
 [[ -d "$DPDK" ]] || { echo "ERROR: DPDK install missing: $DPDK" >&2; exit 2; }
 
+# P7 comparison uses MTU 1500. Force the disposable P5 Performance2 build to
+# the same NIC MTU unless the caller explicitly overrides it for another study.
+export P5_SUPER_MTU="${P5_SUPER_MTU:-1500}"
+
 echo "======================================================================"
 echo "P5 PERFORMANCE2 PARALLEL MULTICORE BUILD"
 echo "Topology target: DPDK=19,20  QUIC=21,22,23,24"
 echo "RX: RSS queues 0,1  TX: per-flow queues 0,1 with one owner per DPDK core"
 echo "Workload: one MsQuic/DPDK process, multiple simultaneous QUIC connections"
+echo "Fair-comparison MTU: $P5_SUPER_MTU"
 echo "======================================================================"
 
 # Build the exact current Performance2 configuration first. Both additional
@@ -36,7 +41,6 @@ python3 "$PARALLEL_TRANSFORM" "$SOURCE"
 python3 "$TXQ_TRANSFORM" "$DATAPATH"
 python3 -m py_compile "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_BASE"
 
-# Static source audit before compilation.
 python3 - "$SOURCE" "$DATAPATH" <<'PY'
 from pathlib import Path
 import sys
@@ -67,22 +71,19 @@ if 'Dpdk->GreenQuicTxOwnerCount = NextTxQueue;' not in dp:
     raise SystemExit('ERROR: per-lcore TX owner count assignment missing')
 if 'Hash % Dpdk->GreenQuicTxOwnerCount' not in dp:
     raise SystemExit('ERROR: stable flow-to-TX-queue mapping missing')
-# Fail if the active multicore role assignment still contains the legacy
-# one-NIC-TX-queue setup from the original optional multicore implementation.
 role_start=dp.find('static void\nGreenQuicConfigureRoles(')
 role_end=dp.find('CxPlatDpdkReadConfig(', role_start)
 role=dp[role_start:role_end] if role_start >= 0 and role_end > role_start else ''
 if not role or 'Dpdk->GreenQuicTxOwnerCount = NextTxQueue;' not in role:
     raise SystemExit('ERROR: cannot prove two-queue TX role assignment in GreenQuicConfigureRoles')
+if 'PortConfig.rxmode.mtu = 1500;' not in dp:
+    raise SystemExit('ERROR: P5 disposable datapath is not pinned to MTU 1500')
 print('P5 parallel multicore source audit PASS')
 PY
 
 export PKG_CONFIG_PATH="$DPDK/lib/pkgconfig:$DPDK/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export LIBRARY_PATH="$DPDK/lib:$DPDK/lib/x86_64-linux-gnu${LIBRARY_PATH:+:$LIBRARY_PATH}"
 export LD_LIBRARY_PATH="$DPDK/lib:$DPDK/lib/x86_64-linux-gnu:$DPDK/lib/dpdk/pmds-22.0${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-# The source was changed after the base Performance2 build, so force the two
-# interop binaries to relink from the transformed disposable tree.
 cmake --build "$BUILD" --target quicinterop quicinteropserver --parallel "$(nproc)"
 
 CLIENT="$BUILD/bin/Release/quicinterop"
