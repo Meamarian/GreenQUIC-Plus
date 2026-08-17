@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import py_compile
 import sys, tempfile
 
 AFF_MARKER = "GREENQUIC-P5-ARCH-AFFINITIZE-RUNTIME-V1"
@@ -78,7 +79,12 @@ suffix
         assert 'gq_expand_cpu_list "$cpus"' in out
         patch(p)
         assert p.read_text(encoding="utf-8") == out
-    print("P5 ARCH runtime patch SELF-TEST PASS")
+
+    verifier = Path(__file__).with_name("verify_p5_arch_effective_config.py")
+    if not verifier.is_file():
+        raise SystemExit(f"ERROR: architecture effective-config verifier missing: {verifier}")
+    py_compile.compile(str(verifier), doraise=True)
+    print("P5 ARCH runtime patch SELF-TEST PASS; effective-config verifier compiles")
 
 
 if len(sys.argv) == 2 and sys.argv[1] == "--self-test":
