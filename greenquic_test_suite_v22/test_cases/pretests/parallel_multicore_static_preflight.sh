@@ -17,6 +17,7 @@ BASH_FILES=(
 )
 PY_FILES=(
  "$P5/apply_p5_parallel_connections.py"
+ "$P5/apply_p5_datapath_fix.py"
  "$P5/apply_p5_multicore_txq.py"
  "$P5/apply_p5_multicore_txq_v2.py"
  "$P5/report_p5_parallel_run.py"
@@ -67,10 +68,13 @@ if 'for (uint32_t Index = 0; Index < RTE_MAX_LCORE; ++Index)' not in text:
 print('PASS: checked-in datapath remains base architecture; disposable-only TXQ marker absent')
 PY
 
-# Reproduce the exact disposable source transformation chain used by the P5
-# multicore build, but on a temporary C file only. This catches compatibility
-# failures before CMake compilation, NIC startup, or any traffic.
+# Reproduce the exact disposable datapath transformation order used by
+# build_p5_client -> build_p5_super_performance -> build_p5_performance2 ->
+# build_p5_multicore_performance2.  In particular, apply_p5_datapath_fix.py
+# MUST run before the packet-counter guard; it creates the P5 packet-total,
+# EPOLL-fd and record-at-log0 markers that the real P5 build relies on.
 for f in \
+    "$P5/apply_p5_datapath_fix.py" \
     "$P5/apply_p5_super_performance.py" \
     "$P5/apply_p5_super_packet_counter_guard.py" \
     "$P5/apply_p5_performance2.py" \
@@ -83,6 +87,20 @@ done
 TMP_DP="$(mktemp /tmp/greenquic_p5_fullchain_preflight.XXXXXX.c)"
 trap 'rm -f "$TMP_DP"' EXIT
 cp "$REPO_ROOT/msquic/src/platform/datapath_raw_dpdk_linux.c" "$TMP_DP"
+
+python3 "$P5/apply_p5_datapath_fix.py" "$TMP_DP"
+for marker in \
+    GREENQUIC-P5-DATAPATH-PACKET-TOTALS-V1 \
+    GREENQUIC-P5-EPOLL-FD-INIT-FIX-V1 \
+    GREENQUIC-DVFS-RECORD-LOG0-V1
+do
+    grep -Fq "$marker" "$TMP_DP" || {
+        echo "ERROR: P5 datapath-fix preflight missing marker: $marker" >&2
+        exit 2
+    }
+done
+
+echo "PASS: P5 datapath fixes applied before performance transforms"
 
 python3 "$P5/apply_p5_super_performance.py" "$TMP_DP" \
     --cache 128 \
@@ -119,18 +137,30 @@ python3 "$P5/apply_p5_performance2_v2.py" "$TMP_DP" \
 python3 "$P5/apply_p5_multicore_txq_v2.py" "$TMP_DP"
 
 for marker in \
+    GREENQUIC-P5-DATAPATH-PACKET-TOTALS-V1 \
+    GREENQUIC-P5-EPOLL-FD-INIT-FIX-V1 \
+    GREENQUIC-DVFS-RECORD-LOG0-V1 \
     GREENQUIC-P5-SUPER-PERF-V2 \
     GREENQUIC-P5-PERFORMANCE2-V1 \
     GREENQUIC-P5-PERFORMANCE2-V2 \
     GREENQUIC-P5-MULTICORE-TXQ-V1 \
     GreenQuicTxOwnerCount \
     GreenQuicSelectTxQueue
- do
+do
     grep -Fq "$marker" "$TMP_DP" || {
         echo "ERROR: full-chain preflight missing marker: $marker" >&2
         exit 2
     }
 done
+
+grep -Fq 'Dpdk->RxCounter += BuffersCount;' "$TMP_DP" || {
+    echo "ERROR: full-chain preflight lost RxCounter packet totals" >&2
+    exit 2
+}
+grep -Fq 'Dpdk->TxCounter += TxCount;' "$TMP_DP" || {
+    echo "ERROR: full-chain preflight lost TxCounter packet totals" >&2
+    exit 2
+}
 
 grep -Fq 'Interface->TxRingByQueue[TxQueueId] : Interface->TxRingBuffer;' "$TMP_DP" || {
     echo "ERROR: TX queue selector lost the intended queue-0 fallback" >&2
@@ -149,7 +179,8 @@ grep -Fq 'PortConfig.rxmode.mtu = 1500;' "$TMP_DP" || {
 rm -f "$TMP_DP"
 trap - EXIT
 
-echo "PASS: exact Super -> Performance2 V1 -> V2 -> multicore TXQ chain transforms current datapath"
+echo "PASS: exact P5 fix -> Super -> Performance2 V1 -> V2 -> multicore TXQ chain transforms current datapath"
+echo "PASS: packet totals / EPOLL fix / DVFS recording markers survive full chain"
 echo "PASS: per-flow TX selector preserves explicit queue-0 fallback without self-reference"
 echo "PARALLEL MULTICORE STATIC PREFLIGHT PASS"
 echo "No traffic was generated and no NIC/IRQ state was changed."
