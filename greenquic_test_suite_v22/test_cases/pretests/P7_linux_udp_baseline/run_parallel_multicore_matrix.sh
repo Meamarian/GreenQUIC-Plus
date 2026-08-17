@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 BASE="$HERE/run_matrix_from_idex.sh";IRQ_HELPER="$HERE/p7_multicore_irq.py";VALIDATOR="$HERE/validate_p7_multicore_matrix.py";IRQ_ACTIVITY="$HERE/validate_p7_parallel_irq_activity.py";REPORTER="$HERE/build_p7_report_multicore.py";AGG="$HERE/aggregate_p7_parallel_goodput.py";ACTIVE="$HERE/aggregate_p7_parallel_active.py"
-RUNS=2;CONNECTIONS=4;OUTPUT_DIR="";USER_ARGS=()
-while (($#));do case "$1" in --runs) RUNS="${2:?}";shift 2;;--connections) CONNECTIONS="${2:?}";shift 2;;--output-dir) OUTPUT_DIR="${2:?}";shift 2;;-h|--help) echo "usage: $0 [--runs N] [--connections N] [--output-dir DIR]";exit 0;;*) USER_ARGS+=("$1");shift;;esac;done
+RUNS=2;CONNECTIONS=4;OUTPUT_DIR="";CONTROLLER_PREFLIGHT=0;USER_ARGS=()
+while (($#));do case "$1" in --runs) RUNS="${2:?}";shift 2;;--connections) CONNECTIONS="${2:?}";shift 2;;--output-dir) OUTPUT_DIR="${2:?}";shift 2;;--controller-preflight) CONTROLLER_PREFLIGHT=1;shift;;-h|--help) echo "usage: $0 [--runs N] [--connections N] [--output-dir DIR] [--controller-preflight]";exit 0;;*) USER_ARGS+=("$1");shift;;esac;done
 [[ "$RUNS" =~ ^[1-9][0-9]*$ && "$CONNECTIONS" =~ ^[2-9][0-9]*$ ]] || { echo "ERROR: invalid runs/connections" >&2;exit 2; }
 for f in "$BASE" "$IRQ_HELPER" "$VALIDATOR" "$IRQ_ACTIVITY" "$REPORTER" "$AGG" "$ACTIVE" "$HERE/run_server_parallel_multicore.sh" "$HERE/run_client_parallel_multicore.sh";do [[ -f "$f" ]]||{ echo "ERROR: missing $f" >&2;exit 2;};done
 OUTPUT_DIR="${OUTPUT_DIR:-$HERE/matrix_results/P7_PARALLEL_MC_${CONNECTIONS}c_${RUNS}r_$(date +%Y%m%d_%H%M%S)}"
@@ -62,17 +62,17 @@ if src.count(old)!=1:raise SystemExit(f'ERROR: sequential server completion bloc
 src=src.replace(old,new,1);Path(sys.argv[2]).write_text(src,encoding='utf-8')
 PY
 chmod 0700 "$TMP";bash -n "$TMP"
-grep -Fq 'bash "$HERE/run_server_parallel_multicore.sh" --run-dir "$srun" --rep "$rep"' "$TMP" || { echo "ERROR: generated P7 controller does not invoke server multicore wrapper via bash" >&2;exit 2; }
-grep -Fq "bash '\$CLIENT_DIR/run_client_parallel_multicore.sh' --run-dir '\$crun_remote' --rep '\$rep' --gate '\$gate'" "$TMP" || { echo "ERROR: generated P7 controller does not invoke client multicore wrapper via bash" >&2;exit 2; }
+grep -Fq 'bash "$HERE/run_server_parallel_multicore.sh" --run-dir "$srun" --rep "$rep"' "$TMP" || { echo "ERROR: generated P7 controller does not invoke server multicore wrapper via bash" >&2;exit 2; };grep -Fq "bash '\$CLIENT_DIR/run_client_parallel_multicore.sh' --run-dir '\$crun_remote' --rep '\$rep' --gate '\$gate'" "$TMP" || { echo "ERROR: generated P7 controller does not invoke client multicore wrapper via bash" >&2;exit 2; }
+# --help exercises all source anchors and generated-controller shell syntax but
+# exits before host/NIC preparation or traffic.
+bash "$TMP" --help >/dev/null
+printf 'P7 PARALLEL TRANSFORMED CONTROLLER PREFLIGHT PASS (no traffic/NIC changes)\n'
+if [[ "$CONTROLLER_PREFLIGHT" == 1 ]];then exit 0;fi
+
 FIXED=(--downloads "$CONNECTIONS" --gap-seconds 0 --runs "$RUNS" --pre-cooldown-seconds 5 --post-cooldown-seconds 5 --between-runs-seconds 5 --dataplane-cpu 19,20 --quic-cpus 21,22,23,24 --pin-irq 1 --pin-quic 1 --disable-rps 1 --disable-rdma 1 --combined-channels 2 --stop-irqbalance 1 --nic-offloads paper --udp-rmem 6815744 --udp-wmem 6815744 --network-diagnostics 1 --record-quic-cpus 0 --enable-record 1 --rapl-interval-ms 6 --freq-interval-ms 1 --require-rapl 1 --mtu 1500 --restore-dpdk 1 --output-dir "$OUTPUT_DIR")
 export P7_PARALLEL_LOCAL_PORT_BASE=45000
 echo "======================================================================";echo "P7 FAIR LINUX PARALLEL MULTICORE MATRIX";echo "runs=$RUNS connections=$CONNECTIONS payload=8GiB/connection local_ports=45000..$((44999+CONNECTIONS))";echo "Linux queues=2 IRQ->19,20 QUIC=21-24 RPS=off irqbalance=off";echo "TUM network profile: GSO/GRO + rmem/wmem=6815744";echo "active metrics: exact parallel transfer windows; RAPL boundary-prorated; frequency time-weighted";echo "======================================================================"
-bash "$TMP" "${USER_ARGS[@]}" "${FIXED[@]}"
-python3 "$AGG" --matrix "$OUTPUT_DIR" --runs "$RUNS" --connections "$CONNECTIONS"
-python3 "$ACTIVE" --matrix "$OUTPUT_DIR" --runs "$RUNS" --connections "$CONNECTIONS"
-python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS"
-python3 "$IRQ_ACTIVITY" --matrix "$OUTPUT_DIR" --runs "$RUNS"
-rm -rf "$OUTPUT_DIR/the_sheet_rules_all";python3 "$REPORTER" --matrix-dir "$OUTPUT_DIR" --output "$OUTPUT_DIR/the_sheet_rules_all";python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS" --report-dir "$OUTPUT_DIR/the_sheet_rules_all"
+bash "$TMP" "${USER_ARGS[@]}" "${FIXED[@]}";python3 "$AGG" --matrix "$OUTPUT_DIR" --runs "$RUNS" --connections "$CONNECTIONS";python3 "$ACTIVE" --matrix "$OUTPUT_DIR" --runs "$RUNS" --connections "$CONNECTIONS";python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS";python3 "$IRQ_ACTIVITY" --matrix "$OUTPUT_DIR" --runs "$RUNS";rm -rf "$OUTPUT_DIR/the_sheet_rules_all";python3 "$REPORTER" --matrix-dir "$OUTPUT_DIR" --output "$OUTPUT_DIR/the_sheet_rules_all";python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS" --report-dir "$OUTPUT_DIR/the_sheet_rules_all"
 cat > "$OUTPUT_DIR/PARALLEL_MULTICORE_CONFIG.txt" <<EOF
 branch=performance2/p5-multicore
 workload=one_process_multiple_simultaneous_quic_connections
