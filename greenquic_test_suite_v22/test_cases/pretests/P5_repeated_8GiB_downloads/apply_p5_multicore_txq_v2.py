@@ -59,6 +59,23 @@ if src.count(old_slice) != 1:
     raise SystemExit(f'ERROR: V1 function_slice anchor count={src.count(old_slice)}')
 src = src.replace(old_slice, new_slice, 1)
 
+# Performance2 sharded handoff replaces the shared-ring producer call before
+# this transform runs. Accept that known shape; N intentionally remains a
+# single DPDK consumer, so its producer SPSC rings must not be remapped to
+# multiple queue-local consumer rings.
+old_enqueue_guard = '''if "Interface->TxRingBuffer" not in body:
+    raise SystemExit("ERROR: TxEnqueue no longer contains shared ring anchor")
+'''
+new_enqueue_guard = '''if (
+    "Interface->TxRingBuffer" not in body and
+    "GreenQuicP2TxEnqueue(" not in body
+):
+    raise SystemExit("ERROR: TxEnqueue contains neither shared-ring nor sharded handoff shape")
+'''
+if src.count(old_enqueue_guard) != 1:
+    raise SystemExit(f'ERROR: V1 TxEnqueue guard count={src.count(old_enqueue_guard)}')
+src = src.replace(old_enqueue_guard, new_enqueue_guard, 1)
+
 old_enqueue = r'''# Declare routing immediately after Dpdk/Interface are available. Performance2
 # may add diagnostics around this point, so anchor only the common declarations.
 decl = "    DPDK_DATAPATH* Dpdk = Packet->Dpdk;\n    DPDK_INTERFACE* Interface = Packet->Interface;\n"
@@ -76,26 +93,32 @@ body = body.replace(
 body = body.replace("Interface->TxRingBuffer", "TxRing")
 body = body.replace("GreenQuicSignalTxWork(Dpdk);", "GreenQuicSignalTxQueueWork(Dpdk, TxQueueId);")
 '''
-new_enqueue = r'''# Interface and Dpdk are not adjacent in the current source. Require both, but
-# insert routing after Dpdk becomes available (Interface is already in scope).
+new_enqueue = r'''# Performance2 has two producer handoff shapes. Shared mode is mapped to the
+# queue selected from the packet flow. Sharded mode is used only by the N
+# single-consumer experiment; preserve its per-producer SPSC handoff exactly.
 interface_decl = "    DPDK_INTERFACE* Interface = Packet->Interface;\n"
 dpdk_decl = "    DPDK_DATAPATH* Dpdk = Packet->Dpdk;\n"
 if interface_decl not in body or dpdk_decl not in body:
     raise SystemExit("ERROR: TxEnqueue Dpdk/Interface declarations changed")
 
-# Rewrite only the pre-existing shared-ring accesses. Do this before inserting
-# the selector so its deliberate queue-0 fallback remains Interface->TxRingBuffer.
-body = body.replace("Interface->TxRingBuffer", "TxRing")
-body = body.replace("GreenQuicSignalTxWork(Dpdk);", "GreenQuicSignalTxQueueWork(Dpdk, TxQueueId);")
-body = body.replace(
-    dpdk_decl,
-    dpdk_decl +
-    "    const uint16_t TxQueueId = GreenQuicSelectTxQueue(Dpdk, Packet->Mbuf);\n"
-    "    struct rte_ring* TxRing =\n"
-    "        TxQueueId < RTE_MAX_LCORE && Interface->TxRingByQueue[TxQueueId] != NULL ?\n"
-    "            Interface->TxRingByQueue[TxQueueId] : Interface->TxRingBuffer;\n",
-    1,
-)
+if "GreenQuicP2TxEnqueue(" not in body:
+    # Rewrite only the pre-existing shared-ring accesses. Do this before
+    # inserting the selector so its deliberate queue-0 fallback remains the
+    # original Interface->TxRingBuffer.
+    body = body.replace("Interface->TxRingBuffer", "TxRing")
+    body = body.replace(
+        "GreenQuicSignalTxWork(Dpdk);",
+        "GreenQuicSignalTxQueueWork(Dpdk, TxQueueId);",
+    )
+    body = body.replace(
+        dpdk_decl,
+        dpdk_decl +
+        "    const uint16_t TxQueueId = GreenQuicSelectTxQueue(Dpdk, Packet->Mbuf);\n"
+        "    struct rte_ring* TxRing =\n"
+        "        TxQueueId < RTE_MAX_LCORE && Interface->TxRingByQueue[TxQueueId] != NULL ?\n"
+        "            Interface->TxRingByQueue[TxQueueId] : Interface->TxRingBuffer;\n",
+        1,
+    )
 '''
 if src.count(old_enqueue) != 1:
     raise SystemExit(f'ERROR: V1 TxEnqueue compatibility block count={src.count(old_enqueue)}')
@@ -224,6 +247,53 @@ for fn, nxt in (
 if src.count(old_policy) != 1:
     raise SystemExit(f'ERROR: V1 policy/backlog compatibility block count={src.count(old_policy)}')
 src = src.replace(old_policy, new_policy, 1)
+
+# The V1 ring-creation anchor included the following "// Set MTU" line. UDP
+# segmentation inserts capability setup immediately after GreenQuicConfigureRoles,
+# so that literal adjacency no longer exists. Match only the role-discovery call
+# and leave whatever follows it (UDP setup or MTU) in place.
+old_extra_head = '''replace_once(
+    "    GreenQuicConfigureRoles(\\n"
+    "        Dpdk, &DeviceInfo, &PortConfig, &rx_rings, &tx_rings);\\n\\n"
+    "    // Set MTU\\n",
+'''
+new_extra_head = '''roles_anchor = (
+    "    GreenQuicConfigureRoles(\\n"
+    "        Dpdk, &DeviceInfo, &PortConfig, &rx_rings, &tx_rings);\\n"
+)
+replace_once(
+    roles_anchor,
+'''
+if src.count(old_extra_head) != 1:
+    raise SystemExit(f'ERROR: V1 extra-ring anchor head count={src.count(old_extra_head)}')
+src = src.replace(old_extra_head, new_extra_head, 1)
+
+old_extra_replacement_head = '''    "    GreenQuicConfigureRoles(\\n"
+    "        Dpdk, &DeviceInfo, &PortConfig, &rx_rings, &tx_rings);\\n\\n"
+'''
+new_extra_replacement_head = '''    roles_anchor +
+    "\\n"
+'''
+# Only the replacement half should be changed now; the original half was
+# consumed by old_extra_head above.
+if src.count(old_extra_replacement_head) != 1:
+    raise SystemExit(
+        f'ERROR: V1 extra-ring replacement head count={src.count(old_extra_replacement_head)}'
+    )
+src = src.replace(old_extra_replacement_head, new_extra_replacement_head, 1)
+
+old_extra_tail = '''    "    }\\n\\n"
+    "    // Set MTU\\n",
+    "extra multicore software TX rings",
+)
+'''
+new_extra_tail = '''    "    }\\n",
+    "extra multicore software TX rings",
+)
+'''
+if src.count(old_extra_tail) != 1:
+    raise SystemExit(f'ERROR: V1 extra-ring replacement tail count={src.count(old_extra_tail)}')
+src = src.replace(old_extra_tail, new_extra_tail, 1)
 
 with tempfile.NamedTemporaryFile('w', suffix='.py', delete=False, encoding='utf-8') as f:
     f.write(src)
