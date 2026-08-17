@@ -134,7 +134,9 @@ P5BUILD
 done
 
 printf '\n=== 6. RUN P5: OFF/BASIC/PLUS, %s REPETITIONS, %s PARALLEL CONNECTIONS ===\n' "$RUNS" "$CONNECTIONS"
-ssh -tt idex "cd '$P5DIR' && bash ./run_parallel_multicore_matrix.sh --runs '$RUNS' --connections '$CONNECTIONS' --output-dir '$P5OUT' 2>&1 | tee '$P5LOG'"
+# Remote pipefail is required: otherwise a failing matrix hidden behind tee
+# appears successful to ssh and the Mac launcher continues into bogus summaries.
+ssh -tt idex "set -o pipefail; cd '$P5DIR' && bash ./run_parallel_multicore_matrix.sh --runs '$RUNS' --connections '$CONNECTIONS' --output-dir '$P5OUT' 2>&1 | tee '$P5LOG'"
 printf '\n=== P5 TOTAL GOODPUT + VARIANCE ===\n'
 ssh idex "cat '$P5OUT/parallel_tables/parallel_goodput_summary.csv'"
 
@@ -145,7 +147,7 @@ for H in idex tinyman; do
 done
 
 printf '\n=== 8. RUN FAIR P7 LINUX: %s REPETITIONS, %s PARALLEL CONNECTIONS ===\n' "$RUNS" "$CONNECTIONS"
-ssh -tt idex "cd '$P7DIR' && bash ./run_parallel_multicore_matrix.sh --runs '$RUNS' --connections '$CONNECTIONS' --output-dir '$P7OUT' 2>&1 | tee '$P7LOG'"
+ssh -tt idex "set -o pipefail; cd '$P7DIR' && bash ./run_parallel_multicore_matrix.sh --runs '$RUNS' --connections '$CONNECTIONS' --output-dir '$P7OUT' 2>&1 | tee '$P7LOG'"
 printf '\n=== P7 TOTAL GOODPUT + VARIANCE ===\n'
 ssh idex "cat '$P7OUT/parallel_tables/parallel_goodput_summary.csv'"
 
