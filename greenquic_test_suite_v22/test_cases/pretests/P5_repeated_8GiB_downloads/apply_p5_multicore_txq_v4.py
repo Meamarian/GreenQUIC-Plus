@@ -13,9 +13,10 @@ build fail.
 The O UDP-seg architecture case keeps shared handoff, but Performance2 replaces
 ``Dpdk->TxCounter += TxCount`` with a logical-packet update. V3's legacy fallback
 then places the per-lcore physical TX counter before ``TxCount`` is declared.
-V4 moves that counter immediately after the logical TxCounter update, where
-``TxCount`` is in scope and still represents the number of physical packets
-successfully transmitted by this NIC queue.
+V4 moves that counter immediately after the logical TxCounter update inside
+``CxPlatDpdkTx``, where the relevant ``TxCount`` is already in scope and still
+represents the number of physical packets successfully transmitted by this NIC
+queue.
 
 V4 therefore:
   * preserves V3 behavior for normal shared-handoff profiles;
@@ -43,12 +44,24 @@ path = Path(sys.argv[1])
 subprocess.run([sys.executable, str(v3), str(path)], check=True)
 text = path.read_text(encoding="utf-8", errors="replace")
 
+
+def function_slice(name: str, next_name: str) -> tuple[int, int, str]:
+    start = text.find(name)
+    if start < 0:
+        raise SystemExit(f"ERROR: function anchor missing: {name}")
+    end = text.find(next_name, start + len(name))
+    if end < 0:
+        raise SystemExit(f"ERROR: next function anchor missing after {name}: {next_name}")
+    return start, end, text[start:end]
+
+
 # V3's normal placement key is ``Dpdk->TxCounter += TxCount``. UDP segmentation
 # intentionally replaces that update with GreenQuicP2LogicalTxCount, so V3 falls
 # back to an older GreenQuicOnTxPoll anchor that can occur before TxCount exists.
 # Keep the queue-engagement metric physical: count the actual TxCount sent on the
 # NIC queue, but place the accounting only after TxCount is declared and consumed
-# by the logical TxCounter update.
+# by the logical TxCounter update. All checks are scoped to CxPlatDpdkTx because
+# the datapath contains other, unrelated TxCount declarations.
 mc_tx_counter = (
     "    if (Dpdk->GreenQuicEnableMultiCore && TxQueueId < RTE_MAX_LCORE && TxCount != 0) {\n"
     "        atomic_fetch_add_explicit(\n"
@@ -61,26 +74,45 @@ udp_fixed = False
 if "udpseg=1" in text:
     logical_update = "    Dpdk->TxCounter += GreenQuicP2LogicalTxCount;\n"
     tx_decl = "    const uint16_t TxCount =\n"
-    if text.count(logical_update) != 1:
+
+    start, end, body = function_slice("CxPlatDpdkTx(", "CxPlatDpdkRxWorkerThread(")
+
+    if body.count(logical_update) != 1:
         raise SystemExit(
-            f"ERROR: UDP V4 logical TxCounter update count={text.count(logical_update)}, expected 1"
+            f"ERROR: UDP V4 CxPlatDpdkTx logical TxCounter update count="
+            f"{body.count(logical_update)}, expected 1"
         )
-    if text.count(mc_tx_counter) != 1:
+    if body.count(mc_tx_counter) != 1:
         raise SystemExit(
-            f"ERROR: UDP V4 multicore TX counter block count={text.count(mc_tx_counter)}, expected 1"
-        )
-    if text.count(tx_decl) != 1:
-        raise SystemExit(
-            f"ERROR: UDP V4 TxCount declaration count={text.count(tx_decl)}, expected 1"
+            f"ERROR: UDP V4 CxPlatDpdkTx multicore TX counter block count="
+            f"{body.count(mc_tx_counter)}, expected 1"
         )
 
-    # Remove the misplaced V3 fallback block and reinsert it after the logical
-    # TxCounter update. At that point TxCount has already been declared by the
-    # UDP-seg TX statement and is safe to use for physical queue engagement.
-    text = text.replace(mc_tx_counter, "", 1)
-    text = text.replace(logical_update, logical_update + mc_tx_counter, 1)
-    if text.find(mc_tx_counter) < text.find(tx_decl):
-        raise SystemExit("ERROR: UDP V4 multicore TX counter still precedes TxCount declaration")
+    logical_pos = body.find(logical_update)
+    tx_pos = body.rfind(tx_decl, 0, logical_pos)
+    if tx_pos < 0:
+        raise SystemExit(
+            "ERROR: UDP V4 cannot find the TxCount declaration that precedes "
+            "the logical TxCounter update inside CxPlatDpdkTx"
+        )
+
+    # Remove only the misplaced V3 fallback block from CxPlatDpdkTx, then
+    # reinsert it immediately after the logical packet counter update.
+    body = body.replace(mc_tx_counter, "", 1)
+    logical_pos = body.find(logical_update)
+    if logical_pos < 0:
+        raise SystemExit("ERROR: UDP V4 logical TxCounter update disappeared during rewrite")
+    body = body.replace(logical_update, logical_update + mc_tx_counter, 1)
+
+    counter_pos = body.find(mc_tx_counter)
+    tx_pos = body.rfind(tx_decl, 0, counter_pos)
+    if tx_pos < 0 or counter_pos <= tx_pos:
+        raise SystemExit(
+            "ERROR: UDP V4 multicore TX counter is not after an in-scope "
+            "TxCount declaration inside CxPlatDpdkTx"
+        )
+
+    text = text[:start] + body + text[end:]
     udp_fixed = True
 
 # Shared-handoff profiles need all queue-routing helpers. Only the sharded
@@ -90,7 +122,7 @@ if "txhandoff=sharded" not in text:
         path.write_text(text, encoding="utf-8")
         print(
             "P5 multicore TXQ V4 PASS: shared UDP-seg handoff keeps physical "
-            "per-lcore TX accounting after TxCount declaration"
+            "per-lcore TX accounting after in-function TxCount declaration"
         )
     else:
         print("P5 multicore TXQ V4 PASS: shared handoff unchanged")
