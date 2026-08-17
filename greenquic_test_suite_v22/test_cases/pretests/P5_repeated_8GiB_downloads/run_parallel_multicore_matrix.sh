@@ -28,8 +28,6 @@ for f in "$BASE" "$CLIENT" "$AGG" "$VALIDATOR"; do [[ -f "$f" ]] || { echo "ERRO
 
 OUTPUT_DIR="${OUTPUT_DIR:-$HERE/matrix_results/P5_PARALLEL_MC_${CONNECTIONS}c_${RUNS}r_$(date +%Y%m%d_%H%M%S)}"
 
-# Server-side sparse aliases. The client wrapper creates matching Tinyman
-# validation aliases and /dev/null sinks. Sparse files do not allocate 8 GiB.
 ROOT="$HERE/../../../common/files/server_root"
 mkdir -p "$ROOT"
 for ((i=1;i<=CONNECTIONS;i++)); do
@@ -38,20 +36,16 @@ for ((i=1;i<=CONNECTIONS;i++)); do
     [[ "$(stat -Lc '%s' "$f")" == 8589934592 ]] || { echo "ERROR: wrong sparse payload size $f" >&2; exit 2; }
 done
 
-# The preserved controller is already correct for aligned RAPL/start-gate
-# orchestration. Patch only the selected client wrapper in a temporary copy;
-# existing sequential P5 remains untouched.
+# Reuse the proven aligned-RAPL/start-gate controller and change only the client
+# entry point in a temporary copy. The original sequential P5 runner is intact.
 TMP="$(mktemp "$HERE/.parallel_matrix.XXXXXX.sh")"
 trap 'rm -f "$TMP"' EXIT
 python3 - "$BASE" "$TMP" <<'PY'
 from pathlib import Path
 import sys
 src=Path(sys.argv[1]).read_text(encoding='utf-8')
-old='./run_client.sh'
-new='./run_client_parallel_multicore.sh'
-count=src.count(old)
-if count < 1:
-    raise SystemExit(f'ERROR: base P5 runner contains no {old} anchor')
+old='./run_client.sh';new='./run_client_parallel_multicore.sh';count=src.count(old)
+if count < 1:raise SystemExit(f'ERROR: base P5 runner contains no {old} anchor')
 src=src.replace(old,new)
 Path(sys.argv[2]).write_text(src,encoding='utf-8')
 print(f'P5 parallel controller patch: replaced {count} client invocation anchor(s)')
@@ -82,8 +76,6 @@ echo "modes=OFF,BASIC,PLUS runs=$RUNS connections=$CONNECTIONS payload=8GiB/conn
 echo "DPDK=19,20 QUIC=21-24 RXQ=2 TXQ=2 local_ports=45000..$((44999+CONNECTIONS))"
 echo "======================================================================"
 
-# Gap is zero because the four downloads are simultaneous. The 5s connected
-# edge cooldown is retained by the base controller for aligned power recording.
 bash "$TMP" \
     --runs "$RUNS" \
     --downloads "$CONNECTIONS" \
@@ -100,33 +92,37 @@ bash "$TMP" \
 python3 "$AGG" --matrix "$OUTPUT_DIR" --expected-runs "$RUNS" --connections "$CONNECTIONS"
 python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS"
 
-# Queue-use audit is separate from GreenQUIC policy counters and therefore also
-# works for strict OFF. Server TX and client RX are the heavy download paths.
+# QUEUE_STATS is mode-independent, so strict OFF is validated too. Use the
+# controller's exact per-repetition logs; never fall back to a different run.
+# Non-UDP setup/control frames may legitimately use queue 0, so tx_hash_fallback
+# is recorded as a diagnostic rather than treated as a workload failure.
 python3 - "$OUTPUT_DIR" "$RUNS" <<'PY'
 from pathlib import Path
-import re,sys
+import json,re,sys
 root=Path(sys.argv[1]);runs=int(sys.argv[2]);modes=('off','basic','plus')
 pat=re.compile(r'\[GreenQUIC-MC\] QUEUE_STATS[^\n]*rxq0=(\d+)[^\n]*rxq1=(\d+)[^\n]*txq0=(\d+)[^\n]*txq1=(\d+)[^\n]*tx_hash_fallback=(\d+)')
-problems=[]
+problems=[];records=[]
 for role in ('server','client'):
   for rep in range(1,runs+1):
     for mode in modes:
-      candidates=list(root.rglob(f'*{role}*rep{rep:02d}*{mode}*log*'))+list(root.rglob(f'*{role}*{mode}*log.txt'))
-      found=None
-      for p in candidates:
-        try:text=p.read_text(errors='replace')
-        except:continue
-        rows=pat.findall(text)
-        if rows: found=tuple(map(int,rows[-1]));break
-      if found is None:
-        problems.append(f'{role} rep{rep} {mode}: queue stats missing');continue
-      rx0,rx1,tx0,tx1,fallback=found
-      if fallback!=0:problems.append(f'{role} rep{rep} {mode}: tx hash fallback={fallback}')
-      if role=='server' and (tx0==0 or tx1==0):problems.append(f'{role} rep{rep} {mode}: TX queues not both active ({tx0},{tx1})')
-      if role=='client' and (rx0==0 or rx1==0):problems.append(f'{role} rep{rep} {mode}: RSS RX queues not both active ({rx0},{rx1})')
-if problems:
-  raise SystemExit('ERROR: multicore queue-use validation failed:\n  '+'\n  '.join(problems))
+      p=root/f'{role}_rep{rep:02d}_{mode}.log'
+      if not p.is_file():
+        problems.append(f'{role} rep{rep:02d} {mode}: exact controller log missing: {p.name}');continue
+      rows=pat.findall(p.read_text(errors='replace'))
+      if not rows:
+        problems.append(f'{role} rep{rep:02d} {mode}: queue stats missing in {p.name}');continue
+      rx0,rx1,tx0,tx1,fallback=map(int,rows[-1])
+      records.append({'role':role,'repetition':rep,'mode':mode,'rxq0':rx0,'rxq1':rx1,'txq0':tx0,'txq1':tx1,'tx_hash_fallback':fallback,'log':str(p)})
+      # Download heavy paths: server TX and client RX. Both queue/core paths
+      # must carry real packets in every mode and repetition.
+      if role=='server' and (tx0==0 or tx1==0):problems.append(f'{role} rep{rep:02d} {mode}: TX queues not both active ({tx0},{tx1})')
+      if role=='client' and (rx0==0 or rx1==0):problems.append(f'{role} rep{rep:02d} {mode}: RSS RX queues not both active ({rx0},{rx1})')
+out=root/'parallel_queue_activity.json';out.write_text(json.dumps({'schema':'greenquic-p5-parallel-queue-activity-v1','records':records,'errors':problems,'status':'PASS' if not problems else 'FAIL'},indent=2)+'\n')
+if problems:raise SystemExit('ERROR: multicore queue-use validation failed:\n  '+'\n  '.join(problems))
 print('P5 PARALLEL QUEUE-USE VALIDATION PASS: server TXQ0/TXQ1 and client RXQ0/RXQ1 active in every run/mode')
+for r in records:
+  if r['tx_hash_fallback']:
+    print(f"NOTE: {r['role']} rep{r['repetition']:02d} {r['mode']} non-UDP/malformed TX hash fallback={r['tx_hash_fallback']}")
 PY
 
 cat > "$OUTPUT_DIR/PARALLEL_MULTICORE_CONFIG.txt" <<EOF
@@ -140,6 +136,7 @@ dpdk_lcores=19,20
 quic_cpus=21,22,23,24
 rx_queues=2
 tx_queues=2
+mtu=1500
 tx_queue_mapping=stable_ipv4_udp_4tuple_hash
 mode_isolation=OFF_no_policy_BASIC_physical_only_PLUS_physical_plus_quic_hints
 EOF
