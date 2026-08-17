@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 from pathlib import Path
-import subprocess,sys,tempfile
+import subprocess, sys, tempfile
 
-if len(sys.argv)!=2:raise SystemExit('usage: apply_p5_multicore_txq_v2.py PATH_TO_DATAPATH')
-here=Path(__file__).resolve().parent;base=here/'apply_p5_multicore_txq.py'
-src=base.read_text(encoding='utf-8')
+if len(sys.argv) != 2:
+    raise SystemExit('usage: apply_p5_multicore_txq_v2.py PATH_TO_DATAPATH')
+
+here = Path(__file__).resolve().parent
+base = here / 'apply_p5_multicore_txq.py'
+src = base.read_text(encoding='utf-8')
 
 # V2 compatibility fixes for the current Performance2 source. Keep the original
-# V1 transform readable, but adapt two anchors that drifted in the live datapath.
+# V1 transform readable, but adapt anchors that drifted in the live datapath.
 # The actual GreenQuicConfigureRoles loop uses uint32_t, not uint16_t.
-role_loop='for (uint16_t Index = 0; Index < RTE_MAX_LCORE; ++Index)'
-role_loop_fixed='for (uint32_t Index = 0; Index < RTE_MAX_LCORE; ++Index)'
-role_count=src.count(role_loop)
-if role_count!=2:
+role_loop = 'for (uint16_t Index = 0; Index < RTE_MAX_LCORE; ++Index)'
+role_loop_fixed = 'for (uint32_t Index = 0; Index < RTE_MAX_LCORE; ++Index)'
+role_count = src.count(role_loop)
+if role_count != 2:
     raise SystemExit(f'ERROR: V1 role-map loop anchor count={role_count}, expected 2')
-src=src.replace(role_loop,role_loop_fixed)
+src = src.replace(role_loop, role_loop_fixed)
 
-old='''def function_slice(name: str, next_name: str) -> tuple[int, int, str]:
+# V1 used the first token occurrence when finding function boundaries. The live
+# datapath also contains prototypes, so resolve actual definitions instead.
+old_slice = '''def function_slice(name: str, next_name: str) -> tuple[int, int, str]:
     start = text.find(name)
     if start < 0:
         raise SystemExit(f"ERROR: function anchor missing: {name}")
@@ -31,7 +36,7 @@ old='''def function_slice(name: str, next_name: str) -> tuple[int, int, str]:
         raise SystemExit(f"ERROR: next function anchor missing after {name}: {next_name}")
     return start, end, text[start:end]
 '''
-new='''def function_slice(name: str, next_name: str) -> tuple[int, int, str]:
+new_slice = '''def function_slice(name: str, next_name: str) -> tuple[int, int, str]:
     def definition_pos(token: str, after: int = 0) -> int:
         pos = text.find(token, after)
         while pos >= 0:
@@ -53,11 +58,61 @@ new='''def function_slice(name: str, next_name: str) -> tuple[int, int, str]:
     end = next_back + 1 if next_back >= start else next_anchor
     return start, end, text[start:end]
 '''
-if src.count(old)!=1:raise SystemExit(f'ERROR: V1 function_slice anchor count={src.count(old)}')
-src=src.replace(old,new,1)
-with tempfile.NamedTemporaryFile('w',suffix='.py',delete=False,encoding='utf-8') as f:
-    f.write(src);tmp=Path(f.name)
+if src.count(old_slice) != 1:
+    raise SystemExit(f'ERROR: V1 function_slice anchor count={src.count(old_slice)}')
+src = src.replace(old_slice, new_slice, 1)
+
+# In the current datapath, Interface is declared before packet metadata is
+# finalized and Dpdk is declared later. Do not require the declarations to be
+# adjacent. Also rewrite the old shared-ring uses BEFORE inserting the new
+# selector, otherwise a global replacement can corrupt the selector fallback
+# into "TxRing = ... : TxRing".
+old_enqueue = r'''# Declare routing immediately after Dpdk/Interface are available. Performance2
+# may add diagnostics around this point, so anchor only the common declarations.
+decl = "    DPDK_DATAPATH* Dpdk = Packet->Dpdk;\n    DPDK_INTERFACE* Interface = Packet->Interface;\n"
+if decl not in body:
+    raise SystemExit("ERROR: TxEnqueue Dpdk/Interface declarations changed")
+body = body.replace(
+    decl,
+    decl +
+    "    const uint16_t TxQueueId = GreenQuicSelectTxQueue(Dpdk, Packet->Mbuf);\n"
+    "    struct rte_ring* TxRing =\n"
+    "        TxQueueId < RTE_MAX_LCORE && Interface->TxRingByQueue[TxQueueId] != NULL ?\n"
+    "            Interface->TxRingByQueue[TxQueueId] : Interface->TxRingBuffer;\n",
+    1,
+)
+body = body.replace("Interface->TxRingBuffer", "TxRing")
+body = body.replace("GreenQuicSignalTxWork(Dpdk);", "GreenQuicSignalTxQueueWork(Dpdk, TxQueueId);")
+'''
+new_enqueue = r'''# Interface and Dpdk are not adjacent in the current source. Require both, but
+# insert routing after Dpdk becomes available (Interface is already in scope).
+interface_decl = "    DPDK_INTERFACE* Interface = Packet->Interface;\n"
+dpdk_decl = "    DPDK_DATAPATH* Dpdk = Packet->Dpdk;\n"
+if interface_decl not in body or dpdk_decl not in body:
+    raise SystemExit("ERROR: TxEnqueue Dpdk/Interface declarations changed")
+
+# Rewrite only the pre-existing shared-ring accesses. Do this before inserting
+# the selector so its deliberate queue-0 fallback remains Interface->TxRingBuffer.
+body = body.replace("Interface->TxRingBuffer", "TxRing")
+body = body.replace("GreenQuicSignalTxWork(Dpdk);", "GreenQuicSignalTxQueueWork(Dpdk, TxQueueId);")
+body = body.replace(
+    dpdk_decl,
+    dpdk_decl +
+    "    const uint16_t TxQueueId = GreenQuicSelectTxQueue(Dpdk, Packet->Mbuf);\n"
+    "    struct rte_ring* TxRing =\n"
+    "        TxQueueId < RTE_MAX_LCORE && Interface->TxRingByQueue[TxQueueId] != NULL ?\n"
+    "            Interface->TxRingByQueue[TxQueueId] : Interface->TxRingBuffer;\n",
+    1,
+)
+'''
+if src.count(old_enqueue) != 1:
+    raise SystemExit(f'ERROR: V1 TxEnqueue compatibility block count={src.count(old_enqueue)}')
+src = src.replace(old_enqueue, new_enqueue, 1)
+
+with tempfile.NamedTemporaryFile('w', suffix='.py', delete=False, encoding='utf-8') as f:
+    f.write(src)
+    tmp = Path(f.name)
 try:
-    subprocess.run([sys.executable,str(tmp),sys.argv[1]],check=True)
+    subprocess.run([sys.executable, str(tmp), sys.argv[1]], check=True)
 finally:
     tmp.unlink(missing_ok=True)
