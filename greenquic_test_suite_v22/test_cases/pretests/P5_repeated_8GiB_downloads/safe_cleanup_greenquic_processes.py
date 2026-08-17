@@ -18,6 +18,8 @@ EXACT_COMM = {
 CMD_SUBSTRINGS = (
     "/P5_repeated_8GiB_downloads/run_parallel_multicore_matrix.sh",
     "/P7_linux_udp_baseline/run_parallel_multicore_matrix.sh",
+    "/P5_repeated_8GiB_downloads/run_parallel_multicore_fair.sh",
+    "/P7_linux_udp_baseline/run_parallel_multicore_fair.sh",
     "/P5_repeated_8GiB_downloads/run_matrix_from_idex.sh",
     "/P7_linux_udp_baseline/run_matrix_from_idex.sh",
     "/P5_repeated_8GiB_downloads/run_matrix_with_sheet.sh",
