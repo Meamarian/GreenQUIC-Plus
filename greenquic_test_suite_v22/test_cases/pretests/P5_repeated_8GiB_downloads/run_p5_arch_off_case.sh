@@ -30,7 +30,7 @@ python3 - "$CORE" "$OFF_CORE" <<'PY'
 from pathlib import Path
 import sys
 s=Path(sys.argv[1]).read_text()
-R=[('MODE_ORDER="balanced"','MODE_ORDER="off"'),('modes = ("off", "basic", "plus")','modes = ("off",)'),('if len(order) != 3 or set(order) != set(modes):','if len(order) != len(modes) or set(order) != set(modes):'),('raise SystemExit("ERROR: fixed --mode-order must contain off,basic,plus exactly once")','raise SystemExit("ERROR: architecture OFF controller requires --mode-order off")'),('TOTAL_TESTS=$((RUNS * 3))','TOTAL_TESTS=$RUNS'),('position=$position/3 mode=$mode','position=$position/1 mode=$mode'),('POSITION $position/3 | MODE=$mode','POSITION $position/1 | MODE=$mode')]
+R=[('MODE_ORDER="balanced"','MODE_ORDER="off"'),('modes = ("off", "basic", "plus")','modes = ("off",)'),('if len(order) != 3 or set(order) != set(modes):','if len(order) != len(modes) or set(order) != set(modes):'),('raise SystemExit("ERROR: fixed --mode-order must contain off,basic,plus exactly once")','raise SystemExit("ERROR: architecture OFF controller requires --mode-order off")'),('TOTAL_TESTS=$((RUNS * 3))','TOTAL_TESTS=$RUNS'),('position=$position/3 mode=$mode','position=$position/1 mode=$mode'),('POSITION $position/3 | MODE=$mode','POSITION $position/1 | MODE=$mode'),('python3 "$HERE/p5_finalize_matrix.py" --matrix "$OUTPUT_DIR"','echo "[P5-ARCH] OFF-only case: skipping normal OFF/BASIC/PLUS finalizer"')]
 for o,n in R:
  c=s.count(o)
  if c!=1: raise SystemExit(f'ERROR OFF anchor {o[:30]} count={c}')
