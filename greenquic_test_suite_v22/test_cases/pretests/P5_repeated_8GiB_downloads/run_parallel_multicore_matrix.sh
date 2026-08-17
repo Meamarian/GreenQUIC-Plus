@@ -38,19 +38,27 @@ done
 
 # Reuse the proven aligned-RAPL/start-gate controller and change only the client
 # entry point in a temporary copy. The original sequential P5 runner is intact.
+# New branch-only wrappers are created via GitHub's contents API and therefore
+# may not carry an executable mode. Invoke them explicitly through bash rather
+# than mutating tracked file modes on the experiment hosts.
 TMP="$(mktemp "$HERE/.parallel_matrix.XXXXXX.sh")"
 trap 'rm -f "$TMP"' EXIT
 python3 - "$BASE" "$TMP" <<'PY'
 from pathlib import Path
 import sys
 src=Path(sys.argv[1]).read_text(encoding='utf-8')
-old='./run_client.sh';new='./run_client_parallel_multicore.sh';count=src.count(old)
+old='./run_client.sh';new='bash ./run_client_parallel_multicore.sh';count=src.count(old)
 if count < 1:raise SystemExit(f'ERROR: base P5 runner contains no {old} anchor')
 src=src.replace(old,new)
 Path(sys.argv[2]).write_text(src,encoding='utf-8')
-print(f'P5 parallel controller patch: replaced {count} client invocation anchor(s)')
+print(f'P5 parallel controller patch: replaced {count} client invocation anchor(s); wrapper invoked via bash')
 PY
 chmod 0700 "$TMP"; bash -n "$TMP"
+
+grep -Fq 'env $client_env_words bash ./run_client_parallel_multicore.sh' "$TMP" || {
+    echo "ERROR: generated P5 controller does not invoke multicore client via bash" >&2
+    exit 2
+}
 
 export P5_PARALLEL_CONNECTIONS="$CONNECTIONS"
 export P5_PARALLEL_LOCAL_PORT_BASE=45000
