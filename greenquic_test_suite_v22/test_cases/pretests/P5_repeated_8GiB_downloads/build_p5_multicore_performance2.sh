@@ -11,9 +11,10 @@ BASE="$HERE/build_p5_performance2.sh"
 PARALLEL_TRANSFORM="$HERE/apply_p5_parallel_connections.py"
 TXQ_TRANSFORM="$HERE/apply_p5_multicore_txq_v2.py"
 TXQ_TRANSFORM_BASE="$HERE/apply_p5_multicore_txq.py"
+LCORE_STATS_TRANSFORM="$HERE/apply_p5_multicore_lcore_stats.py"
 VERIFY_BINARY="$HERE/verify_p5_parallel_multicore_binary.sh"
 
-for f in "$BASE" "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_BASE" "$VERIFY_BINARY"; do
+for f in "$BASE" "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_BASE" "$LCORE_STATS_TRANSFORM" "$VERIFY_BINARY"; do
     [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2; exit 2; }
 done
 [[ -d "$DPDK" ]] || { echo "ERROR: DPDK install missing: $DPDK" >&2; exit 2; }
@@ -26,13 +27,13 @@ echo "======================================================================"
 echo "P5 PERFORMANCE2 PARALLEL MULTICORE BUILD"
 echo "Topology target: DPDK=19,20  QUIC=21,22,23,24"
 echo "RX: RSS queues 0,1  TX: per-flow queues 0,1 with one owner per DPDK core"
+echo "Runtime proof: per-lcore RX/TX packet counters are mandatory"
 echo "Workload: one MsQuic/DPDK process, multiple simultaneous QUIC connections"
 echo "Fair-comparison MTU: $P5_SUPER_MTU"
 echo "======================================================================"
 
-# Build the exact current Performance2 configuration first. Both additional
-# transforms operate only on the disposable P5 source tree and therefore do not
-# change performance2/p5-max-goodput or the normal build-greenquic binary.
+# Build the exact current Performance2 configuration first. All additional
+# transforms operate only on the disposable P5 source tree.
 bash "$BASE"
 
 [[ -f "$SOURCE" ]] || { echo "ERROR: disposable interop source missing: $SOURCE" >&2; exit 2; }
@@ -40,7 +41,8 @@ bash "$BASE"
 
 python3 "$PARALLEL_TRANSFORM" "$SOURCE"
 python3 "$TXQ_TRANSFORM" "$DATAPATH"
-python3 -m py_compile "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_BASE"
+python3 "$LCORE_STATS_TRANSFORM" "$DATAPATH"
+python3 -m py_compile "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_BASE" "$LCORE_STATS_TRANSFORM"
 
 python3 - "$SOURCE" "$DATAPATH" <<'PY'
 from pathlib import Path
@@ -56,12 +58,14 @@ required_source=(
 )
 required_dp=(
     'GREENQUIC-P5-MULTICORE-TXQ-V1',
+    'GREENQUIC-P5-MULTICORE-LCORE-STATS-V1',
     'GreenQuicTxQueueByLcore',
     'GreenQuicTxOwnerByQueue',
     'GreenQuicSelectTxQueue',
     'GreenQuicMcRxPacketsByQueue',
     'GreenQuicMcTxPacketsByQueue',
     'greenquic-mc-queue-v1',
+    'greenquic-mc-lcore-v1',
     'GREENQUIC-P5-PERFORMANCE2-V1',
     'GREENQUIC-P5-PERFORMANCE2-V2',
 )
@@ -72,6 +76,8 @@ if 'Dpdk->GreenQuicTxOwnerCount = NextTxQueue;' not in dp:
     raise SystemExit('ERROR: per-lcore TX owner count assignment missing')
 if 'Hash % Dpdk->GreenQuicTxOwnerCount' not in dp:
     raise SystemExit('ERROR: stable flow-to-TX-queue mapping missing')
+if 'RxPackets + TxPackets' not in dp:
+    raise SystemExit('ERROR: per-lcore RX+TX runtime evidence missing')
 role_start=dp.find('static void\nGreenQuicConfigureRoles(')
 role_end=dp.find('CxPlatDpdkReadConfig(', role_start)
 role=dp[role_start:role_end] if role_start >= 0 and role_end > role_start else ''
