@@ -109,6 +109,88 @@ if src.count(old_enqueue) != 1:
     raise SystemExit(f'ERROR: V1 TxEnqueue compatibility block count={src.count(old_enqueue)}')
 src = src.replace(old_enqueue, new_enqueue, 1)
 
+# CxPlatDpdkTx currently receives Interface as a function argument:
+#   CxPlatDpdkTx(DPDK_DATAPATH* Dpdk, uint16_t Core, DPDK_INTERFACE* Interface)
+# There is therefore no local "DPDK_INTERFACE* Interface = ..." declaration.
+# Adapt V1 to insert queue-local state after the existing Buffers declaration.
+# Also replace the *actual* current one-owner guard while preserving its
+# GreenQuicOnTxPoll bookkeeping for a non-owner lcore.
+old_tx_consumer = r'''# Replace the old one-owner guard if it survived Performance2.
+body = body.replace(
+    "    if (Dpdk->GreenQuicEnableMultiCore &&\n"
+    "        Core != Dpdk->GreenQuicTxOwnerLcore) {\n"
+    "        return;\n"
+    "    }\n",
+    "    if (Dpdk->GreenQuicEnableMultiCore && !GreenQuicLcoreOwnsTx(Dpdk, Core)) {\n"
+    "        return;\n"
+    "    }\n",
+)
+# Insert queue/ring declarations after Interface.
+anchor = "    DPDK_INTERFACE* Interface = &Dpdk->Interface;\n"
+if anchor not in body:
+    raise SystemExit("ERROR: CxPlatDpdkTx Interface declaration changed")
+body = body.replace(
+    anchor,
+    anchor +
+    "    const uint16_t TxQueueId = GreenQuicGetTxQueueId(Dpdk, Core);\n"
+    "    struct rte_ring* TxRing = GreenQuicGetTxRing(Dpdk, Interface, Core);\n",
+    1,
+)
+'''
+new_tx_consumer = r'''# Replace the current one-owner guard with queue-map ownership. Keep the
+# existing policy bookkeeping for a lcore that truly has no TX queue.
+current_guard = (
+    "    if (\n"
+    "        Dpdk->GreenQuicEnableMultiCore &&\n"
+    "        Core != Dpdk->GreenQuicTxOwnerLcore) {\n"
+    "        if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {\n"
+    "            GreenQuicOnTxPoll(Dpdk, Core, 0, 0, 0);\n"
+    "        }\n"
+    "        return;\n"
+    "    }\n"
+)
+legacy_guard = (
+    "    if (Dpdk->GreenQuicEnableMultiCore &&\n"
+    "        Core != Dpdk->GreenQuicTxOwnerLcore) {\n"
+    "        return;\n"
+    "    }\n"
+)
+new_guard = (
+    "    if (Dpdk->GreenQuicEnableMultiCore && !GreenQuicLcoreOwnsTx(Dpdk, Core)) {\n"
+    "        if (Dpdk->GreenQuicMode != GREENQUIC_MODE_OFF) {\n"
+    "            GreenQuicOnTxPoll(Dpdk, Core, 0, 0, 0);\n"
+    "        }\n"
+    "        return;\n"
+    "    }\n"
+)
+if current_guard in body:
+    body = body.replace(current_guard, new_guard, 1)
+elif legacy_guard in body:
+    body = body.replace(legacy_guard, new_guard, 1)
+else:
+    raise SystemExit("ERROR: CxPlatDpdkTx one-owner guard shape changed")
+
+# Interface is a function parameter in the current datapath. Insert the queue
+# id/ring immediately after the existing local TX burst buffer declaration.
+anchor = "    struct rte_mbuf* Buffers[Dpdk->TxBurstSize];\n"
+if body.count(anchor) != 1:
+    raise SystemExit(
+        f"ERROR: CxPlatDpdkTx Buffers declaration count={body.count(anchor)}, expected 1"
+    )
+body = body.replace(
+    anchor,
+    anchor +
+    "    const uint16_t TxQueueId = GreenQuicGetTxQueueId(Dpdk, Core);\n"
+    "    struct rte_ring* TxRing = GreenQuicGetTxRing(Dpdk, Interface, Core);\n",
+    1,
+)
+'''
+if src.count(old_tx_consumer) != 1:
+    raise SystemExit(
+        f'ERROR: V1 CxPlatDpdkTx compatibility block count={src.count(old_tx_consumer)}'
+    )
+src = src.replace(old_tx_consumer, new_tx_consumer, 1)
+
 with tempfile.NamedTemporaryFile('w', suffix='.py', delete=False, encoding='utf-8') as f:
     f.write(src)
     tmp = Path(f.name)
