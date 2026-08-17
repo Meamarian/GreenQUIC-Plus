@@ -68,12 +68,18 @@ TOPOLOGY_ENV=(
     --env GREENQUIC_TX_OWNER_ALSO_RX=1
     --env P5_PARALLEL_CONNECTIONS="$CONNECTIONS"
     --env P5_PARALLEL_LOCAL_PORT_BASE=45000
+    --env ENABLE_RECORD=1
+    --env ENABLE_CSTATE_RECORD=1
+    --env GQ_MSR_SAMPLE_INTERVAL_MS=6
+    --env GQ_FREQ_SAMPLE_INTERVAL_MS=1
+    --env MSQUIC_EXECUTION_PROFILE=max_throughput
 )
 
 echo "======================================================================"
 echo "P5 PARALLEL MULTICORE AGGREGATE-GOODPUT MATRIX"
 echo "modes=OFF,BASIC,PLUS runs=$RUNS connections=$CONNECTIONS payload=8GiB/connection"
 echo "DPDK=19,20 QUIC=21-24 RXQ=2 TXQ=2 local_ports=45000..$((44999+CONNECTIONS))"
+echo "recording: RAPL=6ms frequency=1ms C-state=19,20 profile=max_throughput"
 echo "======================================================================"
 
 bash "$TMP" \
@@ -113,8 +119,6 @@ for role in ('server','client'):
         problems.append(f'{role} rep{rep:02d} {mode}: queue stats missing in {p.name}');continue
       rx0,rx1,tx0,tx1,fallback=map(int,rows[-1])
       records.append({'role':role,'repetition':rep,'mode':mode,'rxq0':rx0,'rxq1':rx1,'txq0':tx0,'txq1':tx1,'tx_hash_fallback':fallback,'log':str(p)})
-      # Download heavy paths: server TX and client RX. Both queue/core paths
-      # must carry real packets in every mode and repetition.
       if role=='server' and (tx0==0 or tx1==0):problems.append(f'{role} rep{rep:02d} {mode}: TX queues not both active ({tx0},{tx1})')
       if role=='client' and (rx0==0 or rx1==0):problems.append(f'{role} rep{rep:02d} {mode}: RSS RX queues not both active ({rx0},{rx1})')
 out=root/'parallel_queue_activity.json';out.write_text(json.dumps({'schema':'greenquic-p5-parallel-queue-activity-v1','records':records,'errors':problems,'status':'PASS' if not problems else 'FAIL'},indent=2)+'\n')
@@ -137,6 +141,10 @@ quic_cpus=21,22,23,24
 rx_queues=2
 tx_queues=2
 mtu=1500
+msquic_execution_profile=max_throughput
+rapl_interval_ms=6
+frequency_interval_ms=1
+cstate_cpus=19,20
 tx_queue_mapping=stable_ipv4_udp_4tuple_hash
 mode_isolation=OFF_no_policy_BASIC_physical_only_PLUS_physical_plus_quic_hints
 EOF
