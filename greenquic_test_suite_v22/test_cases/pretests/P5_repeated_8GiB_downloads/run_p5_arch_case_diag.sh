@@ -85,6 +85,25 @@ RC=$?
 set -e
 stop
 
+# Preserve the exact generated runtime topology used by both endpoints before
+# any later case can overwrite runtime/{server,client}/dpdk.ini. The verifier
+# operates only on the immutable per-case result directory.
+CFG_DIR="$OUTPUT/effective_config"
+mkdir -p "$CFG_DIR/server" "$CFG_DIR/client"
+if [[ -f "$HERE/runtime/server/dpdk.ini" ]]; then
+    cp -f "$HERE/runtime/server/dpdk.ini" "$CFG_DIR/server/server_dpdk.ini"
+    echo "P5 ARCH CONFIG SNAPSHOT server=$CFG_DIR/server/server_dpdk.ini"
+else
+    echo "WARN: server runtime dpdk.ini missing after case $CASE" >&2
+fi
+if scp -q -o BatchMode=yes -o ConnectTimeout=12 \
+    root@tinyman:"$HERE/runtime/client/dpdk.ini" \
+    "$CFG_DIR/client/client_dpdk.ini" 2>/dev/null; then
+    echo "P5 ARCH CONFIG SNAPSHOT client=$CFG_DIR/client/client_dpdk.ini"
+else
+    echo "WARN: client runtime dpdk.ini snapshot unavailable after case $CASE" >&2
+fi
+
 for spec in "$R_TJ:thread_topology_client.json" "$R_TC:thread_topology_client.csv" "$R_QJ:quic_cpu_activity_client.json" "$R_QC:quic_cpu_activity_client.csv" "$R_PS:perf_stat_client_selected_cpus.txt"; do
     r=${spec%%:*}; l=${spec#*:}; scp -q -o BatchMode=yes -o ConnectTimeout=12 root@tinyman:"$r" "$OUTPUT/$l" 2>/dev/null||true
 done
