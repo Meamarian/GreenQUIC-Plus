@@ -56,8 +56,28 @@ text=dp.read_text(encoding='utf-8',errors='replace')
 for marker in ('GreenQuicEnableMultiCore','GreenQuicRxQueueByLcore','RTE_ETH_MQ_RX_RSS'):
  if marker not in text:raise SystemExit(f'ERROR: existing optional multicore capability missing: {marker}')
 if 'GREENQUIC-P5-MULTICORE-TXQ-V1' in text:raise SystemExit('ERROR: disposable-only TXQ transform leaked into checked-in MsQuic datapath')
+if 'for (uint32_t Index = 0; Index < RTE_MAX_LCORE; ++Index)' not in text:
+ raise SystemExit('ERROR: current GreenQuicConfigureRoles role-map loop shape changed')
 print('PASS: checked-in datapath remains base architecture; disposable-only TXQ marker absent')
 PY
+
+# Execute the disposable TXQ transform against a temporary copy of the actual
+# checked-in datapath. This catches anchor drift before a long P5 build/run.
+TMP_DP="$(mktemp /tmp/greenquic_p5_txq_preflight.XXXXXX.c)"
+trap 'rm -f "$TMP_DP"' EXIT
+cp "$REPO_ROOT/msquic/src/platform/datapath_raw_dpdk_linux.c" "$TMP_DP"
+python3 "$P5/apply_p5_multicore_txq_v2.py" "$TMP_DP"
+grep -Fq 'GREENQUIC-P5-MULTICORE-TXQ-V1' "$TMP_DP" || {
+    echo "ERROR: disposable TXQ transform did not emit its marker" >&2
+    exit 2
+}
+grep -Fq 'GreenQuicTxOwnerCount = NextTxQueue;' "$TMP_DP" || {
+    echo "ERROR: disposable TXQ transform did not create per-queue TX ownership" >&2
+    exit 2
+}
+rm -f "$TMP_DP"
+trap - EXIT
+echo "PASS: disposable P5 two-TX-queue transform executes against current datapath"
 
 echo "PARALLEL MULTICORE STATIC PREFLIGHT PASS"
 echo "No traffic was generated and no NIC/IRQ state was changed."
