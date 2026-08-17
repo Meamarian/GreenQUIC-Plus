@@ -38,9 +38,10 @@ fi
 [[ "${1:-}" == "--foreground" ]] && shift || true
 [[ $# -eq 0 ]] || { echo "ERROR: unknown arguments: $*" >&2; exit 2; }
 
-# Both hosts must use exactly the multicore branch.
-retry ssh "${SSH[@]}" idex "cd /root/mohsen && git fetch origin '$BRANCH' && git checkout -B '$BRANCH' 'origin/$BRANCH' && git reset --hard 'origin/$BRANCH'"
-retry ssh "${SSH[@]}" idex "ssh -o ConnectTimeout=15 root@tinyman \"cd /root/mohsen && git fetch origin '$BRANCH' && git checkout -B '$BRANCH' 'origin/$BRANCH' && git reset --hard 'origin/$BRANCH'\""
+# Both hosts must use exactly the multicore branch. Discard stale tracked edits first
+# so a prior experiment cannot block branch checkout.
+retry ssh "${SSH[@]}" idex "cd /root/mohsen && git reset --hard && git fetch origin '$BRANCH' && git checkout -B '$BRANCH' 'origin/$BRANCH' && git reset --hard 'origin/$BRANCH'"
+retry ssh "${SSH[@]}" idex "ssh -o ConnectTimeout=15 root@tinyman \"cd /root/mohsen && git reset --hard && git fetch origin '$BRANCH' && git checkout -B '$BRANCH' 'origin/$BRANCH' && git reset --hard 'origin/$BRANCH'\""
 SHA="$(ssh "${SSH[@]}" idex 'cd /root/mohsen && git rev-parse HEAD')"
 log "idex + tinyman synced to $BRANCH @ $SHA"
 
