@@ -32,18 +32,41 @@ if [[ "${1:-}" == "--detach" ]]; then
     echo "TAG=$TAG"
     echo "MAC_LOG=$LOCAL_LOG"
     echo "FINAL_EXPORT=$LOCAL_EXPORT"
-    echo "The long experiment runs detached on idex; Mac->idex SSH loss cannot kill it."
+    echo "The long experiment runs detached on idex; Mac->idex SSH loss cannot kill it after remote launch."
     exit 0
 fi
 [[ "${1:-}" == "--foreground" ]] && shift || true
 [[ $# -eq 0 ]] || { echo "ERROR: unknown arguments: $*" >&2; exit 2; }
 
-# Both hosts must use exactly the multicore branch. Discard stale tracked edits first
-# so a prior experiment cannot block branch checkout.
-retry ssh "${SSH[@]}" idex "cd /root/mohsen && git reset --hard && git fetch origin '$BRANCH' && git checkout -B '$BRANCH' 'origin/$BRANCH' && git reset --hard 'origin/$BRANCH'"
-retry ssh "${SSH[@]}" idex "ssh -o ConnectTimeout=15 root@tinyman \"cd /root/mohsen && git reset --hard && git fetch origin '$BRANCH' && git checkout -B '$BRANCH' 'origin/$BRANCH' && git reset --hard 'origin/$BRANCH'\""
-SHA="$(ssh "${SSH[@]}" idex 'cd /root/mohsen && git rev-parse HEAD')"
-log "idex + tinyman synced to $BRANCH @ $SHA"
+# The Mac checkout is the source of truth. Neither idex nor tinyman needs GitHub credentials.
+LOCAL_REPO="$(git rev-parse --show-toplevel)"
+LOCAL_SHA="$(git -C "$LOCAL_REPO" rev-parse HEAD)"
+LOCAL_BRANCH="$(git -C "$LOCAL_REPO" branch --show-current)"
+[[ "$LOCAL_BRANCH" == "$BRANCH" ]] || { echo "ERROR: local branch is $LOCAL_BRANCH, expected $BRANCH" >&2; exit 2; }
+[[ -z "$(git -C "$LOCAL_REPO" status --porcelain --untracked-files=no)" ]] || { echo "ERROR: tracked local changes present; commit/stash them before running" >&2; exit 2; }
+
+BUNDLE="$(mktemp "${TMPDIR:-/tmp}/greenquic_mc.XXXXXX.bundle")"
+REMOTE_BUNDLE="/tmp/greenquic_mc_${TAG}.bundle"
+trap 'rm -f "$BUNDLE" "${TMP:-}"' EXIT
+git -C "$LOCAL_REPO" bundle create "$BUNDLE" "$LOCAL_SHA"
+
+after_bundle_sync(){
+    local host="$1"
+    if [[ "$host" == "idex" ]]; then
+        retry scp "${SSH[@]}" "$BUNDLE" "idex:$REMOTE_BUNDLE"
+        retry ssh "${SSH[@]}" idex "cd /root/mohsen && git reset --hard && git clean -fd && git fetch '$REMOTE_BUNDLE' '$LOCAL_SHA' && git checkout -B '$BRANCH' '$LOCAL_SHA' && git reset --hard '$LOCAL_SHA'"
+    else
+        retry ssh "${SSH[@]}" idex "scp -o ConnectTimeout=15 '$REMOTE_BUNDLE' root@tinyman:'$REMOTE_BUNDLE'"
+        retry ssh "${SSH[@]}" idex "ssh -o ConnectTimeout=15 root@tinyman \"cd /root/mohsen && git reset --hard && git clean -fd && git fetch '$REMOTE_BUNDLE' '$LOCAL_SHA' && git checkout -B '$BRANCH' '$LOCAL_SHA' && git reset --hard '$LOCAL_SHA'\""
+    fi
+}
+
+after_bundle_sync idex
+after_bundle_sync tinyman
+IDEX_SHA="$(ssh "${SSH[@]}" idex 'cd /root/mohsen && git rev-parse HEAD')"
+TINY_SHA="$(ssh "${SSH[@]}" idex "ssh -o ConnectTimeout=15 root@tinyman 'cd /root/mohsen && git rev-parse HEAD'")"
+[[ "$IDEX_SHA" == "$LOCAL_SHA" && "$TINY_SHA" == "$LOCAL_SHA" ]] || { echo "ERROR: commit mismatch local=$LOCAL_SHA idex=$IDEX_SHA tinyman=$TINY_SHA" >&2; exit 2; }
+log "Mac + idex + tinyman synced to $BRANCH @ $LOCAL_SHA"
 
 # Fail before traffic if either generated multicore controller is stale.
 retry ssh "${SSH[@]}" idex "cd '$P5' && bash ./run_parallel_multicore_matrix.sh --controller-preflight --runs '$RUNS' --connections '$CONNECTIONS'"
@@ -51,7 +74,6 @@ retry ssh "${SSH[@]}" idex "cd '$P7' && bash ./run_parallel_multicore_matrix.sh 
 log "P5 + P7 multicore controller preflight PASS"
 
 TMP="$(mktemp "${TMPDIR:-/tmp}/p5_p7_mc_remote.XXXXXX")"
-trap 'rm -f "$TMP"' EXIT
 cat >"$TMP" <<'REMOTE'
 #!/usr/bin/env bash
 set +e
@@ -73,7 +95,7 @@ python3 - "$P5_MATRIX/parallel_tables/parallel_goodput_summary.csv" "$P7_MATRIX/
 import csv,sys
 p5,p7,out=sys.argv[1:]
 rows=list(csv.DictReader(open(p7,newline='',encoding='utf-8'))) + list(csv.DictReader(open(p5,newline='',encoding='utf-8')))
-by={r['mode']:r for r in rows}
+by={r['mode'].lower():r for r in rows}
 order=('linux','off','basic','plus')
 missing=[m for m in order if m not in by]
 if missing: raise SystemExit('missing cases: '+','.join(missing))
