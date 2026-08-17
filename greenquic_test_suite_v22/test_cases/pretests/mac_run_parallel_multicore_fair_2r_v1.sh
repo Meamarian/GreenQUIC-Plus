@@ -98,10 +98,10 @@ echo "$(hostname): synced HEAD=$(git rev-parse HEAD)"
 SYNC
 done
 
-printf '\n=== 4. ZERO-TRAFFIC STATIC PREFLIGHT ON BOTH HOSTS ===\n'
+printf '\n=== 4. ZERO-TRAFFIC INTEGRATION + STATIC PREFLIGHT ON BOTH HOSTS ===\n'
 for H in idex tinyman; do
     echo "----- $H -----"
-    ssh "$H" "cd '$REMOTE_ROOT/$PREREL' && bash ./parallel_multicore_static_preflight.sh"
+    ssh "$H" "cd '$REMOTE_ROOT/$PREREL' && bash ./parallel_multicore_integration_contract.sh && bash ./parallel_multicore_static_preflight.sh"
 done
 
 if [[ "$PREFLIGHT_ONLY" == 1 ]]; then
@@ -131,6 +131,12 @@ DRIVER="$(basename "$(readlink -f "/sys/bus/pci/devices/$DEV/driver" 2>/dev/null
 cd greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
 bash ./build_p5_multicore_performance2.sh
 P5BUILD
+done
+
+printf '\n=== 5B. VERIFY EXACT P5 RUNTIME BINARIES BEFORE STARTING TRAFFIC ===\n'
+for H in idex tinyman; do
+    echo "----- P5 runtime contract $H -----"
+    ssh "$H" "cd '$P5DIR' && bash ./verify_p5_parallel_multicore_binary.sh client /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop && bash ./verify_p5_parallel_multicore_binary.sh server /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinteropserver"
 done
 
 printf '\n=== 6. RUN P5: OFF/BASIC/PLUS, %s REPETITIONS, %s PARALLEL CONNECTIONS ===\n' "$RUNS" "$CONNECTIONS"
