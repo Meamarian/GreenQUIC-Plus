@@ -27,6 +27,7 @@ PY_FILES=(
  "$P7/validate_p7_parallel_irq_activity.py"
  "$P7/validate_p7_multicore_matrix.py"
  "$P7/build_p7_report_multicore.py"
+ "$HERE/compare_parallel_p5_p7.py"
 )
 
 for f in "${BASH_FILES[@]}"; do [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2;exit 2;};bash -n "$f";done
@@ -48,8 +49,6 @@ for path,needle,label in checks:
  text=path.read_text(encoding='utf-8',errors='replace');count=text.count(needle)
  if count<1:raise SystemExit(f'ERROR: {label} missing in {path}')
  print(f'PASS: {label} count={count}')
-# The checked-in datapath must retain the base optional multicore capability,
-# but the new two-TX-queue transform is disposable-build-only.
 dp=root/'msquic/src/platform/datapath_raw_dpdk_linux.c'
 if not dp.is_file():raise SystemExit(f'ERROR: checked-in datapath missing: {dp}')
 text=dp.read_text(encoding='utf-8',errors='replace')
