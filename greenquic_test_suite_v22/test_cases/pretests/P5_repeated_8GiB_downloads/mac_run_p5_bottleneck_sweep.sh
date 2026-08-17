@@ -78,6 +78,7 @@ for f in "$BASE_CLEANER" "$SWEEP_CLEANER"; do [[ -f "$f" ]] || { echo "ERROR: mi
 REMOTE_CLEAN_DIR="/tmp/p5_bottleneck_cleanup_${TAG}"
 log "installing P5 bottleneck safe cleanup on IDEX + Tinyman"
 retry ssh "${SSH[@]}" idex "mkdir -p '$REMOTE_CLEAN_DIR'"
+tiny "mkdir -p '$REMOTE_CLEAN_DIR'"
 retry scp "${SSH[@]}" "$BASE_CLEANER" "$SWEEP_CLEANER" "idex:$REMOTE_CLEAN_DIR/"
 retry ssh "${SSH[@]}" idex "scp -q -o BatchMode=yes -o ConnectTimeout=15 '$REMOTE_CLEAN_DIR/'*.py root@tinyman:'$REMOTE_CLEAN_DIR/'"
 
@@ -115,7 +116,7 @@ TINY_SHA="$(tiny 'cd /root/mohsen && git rev-parse HEAD')"
 log "Mac + idex + tinyman synced to $BRANCH @ $LOCAL_SHA"
 
 # Static preflight before the detached experiment.
-retry ssh "${SSH[@]}" idex "cd '$ROOT' && bash -n ./run_p5_bottleneck_sweep.sh ./run_p5_parallel_off_case.sh && python3 -m py_compile ./cpu_busy_sampler.py ./analyze_p5_bottleneck_case.py ./summarize_p5_bottleneck_sweep.py ./safe_cleanup_p5_bottleneck_processes.py && bash ./run_p5_parallel_off_case.sh --help >/dev/null"
+retry ssh "${SSH[@]}" idex "cd '$ROOT' && bash -n ./run_p5_bottleneck_sweep.sh && bash -n ./run_p5_parallel_off_case.sh && python3 -m py_compile ./cpu_busy_sampler.py ./analyze_p5_bottleneck_case.py ./summarize_p5_bottleneck_sweep.py ./safe_cleanup_p5_bottleneck_processes.py && bash ./run_p5_parallel_off_case.sh --help >/dev/null"
 log "P5 bottleneck sweep preflight PASS"
 
 # ---------------------------------------------------------------------------
