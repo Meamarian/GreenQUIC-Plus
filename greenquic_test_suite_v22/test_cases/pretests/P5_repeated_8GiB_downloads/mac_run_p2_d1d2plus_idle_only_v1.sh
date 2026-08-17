@@ -24,7 +24,7 @@ needle = 'Path(sys.argv[2]).write_text(src)\nPY\n'
 if src.count(needle) != 1:
     raise SystemExit(f'ERROR: idle-only patch anchor expected once, got {src.count(needle)}')
 
-inject = r'''
+inject = r"""
 # Dedicated P5 Idle-only orchestration mode. This patch is baked into the
 # generated base runner before its --detach re-exec, so no extra environment
 # variable needs to survive the base runner's detached env whitelist.
@@ -58,7 +58,7 @@ if os.environ.get('P5_D1D2PLUS_IDLE_ONLY','0').lower() in ('1','true','yes','on'
     src=src[:a]+p7_skip+src[b:]
 
     src=src.replace('P2 FINAL startup tag=', 'P2 D1D2+ IDLE-ONLY startup tag=',1)
-'''
+"""
 
 src = src.replace(needle, inject + '\nPath(sys.argv[2]).write_text(src)\nPY\n', 1)
 Path(sys.argv[2]).write_text(src, encoding='utf-8')
