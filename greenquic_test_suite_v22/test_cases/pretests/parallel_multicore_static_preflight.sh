@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
-ROOT="$(cd -- "$HERE/../../.." && pwd)"
+REPO_ROOT="$(cd -- "$HERE/../../.." && pwd)"
 P5="$HERE/P5_repeated_8GiB_downloads"
 P7="$HERE/P7_linux_udp_baseline"
 
@@ -32,10 +32,10 @@ PY_FILES=(
 for f in "${BASH_FILES[@]}"; do [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2;exit 2;};bash -n "$f";done
 for f in "${PY_FILES[@]}"; do [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2;exit 2;};python3 -m py_compile "$f";done
 
-python3 - "$ROOT" <<'PY'
+python3 - "$REPO_ROOT" <<'PY'
 from pathlib import Path
 import sys
-root=Path(sys.argv[1]);pre=root/'test_cases/pretests';p5=pre/'P5_repeated_8GiB_downloads';p7=pre/'P7_linux_udp_baseline'
+root=Path(sys.argv[1]);pre=root/'greenquic_test_suite_v22/test_cases/pretests';p5=pre/'P5_repeated_8GiB_downloads';p7=pre/'P7_linux_udp_baseline'
 checks=[
  (p5/'run_matrix_from_idex.sh','./run_client.sh','P5 client patch anchor'),
  (p7/'run_matrix_from_idex.sh','"$HERE/run_server.sh" --run-dir "$srun" --rep "$rep"','P7 server patch anchor'),
@@ -48,16 +48,15 @@ for path,needle,label in checks:
  text=path.read_text(encoding='utf-8',errors='replace');count=text.count(needle)
  if count<1:raise SystemExit(f'ERROR: {label} missing in {path}')
  print(f'PASS: {label} count={count}')
-# The branch carries transforms only. The checked-in MsQuic datapath must stay
-# identical in architecture to the Performance2 base until a disposable P5
-# build explicitly applies the multicore TX transform.
-dp=(root.parent/'msquic/src/platform/datapath_raw_dpdk_linux.c')
-if dp.is_file():
- text=dp.read_text(encoding='utf-8',errors='replace')
- for marker in ('GreenQuicEnableMultiCore','GreenQuicRxQueueByLcore','RTE_ETH_MQ_RX_RSS'):
-  if marker not in text:raise SystemExit(f'ERROR: existing optional multicore capability missing: {marker}')
- if 'GREENQUIC-P5-MULTICORE-TXQ-V1' in text:raise SystemExit('ERROR: disposable-only TXQ transform leaked into checked-in MsQuic datapath')
- print('PASS: checked-in datapath remains unmodified; disposable-only TXQ marker absent')
+# The checked-in datapath must retain the base optional multicore capability,
+# but the new two-TX-queue transform is disposable-build-only.
+dp=root/'msquic/src/platform/datapath_raw_dpdk_linux.c'
+if not dp.is_file():raise SystemExit(f'ERROR: checked-in datapath missing: {dp}')
+text=dp.read_text(encoding='utf-8',errors='replace')
+for marker in ('GreenQuicEnableMultiCore','GreenQuicRxQueueByLcore','RTE_ETH_MQ_RX_RSS'):
+ if marker not in text:raise SystemExit(f'ERROR: existing optional multicore capability missing: {marker}')
+if 'GREENQUIC-P5-MULTICORE-TXQ-V1' in text:raise SystemExit('ERROR: disposable-only TXQ transform leaked into checked-in MsQuic datapath')
+print('PASS: checked-in datapath remains base architecture; disposable-only TXQ marker absent')
 PY
 
 echo "PARALLEL MULTICORE STATIC PREFLIGHT PASS"
