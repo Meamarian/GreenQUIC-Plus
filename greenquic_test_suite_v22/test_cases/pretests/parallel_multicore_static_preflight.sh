@@ -31,8 +31,14 @@ PY_FILES=(
  "$HERE/compare_parallel_p5_p7.py"
 )
 
-for f in "${BASH_FILES[@]}"; do [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2;exit 2;};bash -n "$f";done
-for f in "${PY_FILES[@]}"; do [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2;exit 2;};python3 -m py_compile "$f";done
+for f in "${BASH_FILES[@]}"; do
+    [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2; exit 2; }
+    bash -n "$f"
+done
+for f in "${PY_FILES[@]}"; do
+    [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2; exit 2; }
+    python3 -m py_compile "$f"
+done
 
 python3 - "$REPO_ROOT" <<'PY'
 from pathlib import Path
@@ -61,23 +67,89 @@ if 'for (uint32_t Index = 0; Index < RTE_MAX_LCORE; ++Index)' not in text:
 print('PASS: checked-in datapath remains base architecture; disposable-only TXQ marker absent')
 PY
 
-# Execute the disposable TXQ transform against a temporary copy of the actual
-# checked-in datapath. This catches anchor drift before a long P5 build/run.
-TMP_DP="$(mktemp /tmp/greenquic_p5_txq_preflight.XXXXXX.c)"
+# Reproduce the exact disposable source transformation chain used by the P5
+# multicore build, but on a temporary C file only. This catches compatibility
+# failures before CMake compilation, NIC startup, or any traffic.
+for f in \
+    "$P5/apply_p5_super_performance.py" \
+    "$P5/apply_p5_super_packet_counter_guard.py" \
+    "$P5/apply_p5_performance2.py" \
+    "$P5/apply_p5_performance2_v2.py" \
+    "$P5/apply_p5_multicore_txq_v2.py"
+do
+    [[ -f "$f" ]] || { echo "ERROR: transform missing: $f" >&2; exit 2; }
+done
+
+TMP_DP="$(mktemp /tmp/greenquic_p5_fullchain_preflight.XXXXXX.c)"
 trap 'rm -f "$TMP_DP"' EXIT
 cp "$REPO_ROOT/msquic/src/platform/datapath_raw_dpdk_linux.c" "$TMP_DP"
+
+python3 "$P5/apply_p5_super_performance.py" "$TMP_DP" \
+    --cache 128 \
+    --rx-burst 32 \
+    --tx-burst 16 \
+    --ring-size 4096 \
+    --ring-sync legacy \
+    --drain-bursts 2 \
+    --drain-threshold 0 \
+    --mtu 1500 \
+    --skip-off-ringcount 0 \
+    --debug-counters 1 \
+    --transfer-window 1 \
+    --trace-ringcount 1 \
+    --tx-meta mbuf \
+    --rx-meta mbuf \
+    --tx-lock-mode single_owner \
+    --cap-diag 1
+python3 "$P5/apply_p5_super_packet_counter_guard.py" 1 "$TMP_DP"
+python3 "$P5/apply_p5_performance2.py" "$TMP_DP" \
+    --diag-interval-us 0 \
+    --diag-duration-ms 3000 \
+    --tx-handoff shared \
+    --tx-producer-ring-size 1024 \
+    --rx-prefetch 0 \
+    --udp-seg 0 \
+    --udp-seg-max 4
+python3 "$P5/apply_p5_performance2_v2.py" "$TMP_DP" \
+    --tx-alloc-batch 8 \
+    --tx-enqueue-counter 0 \
+    --tx-meta-zero 1 \
+    --rx-pipe-prefetch 2 \
+    --shard-active-mask 0
 python3 "$P5/apply_p5_multicore_txq_v2.py" "$TMP_DP"
-grep -Fq 'GREENQUIC-P5-MULTICORE-TXQ-V1' "$TMP_DP" || {
-    echo "ERROR: disposable TXQ transform did not emit its marker" >&2
+
+for marker in \
+    GREENQUIC-P5-SUPER-PERF-V2 \
+    GREENQUIC-P5-PERFORMANCE2-V1 \
+    GREENQUIC-P5-PERFORMANCE2-V2 \
+    GREENQUIC-P5-MULTICORE-TXQ-V1 \
+    GreenQuicTxOwnerCount \
+    GreenQuicSelectTxQueue
+ do
+    grep -Fq "$marker" "$TMP_DP" || {
+        echo "ERROR: full-chain preflight missing marker: $marker" >&2
+        exit 2
+    }
+done
+
+grep -Fq 'Interface->TxRingByQueue[TxQueueId] : Interface->TxRingBuffer;' "$TMP_DP" || {
+    echo "ERROR: TX queue selector lost the intended queue-0 fallback" >&2
     exit 2
 }
-grep -Fq 'GreenQuicTxOwnerCount = NextTxQueue;' "$TMP_DP" || {
-    echo "ERROR: disposable TXQ transform did not create per-queue TX ownership" >&2
+if grep -Fq 'Interface->TxRingByQueue[TxQueueId] : TxRing;' "$TMP_DP"; then
+    echo "ERROR: TX queue selector contains a self-referential TxRing fallback" >&2
+    exit 2
+fi
+
+grep -Fq 'PortConfig.rxmode.mtu = 1500;' "$TMP_DP" || {
+    echo "ERROR: full-chain preflight lost fair-comparison MTU 1500" >&2
     exit 2
 }
+
 rm -f "$TMP_DP"
 trap - EXIT
-echo "PASS: disposable P5 two-TX-queue transform executes against current datapath"
 
+echo "PASS: exact Super -> Performance2 V1 -> V2 -> multicore TXQ chain transforms current datapath"
+echo "PASS: per-flow TX selector preserves explicit queue-0 fallback without self-reference"
 echo "PARALLEL MULTICORE STATIC PREFLIGHT PASS"
 echo "No traffic was generated and no NIC/IRQ state was changed."
