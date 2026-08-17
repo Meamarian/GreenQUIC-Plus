@@ -4,13 +4,14 @@ from __future__ import annotations
 """Set the packet-mbuf pool capacity in the disposable P5 DPDK datapath.
 
 Architecture cases with four DPDK RX owners need at least 4 * 4096 RX mbufs
-before any headroom.  The previously observed 16383-mbuf pool is therefore one
-mbuf short even before normal pool overhead.  Runtime dpdk.ini does not expose
+before any headroom. The previously observed 16383-mbuf pool is therefore one
+mbuf short even before normal pool overhead. Runtime dpdk.ini does not expose
 an RxMbufPoolSize/TxMbufPoolSize property, so the architecture experiment must
 set this at build time instead of inventing unsupported INI keys.
 
-This transformer rewrites the *second argument* (number of mbufs) of every
-rte_pktmbuf_pool_create() call in the disposable datapath.  It is deliberately
+This transformer rewrites the *second argument* (number of mbufs) of every real
+C-code rte_pktmbuf_pool_create() call in the disposable datapath. Mentions in
+comments and string/character literals are deliberately ignored. It is
 architecture-only: build_p5_arch_profile.sh opts in with
 P5_ARCH_MBUF_POOL_SIZE, while ordinary P5 Performance2 builds remain unchanged.
 """
@@ -21,6 +22,51 @@ import tempfile
 
 MARKER_PREFIX = "GREENQUIC-P5-ARCH-MBUF-POOL-V2"
 CALL = "rte_pktmbuf_pool_create"
+
+
+def is_code_position(text: str, pos: int) -> bool:
+    """Return True when pos is in C code, not a comment/string/char literal."""
+    state = "code"
+    escape = False
+    i = 0
+    while i < pos:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < pos else ""
+        if state == "line_comment":
+            if ch == "\n":
+                state = "code"
+            i += 1
+            continue
+        if state == "block_comment":
+            if ch == "*" and nxt == "/":
+                state = "code"
+                i += 2
+            else:
+                i += 1
+            continue
+        if state in ("string", "char"):
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif (state == "string" and ch == '"') or (state == "char" and ch == "'"):
+                state = "code"
+            i += 1
+            continue
+        if ch == "/" and nxt == "/":
+            state = "line_comment"
+            i += 2
+            continue
+        if ch == "/" and nxt == "*":
+            state = "block_comment"
+            i += 2
+            continue
+        if ch == '"':
+            state = "string"
+        elif ch == "'":
+            state = "char"
+        i += 1
+    return state == "code"
 
 
 def matching_paren(text: str, open_pos: int) -> int:
@@ -98,33 +144,44 @@ def transform_text(text: str, count: int) -> tuple[str, int]:
     replacements: list[tuple[int, int, str]] = []
     search = 0
     calls = 0
+    ignored_noncode = 0
     while True:
         pos = text.find(CALL, search)
         if pos < 0:
             break
-        open_pos = text.find("(", pos + len(CALL))
-        if open_pos < 0:
-            raise SystemExit("ERROR: rte_pktmbuf_pool_create token has no opening parenthesis")
+        if not is_code_position(text, pos):
+            ignored_noncode += 1
+            search = pos + len(CALL)
+            continue
+        before = text[pos - 1] if pos else ""
+        after = text[pos + len(CALL)] if pos + len(CALL) < len(text) else ""
+        if before.isalnum() or before == "_" or after.isalnum() or after == "_":
+            search = pos + len(CALL)
+            continue
+        open_pos = pos + len(CALL)
+        while open_pos < len(text) and text[open_pos].isspace():
+            open_pos += 1
+        if open_pos >= len(text) or text[open_pos] != "(":
+            raise SystemExit("ERROR: code rte_pktmbuf_pool_create token has no opening parenthesis")
         close_pos = matching_paren(text, open_pos)
         spans = arg_spans(text, open_pos, close_pos)
         if len(spans) != 6:
+            line = text.count("\n", 0, pos) + 1
             raise SystemExit(
-                f"ERROR: expected 6 rte_pktmbuf_pool_create arguments, found {len(spans)}"
+                f"ERROR: expected 6 rte_pktmbuf_pool_create arguments, found {len(spans)} at source line {line}"
             )
         a, b = spans[1]
-        leading = text[a:b][: len(text[a:b]) - len(text[a:b].lstrip())]
-        trailing = text[a:b][len(text[a:b].rstrip()):]
+        field = text[a:b]
+        leading = field[: len(field) - len(field.lstrip())]
+        trailing = field[len(field.rstrip()):]
         replacements.append((a, b, f"{leading}{count}U{trailing}"))
         calls += 1
         search = close_pos + 1
 
     if calls == 0:
         raise SystemExit(
-            "ERROR: disposable datapath contains no rte_pktmbuf_pool_create() call; refusing an unproven pool patch"
+            "ERROR: disposable datapath contains no real C-code rte_pktmbuf_pool_create() call; refusing an unproven pool patch"
         )
-    # A small number of packet pools is expected.  A large count likely means
-    # the source shape changed and deserves manual inspection rather than a
-    # blanket rewrite.
     if calls > 4:
         raise SystemExit(f"ERROR: unexpected rte_pktmbuf_pool_create call count={calls} (>4)")
 
@@ -145,7 +202,11 @@ def patch(path: Path, count: int) -> None:
 
 
 def self_test() -> None:
-    fixture = '''static void f(void) {
+    fixture = '''/* Documentation may mention rte_pktmbuf_pool_create() without being code. */
+// Another ignored mention: rte_pktmbuf_pool_create(fake)
+static const char* pool_doc = "rte_pktmbuf_pool_create()";
+static const char pool_ch = 'x';
+static void f(void) {
     struct rte_mempool* a = rte_pktmbuf_pool_create(
         "rx", 16383, 128, 0, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
     struct rte_mempool* b = rte_pktmbuf_pool_create(
@@ -161,6 +222,8 @@ def self_test() -> None:
     assert new.count("32767U") == 2
     assert "16383" not in new
     assert "SOME_OLD_COUNT" not in new
+    assert "Documentation may mention rte_pktmbuf_pool_create()" in new
+    assert '"rte_pktmbuf_pool_create()"' in new
     assert new.count(MARKER_PREFIX) == 1
     again, calls2 = transform_text(new, 32767)
     assert calls2 == 2
@@ -170,7 +233,10 @@ def self_test() -> None:
         p.write_text(fixture, encoding="utf-8")
         patch(p, 32767)
         assert p.read_text(encoding="utf-8") == new
-    print("P5 ARCH MBUF POOL V2 SELF-TEST PASS: balanced-call parser + idempotence")
+    print(
+        "P5 ARCH MBUF POOL V2 SELF-TEST PASS: real-call parser + "
+        "comment/string exclusion + idempotence"
+    )
 
 
 def main() -> int:
