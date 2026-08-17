@@ -11,6 +11,18 @@ def pct(v: float, base: float) -> float:
     return ((v / base) - 1.0) * 100.0 if base else 0.0
 
 
+def read_env(path: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not path.is_file():
+        return out
+    for raw in path.read_text(encoding='utf-8', errors='replace').splitlines():
+        if '=' not in raw or raw.lstrip().startswith('#'):
+            continue
+        k, v = raw.split('=', 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--root', type=Path, required=True)
@@ -21,13 +33,20 @@ def main() -> int:
     for case_dir in sorted(p for p in root.iterdir() if p.is_dir() and p.name[:2] in valid_prefixes):
         summary = case_dir / 'bottleneck_tables' / 'case_summary.json'
         cfg = case_dir / 'BOTTLENECK_CASE_CONFIG.env'
+        build_cfg = case_dir / 'BUILD_PROFILE.env'
+        env = read_env(build_cfg)
         if not summary.is_file():
-            rows.append({'case': case_dir.name, 'status': 'MISSING_OR_FAILED'})
+            rows.append({
+                'case': case_dir.name,
+                'status': 'MISSING_OR_FAILED',
+                'comparison_reference': env.get('comparison_reference', ''),
+            })
             continue
         j = json.loads(summary.read_text(encoding='utf-8'))
         rows.append({
             'case': j['case'],
             'status': 'PASS',
+            'comparison_reference': env.get('comparison_reference', ''),
             'runs': j['runs'],
             'connections': j['connections'],
             'dpdk_cpus': ';'.join(map(str, j['dpdk_cpus'])),
@@ -49,6 +68,7 @@ def main() -> int:
             'all_configured_dpdk_lcores_engaged': int(bool(j.get('all_configured_dpdk_lcores_engaged'))),
             'tx_hash_fallback_total': j.get('tx_hash_fallback_total', 0),
             'config_file': str(cfg) if cfg.is_file() else '',
+            'build_profile_file': str(build_cfg) if build_cfg.is_file() else '',
         })
 
     passed = [r for r in rows if r.get('status') == 'PASS']
@@ -56,9 +76,17 @@ def main() -> int:
     one = by.get('A_1c_baseline')
     two = by.get('B_2c_baseline')
     for r in passed:
-        r['delta_vs_1c_pct'] = pct(float(r['mean_goodput_gbps']), float(one['mean_goodput_gbps'])) if one else ''
-        r['delta_vs_2c_baseline_pct'] = pct(float(r['mean_goodput_gbps']), float(two['mean_goodput_gbps'])) if two else ''
-        delta = r['delta_vs_2c_baseline_pct'] if r['delta_vs_2c_baseline_pct'] != '' else 0.0
+        mean = float(r['mean_goodput_gbps'])
+        r['delta_vs_1c_pct'] = pct(mean, float(one['mean_goodput_gbps'])) if one else ''
+        r['delta_vs_2c_baseline_pct'] = pct(mean, float(two['mean_goodput_gbps'])) if two else ''
+        ref_name = str(r.get('comparison_reference') or '')
+        if ref_name == 'self' or r['case'] == 'A_1c_baseline':
+            ref = r
+            r['comparison_reference'] = 'self'
+        else:
+            ref = by.get(ref_name)
+        r['delta_vs_reference_pct'] = pct(mean, float(ref['mean_goodput_gbps'])) if ref else ''
+        delta = r['delta_vs_reference_pct'] if r['delta_vs_reference_pct'] != '' else 0.0
         if r['case'] == 'A_1c_baseline':
             r['effect_class'] = 'reference'
         elif r['case'] == 'B_2c_baseline':
@@ -84,18 +112,17 @@ def main() -> int:
     txt = []
     txt.append('P5 BOTTLENECK SWEEP SUMMARY')
     txt.append('All cases: OFF mode, 4 simultaneous 8GiB QUIC connections, identical run count.')
-    txt.append('A->B isolates DPDK core-count scaling. C-L are controlled design perturbations.')
+    txt.append('A->B isolates DPDK core-count scaling. C,D compare to A; E-L compare to B.')
     txt.append('')
-    txt.append('case                         goodput    SD       vs1c      vs2c      power     DPDK engaged  effect')
+    txt.append('case                         goodput    SD       reference          delta-ref   power     DPDK engaged  effect')
     for r in rows:
         if r.get('status') != 'PASS':
             txt.append(f"{r['case']:<28} FAILED/MISSING")
             continue
-        d1 = r.get('delta_vs_1c_pct', '')
-        d2 = r.get('delta_vs_2c_baseline_pct', '')
+        dref = r.get('delta_vs_reference_pct', '')
         txt.append(
             f"{r['case']:<28} {float(r['mean_goodput_gbps']):>8.4f}  {float(r['stdev_goodput_gbps']):>7.4f}  "
-            f"{float(d1):>+7.2f}%  {float(d2):>+7.2f}%  {float(r['combined_rapl_w']):>8.2f}W  "
+            f"{str(r.get('comparison_reference','')):<18} {float(dref):>+8.2f}%  {float(r['combined_rapl_w']):>8.2f}W  "
             f"{r['all_configured_dpdk_lcores_engaged']}             {r['effect_class']}"
         )
     txt.append('')
@@ -112,9 +139,11 @@ def main() -> int:
         txt.append(f"Best observed case: {ranked[0]['case']} = {float(ranked[0]['mean_goodput_gbps']):.6f} Gbit/s")
     positives = [r for r in passed if r.get('effect_class') == 'material positive']
     if positives:
-        txt.append('Material positive perturbations vs B: ' + ', '.join(r['case'] for r in positives))
+        txt.append('Material positive controlled perturbations: ' + ', '.join(
+            f"{r['case']} vs {r['comparison_reference']} ({float(r['delta_vs_reference_pct']):+.2f}%)" for r in positives
+        ))
     else:
-        txt.append('Material positive perturbations vs B: none at the 3% threshold.')
+        txt.append('Material positive controlled perturbations: none at the 3% threshold.')
     txt.append('')
     txt.append('CPU busy columns and per-case lcore_activity.csv must be inspected before assigning causality.')
     out_txt = root / 'BOTTLENECK_SWEEP_SUMMARY.txt'
