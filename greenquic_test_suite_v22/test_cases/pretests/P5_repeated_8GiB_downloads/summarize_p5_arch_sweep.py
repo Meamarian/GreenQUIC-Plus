@@ -57,10 +57,19 @@ def main():
             except Exception: n=0
         else: n=len(raw)
         sr=st.get(case.name,{})
-        build_rc=sr.get('build_rc',''); traffic_rc=cfg.get('traffic_rc',sr.get('traffic_rc','')); controller_rc=cfg.get('controller_rc',sr.get('controller_rc','')); analysis_rc=cfg.get('analysis_rc',sr.get('analysis_rc','')); config_rc=cfg.get('config_rc','')
+        build_rc=sr.get('build_rc','')
+        traffic_rc=cfg.get('traffic_rc',sr.get('traffic_rc',''))
+        controller_rc=cfg.get('controller_rc',sr.get('controller_rc',''))
+        analysis_rc=cfg.get('analysis_rc',sr.get('analysis_rc',''))
+        config_rc=sr.get('effective_config_rc',cfg.get('config_rc',''))
+        effective_json=case/'ARCH_EFFECTIVE_CONFIG.json'
+        effective_status=''
+        if effective_json.is_file():
+            try: effective_status=str(json.loads(effective_json.read_text()).get('status',''))
+            except Exception: effective_status='INVALID_JSON'
         valid_case=int(rc0(build_rc) and rc0(traffic_rc) and rc0(config_rc) and mean>0)
         sa,stotal,stopcpu,stopallow=thread_summary(case,'server'); ca,ctotal,ctopcpu,ctopallow=thread_summary(case,'client')
-        rows.append({'case':case.name,'valid_case':valid_case,'n':n,'mean_gbps':mean,'sd_gbps':sd,'max_gbps':max(raw) if raw else mean,'reached_11g':int(valid_case and (max(raw) if raw else mean)>=11.0),'dpdk_lcores':cfg.get('dpdk_lcores',''),'quic_cpus':cfg.get('quic_cpus',''),'affinitize':cfg.get('quic_affinitize',''),'execution_profile':cfg.get('execution_profile',''),'partition_style':cfg.get('partition_style',''),'partition_map':cfg.get('partition_map',''),'build_profile':sr.get('profile',''),'build_rc':build_rc,'traffic_rc':traffic_rc,'config_rc':config_rc,'controller_rc':controller_rc,'analysis_rc':analysis_rc,'traffic_success_logs':cfg.get('traffic_success_logs',''),'goodput_files':cfg.get('goodput_files',''),'server_active_threads':sa,'client_active_threads':ca,'server_thread_cpu_s':stotal,'client_thread_cpu_s':ctotal,'server_top_thread_cpus':stopcpu,'client_top_thread_cpus':ctopcpu,'server_top_thread_allowed':stopallow,'client_top_thread_allowed':ctopallow})
+        rows.append({'case':case.name,'valid_case':valid_case,'n':n,'mean_gbps':mean,'sd_gbps':sd,'max_gbps':max(raw) if raw else mean,'reached_11g':int(valid_case and (max(raw) if raw else mean)>=11.0),'dpdk_lcores':cfg.get('dpdk_lcores',''),'quic_cpus':cfg.get('quic_cpus',''),'affinitize':cfg.get('quic_affinitize',''),'execution_profile':cfg.get('execution_profile',''),'partition_style':cfg.get('partition_style',''),'partition_map':cfg.get('partition_map',''),'build_profile':sr.get('build_profile',sr.get('profile','')),'build_rc':build_rc,'traffic_rc':traffic_rc,'effective_config_rc':config_rc,'effective_config_status':effective_status,'controller_rc':controller_rc,'analysis_rc':analysis_rc,'traffic_success_logs':cfg.get('traffic_success_logs',''),'goodput_files':cfg.get('goodput_files',''),'server_active_threads':sa,'client_active_threads':ca,'server_thread_cpu_s':stotal,'client_thread_cpu_s':ctotal,'server_top_thread_cpus':stopcpu,'client_top_thread_cpus':ctopcpu,'server_top_thread_allowed':stopallow,'client_top_thread_allowed':ctopallow})
     ref=find_case(rows,'B_')
     for r in rows:
         r['delta_vs_B_pct']=''
@@ -69,15 +78,15 @@ def main():
     csvp=root/'ARCH_BOTTLENECK_SUMMARY.csv'
     if rows:
         with csvp.open('w',newline='',encoding='utf-8') as f: w=csv.DictWriter(f,fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
-    lines=['P5 ARCHITECTURAL BOTTLENECK SWEEP','=================================','Target: find a structural change capable of moving P5 toward >=11 Gbit/s.','VALID requires build_rc=0, traffic_rc=0, config_rc=0 and measured goodput. Controller/plot/analyzer failures do not erase completed traffic.','']
+    lines=['P5 ARCHITECTURAL BOTTLENECK SWEEP','=================================','Target: find a structural change capable of moving P5 toward >=11 Gbit/s.','VALID requires build_rc=0, traffic_rc=0, effective_config_rc=0 and measured goodput. Controller/plot/analyzer failures do not erase completed traffic.','']
     for r in rows:
         d='' if r['delta_vs_B_pct']=='' else f" delta_vs_B={r['delta_vs_B_pct']:+.2f}%"
-        lines.append(f"{r['case']}: VALID={r['valid_case']} n={r['n']} mean={r['mean_gbps']:.6f} SD={r['sd_gbps']:.6f} max={r['max_gbps']:.6f} Gbit/s{d} build_rc={r['build_rc']} traffic_rc={r['traffic_rc']} config_rc={r['config_rc']} controller_rc={r['controller_rc']} analysis_rc={r['analysis_rc']}")
+        lines.append(f"{r['case']}: VALID={r['valid_case']} n={r['n']} mean={r['mean_gbps']:.6f} SD={r['sd_gbps']:.6f} max={r['max_gbps']:.6f} Gbit/s{d} build_rc={r['build_rc']} traffic_rc={r['traffic_rc']} effective_config_rc={r['effective_config_rc']} effective={r['effective_config_status']} controller_rc={r['controller_rc']} analysis_rc={r['analysis_rc']}")
     ranked=sorted((r for r in rows if r['valid_case']),key=lambda x:x['mean_gbps'],reverse=True)
     lines+=['','VALID CASE RANKING']+[f"{i:02d}. {r['case']} {r['mean_gbps']:.6f} Gbit/s" for i,r in enumerate(ranked,1)]
     invalid=[r for r in rows if not r['valid_case']]
     if invalid:
-        lines+=['','INVALID / NON-COMPARABLE CASES']+[f"- {r['case']} build={r['build_rc']} traffic={r['traffic_rc']} config={r['config_rc']} controller={r['controller_rc']} analysis={r['analysis_rc']}" for r in invalid]
+        lines+=['','INVALID / NON-COMPARABLE CASES']+[f"- {r['case']} build={r['build_rc']} traffic={r['traffic_rc']} effective_config={r['effective_config_rc']} controller={r['controller_rc']} analysis={r['analysis_rc']}" for r in invalid]
 
     A=find_case(rows,'A_'); C=find_case(rows,'C_'); D=find_case(rows,'D_'); E=find_case(rows,'E_'); F=find_case(rows,'F_'); G=find_case(rows,'G_'); H=find_case(rows,'H_'); I=find_case(rows,'I_'); J=find_case(rows,'J_'); K=find_case(rows,'K_'); L=find_case(rows,'L_'); M=find_case(rows,'M_'); N=find_case(rows,'N_'); O=find_case(rows,'O_'); P=find_case(rows,'P_')
     comparisons=[
@@ -93,7 +102,7 @@ def main():
         ('partition grouped K vs B',delta(K,ref),'partition-to-DPDK locality'),
         ('ring MP L vs B',delta(L,ref),'producer-ring synchronization'),
         ('ring RTS M vs B',delta(M,ref),'producer-ring synchronization'),
-        ('sharded handoff N vs F',delta(N,F),'shared producer handoff contention'),
+        ('sharded handoff N vs B',delta(N,ref),'shared producer handoff contention'),
         ('UDP segmentation O vs B',delta(O,ref),'per-packet/segmentation overhead'),
         ('drift P vs B',delta(P,ref),'thermal/time drift'),
     ]
