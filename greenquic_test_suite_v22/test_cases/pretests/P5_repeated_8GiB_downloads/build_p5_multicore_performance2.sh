@@ -11,8 +11,9 @@ BASE="$HERE/build_p5_performance2.sh"
 PARALLEL_TRANSFORM="$HERE/apply_p5_parallel_connections.py"
 TXQ_TRANSFORM="$HERE/apply_p5_multicore_txq_v2.py"
 TXQ_TRANSFORM_BASE="$HERE/apply_p5_multicore_txq.py"
+VERIFY_BINARY="$HERE/verify_p5_parallel_multicore_binary.sh"
 
-for f in "$BASE" "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_BASE"; do
+for f in "$BASE" "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_BASE" "$VERIFY_BINARY"; do
     [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2; exit 2; }
 done
 [[ -d "$DPDK" ]] || { echo "ERROR: DPDK install missing: $DPDK" >&2; exit 2; }
@@ -88,37 +89,11 @@ cmake --build "$BUILD" --target quicinterop quicinteropserver --parallel "$(npro
 
 CLIENT="$BUILD/bin/Release/quicinterop"
 SERVER="$BUILD/bin/Release/quicinteropserver"
-for bin in "$CLIENT" "$SERVER"; do
-    [[ -x "$bin" ]] || { echo "ERROR: missing executable $bin" >&2; exit 2; }
 
-    # Only check strings that are part of compiled runtime/config behavior.
-    # GREENQUIC-P5-MULTICORE-TXQ-V1 is a source-audit comment marker and is
-    # intentionally NOT expected in an optimized executable.
-    for marker in \
-        GreenQuicEnableMultiCore \
-        GreenQuicPartitionDpdkMap \
-        greenquic-mc-queue-v1 \
-        'GreenQUIC multicore TX queue topology invalid' \
-        'GreenQUIC multicore TX requires one TX queue per DPDK RX owner' \
-        GREENQUIC-P5-PERFORMANCE2-V1 \
-        GREENQUIC-P5-PERFORMANCE2-V2
-    do
-        grep -aFq -- "$marker" "$bin" || {
-            echo "ERROR: compiled multicore/performance evidence '$marker' missing from $bin" >&2
-            exit 2
-        }
-    done
-done
-for marker in \
-    GREENQUIC-P5-PARALLEL-CONNECTIONS-V1 \
-    GQ_INTEROP_P5_LOCAL_PORT_BASE \
-    ready_for_start_gate_us=
-do
-    grep -aFq -- "$marker" "$CLIENT" || {
-        echo "ERROR: parallel-client marker '$marker' missing from $CLIENT" >&2
-        exit 2
-    }
-done
+# Build-time and run-time checks intentionally share one verifier so they
+# cannot drift into checking different strings in the same executable.
+bash "$VERIFY_BINARY" client "$CLIENT"
+bash "$VERIFY_BINARY" server "$SERVER"
 
 echo "P5 PERFORMANCE2 PARALLEL MULTICORE BUILD PASS"
 sha256sum "$CLIENT" "$SERVER"
