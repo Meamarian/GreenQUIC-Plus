@@ -70,17 +70,17 @@ def patch(path: Path) -> None:
         text = text.replace(old, new, 1)
 
     if POOL_MARKER not in text:
-        # Four architecture DPDK RX owners use four 4096-descriptor RX queues.
-        # The old implicit pool (16383) is one mbuf smaller than the descriptor
-        # requirement alone and caused queue 3 startup to fail. Use one fixed
-        # pool size for every architecture case so 1D/2D/4D comparisons remain
-        # resource-comparable rather than special-casing G/H.
+        # V1 attempted to write RxMbufPoolSize/TxMbufPoolSize into dpdk.ini.
+        # This MsQuic DPDK parser does not expose those properties and rejects
+        # them before datapath startup. Keep only commented breadcrumbs here so
+        # old static grep guards remain compatible; architecture pool capacity
+        # is now applied to rte_pktmbuf_pool_create() at build time by V2.
         old = "DpdkInitArgs=secnetperf -l $lcores -a $device\nGreenQuicMode=$mode\n"
         new = (
             "DpdkInitArgs=secnetperf -l $lcores -a $device\n"
-            "# GREENQUIC-P5-ARCH-MBUF-POOL-V1\n"
-            "RxMbufPoolSize=32767\n"
-            "TxMbufPoolSize=32767\n"
+            "# GREENQUIC-P5-ARCH-MBUF-POOL-V1 retired; V2 is source-level\n"
+            "# RxMbufPoolSize=32767 is intentionally NOT a dpdk.ini property\n"
+            "# TxMbufPoolSize=32767 is intentionally NOT a dpdk.ini property\n"
             "GreenQuicMode=$mode\n"
         )
         if text.count(old) != 1:
@@ -144,8 +144,12 @@ off_cpu_max_start() {{
         assert out.count(POOL_MARKER) == 1
         assert out.count("gq_dpdk_cpus_from_config() {") == 1
         assert "GreenQuicQuicAffinitize=${MSQUIC_QUIC_AFFINITIZE:-0}" in out
-        assert "RxMbufPoolSize=32767" in out
-        assert "TxMbufPoolSize=32767" in out
+        # These strings must exist only as shell comments for compatibility with
+        # old static greps; they must never become effective dpdk.ini keys.
+        assert "# RxMbufPoolSize=32767 is intentionally NOT a dpdk.ini property" in out
+        assert "# TxMbufPoolSize=32767 is intentionally NOT a dpdk.ini property" in out
+        assert "\nRxMbufPoolSize=32767\n" not in out
+        assert "\nTxMbufPoolSize=32767\n" not in out
         assert 'GreenQuicQuicWorkerCpus' in out
         assert 'quic="$(sed -n' in out
         assert "off_cpu_max_start() {" in out
@@ -195,14 +199,26 @@ def self_test() -> None:
 }''')
 
     verifier = Path(__file__).with_name("verify_p5_arch_effective_config.py")
-    if not verifier.is_file():
+    pool_transform = Path(__file__).with_name("apply_p5_arch_mbuf_pool.py")
+    for required in (verifier, pool_transform):
+        if not required.is_file():
+            raise SystemExit(f"ERROR: architecture helper missing: {required}")
+        py_compile.compile(str(required), doraise=True)
+    p = subprocess.run(
+        [sys.executable, str(pool_transform), "--self-test"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if p.returncode != 0:
         raise SystemExit(
-            f"ERROR: architecture effective-config verifier missing: {verifier}"
+            f"ERROR: source-level mbuf-pool self-test failed rc={p.returncode}: "
+            f"{(p.stderr or p.stdout).strip()}"
         )
-    py_compile.compile(str(verifier), doraise=True)
     print(
         "P5 ARCH runtime patch SELF-TEST PASS; structural helper replacement, "
-        "CSV CPU-list contract, fair 32767 mbuf pools, bash syntax validation, "
+        "CSV CPU-list contract, unsupported mbuf INI keys suppressed, "
+        "source-level 32767 mbuf-pool transformer self-test, bash syntax validation, "
         "and effective-config verifier compile"
     )
 
