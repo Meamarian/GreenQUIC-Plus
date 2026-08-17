@@ -10,10 +10,12 @@ BASE_BRANCH="performance2/p5-max-goodput"
 BASE_SHA="045d7375c6af5810a9ce30a2db63231989ab3f12"
 RUNS="${PARALLEL_MC_RUNS:-2}"
 CONNECTIONS="${PARALLEL_MC_CONNECTIONS:-4}"
+PREFLIGHT_ONLY="${PARALLEL_MC_PREFLIGHT_ONLY:-0}"
 TAG="${PARALLEL_MC_TAG:-$(date +%Y%m%d_%H%M%S)}"
 
 [[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: PARALLEL_MC_RUNS must be positive" >&2; exit 2; }
 [[ "$CONNECTIONS" =~ ^[2-9][0-9]*$ ]] || { echo "ERROR: PARALLEL_MC_CONNECTIONS must be >=2" >&2; exit 2; }
+case "$PREFLIGHT_ONLY" in 0|1) ;; *) echo "ERROR: PARALLEL_MC_PREFLIGHT_ONLY must be 0 or 1" >&2; exit 2;; esac
 [[ -d "$REPO/.git" ]] || { echo "ERROR: GREENQUIC_REPO is not a Git checkout: $REPO" >&2; exit 2; }
 cd "$REPO"
 
@@ -78,7 +80,6 @@ CLEAN
 set -Eeuo pipefail
 HEAD="$1"; BUNDLE_REF="$2"; TAG="$3"
 cd /root/mohsen
-# Do not silently destroy hand-edited tracked files.
 if ! git diff --quiet || ! git diff --cached --quiet; then
     echo "ERROR: tracked modifications exist on $(hostname); refusing branch switch" >&2
     git status --short --untracked-files=no >&2
@@ -102,6 +103,15 @@ for H in idex tinyman; do
     echo "----- $H -----"
     ssh "$H" "cd '$REMOTE_ROOT/$PREREL' && bash ./parallel_multicore_static_preflight.sh"
 done
+
+if [[ "$PREFLIGHT_ONLY" == 1 ]]; then
+    printf '\n======================================================================\n'
+    printf 'PARALLEL MULTICORE PREFLIGHT-ONLY PASS\n'
+    printf 'Branch commit: %s\n' "$HEAD"
+    printf 'No P5/P7 build or traffic was started.\n'
+    printf '======================================================================\n'
+    exit 0
+fi
 
 printf '\n=== 5. PREPARE DPDK NIC AND BUILD P5 ON BOTH HOSTS ===\n'
 for H in idex tinyman; do
