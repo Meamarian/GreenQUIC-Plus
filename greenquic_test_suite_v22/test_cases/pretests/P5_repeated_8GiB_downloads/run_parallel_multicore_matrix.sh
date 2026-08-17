@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
-BASE="$HERE/run_matrix_from_idex.sh";CLIENT="$HERE/run_client_parallel_multicore.sh";AGG="$HERE/aggregate_parallel_goodput.py";ACTIVE="$HERE/analyze_p5_parallel_active.py";VALIDATOR="$HERE/validate_p5_multicore_matrix.py"
+BASE="$HERE/run_matrix_from_idex.sh";CLIENT="$HERE/run_client_parallel_multicore.sh";AGG="$HERE/aggregate_parallel_goodput.py";ACTIVE="$HERE/analyze_p5_parallel_active.py";CLOCK="$HERE/clock_sync_parallel.py";VALIDATOR="$HERE/validate_p5_multicore_matrix.py"
 RUNS=2;CONNECTIONS=4;OUTPUT_DIR="";CONTROLLER_PREFLIGHT=0;USER_ARGS=()
 while (($#)); do case "$1" in --runs) RUNS="${2:?}";shift 2;;--connections) CONNECTIONS="${2:?}";shift 2;;--output-dir) OUTPUT_DIR="${2:?}";shift 2;;--controller-preflight) CONTROLLER_PREFLIGHT=1;shift;;-h|--help) echo "usage: $0 [--runs N] [--connections N] [--output-dir DIR] [--controller-preflight] [normal P5 matrix options]";exit 0;;*) USER_ARGS+=("$1");shift;;esac;done
 [[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: runs must be positive" >&2;exit 2; };[[ "$CONNECTIONS" =~ ^[2-9][0-9]*$ ]] || { echo "ERROR: connections must be >=2" >&2;exit 2; }
-for f in "$BASE" "$CLIENT" "$AGG" "$ACTIVE" "$VALIDATOR";do [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2;exit 2; };done
+for f in "$BASE" "$CLIENT" "$AGG" "$ACTIVE" "$CLOCK" "$VALIDATOR";do [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2;exit 2; };done
+python3 "$CLOCK" --self-test >/dev/null
 OUTPUT_DIR="${OUTPUT_DIR:-$HERE/matrix_results/P5_PARALLEL_MC_${CONNECTIONS}c_${RUNS}r_$(date +%Y%m%d_%H%M%S)}"
 ROOT="$HERE/../../../common/files/server_root";mkdir -p "$ROOT";for ((i=1;i<=CONNECTIONS;i++));do f="$ROOT/file_8G_mc$(printf '%02d' "$i").bin";[[ -e "$f" ]] || truncate -s 8589934592 "$f";[[ "$(stat -Lc '%s' "$f")" == 8589934592 ]] || { echo "ERROR: wrong sparse payload size $f" >&2;exit 2; };done
 TMP="$(mktemp "$HERE/.parallel_matrix.XXXXXX.sh")";trap 'rm -f "$TMP"' EXIT
@@ -14,7 +15,13 @@ from pathlib import Path
 import sys
 src=Path(sys.argv[1]).read_text(encoding='utf-8');old='./run_client.sh';new='bash ./run_client_parallel_multicore.sh';count=src.count(old)
 if count<1:raise SystemExit(f'ERROR: base P5 runner contains no {old} anchor')
-src=src.replace(old,new);needle='Path(sys.argv[2]).write_text(src, encoding="utf-8")'
+src=src.replace(old,new)
+clock_old='python3 "$HERE/clock_sync.py"'
+clock_new='python3 "$HERE/clock_sync_parallel.py"'
+clock_count=src.count(clock_old)
+if clock_count!=1:raise SystemExit(f'ERROR: public P5 wrapper clock-sync anchor count={clock_count}, expected 1')
+src=src.replace(clock_old,clock_new,1)
+needle='Path(sys.argv[2]).write_text(src, encoding="utf-8")'
 if src.count(needle)!=1:raise SystemExit(f'ERROR: public P5 wrapper write anchor count={src.count(needle)}, expected 1')
 completion_old='''    final_download_pattern="[GreenQUIC-P5] request=${DOWNLOADS}/${DOWNLOADS} complete_us="
     workload_complete=0
@@ -37,10 +44,10 @@ completion_new='''    final_download_pattern="[GreenQUIC-PARALLEL] batch=1 compl
     done
 '''
 injection=("# P5-PARALLEL-COMPLETION-V1\n"+"parallel_old = "+repr(completion_old)+"\n"+"parallel_new = "+repr(completion_new)+"\n"+'replace_once(parallel_old, parallel_new, "parallel completion detector")\n'+needle)
-src=src.replace(needle,injection,1);Path(sys.argv[2]).write_text(src,encoding='utf-8');print(f'P5 parallel controller patch: client anchors={count}; parallel completion detector injected')
+src=src.replace(needle,injection,1);Path(sys.argv[2]).write_text(src,encoding='utf-8');print(f'P5 parallel controller patch: client anchors={count}; parallel completion detector + parallel clock sync injected')
 PY
 chmod 0700 "$TMP";bash -n "$TMP"
-grep -Fq 'env $client_env_words bash ./run_client_parallel_multicore.sh' "$TMP" || { echo "ERROR: generated P5 controller does not invoke multicore client via bash" >&2;exit 2; };grep -Fq 'P5-PARALLEL-COMPLETION-V1' "$TMP" || { echo "ERROR: generated P5 controller lacks parallel completion transform" >&2;exit 2; }
+grep -Fq 'env $client_env_words bash ./run_client_parallel_multicore.sh' "$TMP" || { echo "ERROR: generated P5 controller does not invoke multicore client via bash" >&2;exit 2; };grep -Fq 'P5-PARALLEL-COMPLETION-V1' "$TMP" || { echo "ERROR: generated P5 controller lacks parallel completion transform" >&2;exit 2; };grep -Fq 'clock_sync_parallel.py' "$TMP" || { echo "ERROR: generated P5 controller lacks parallel-aware clock sync" >&2;exit 2; }
 # Execute the outer wrapper only with --help. This forces its embedded transform
 # to patch the real preserved core and fail on any stale anchor, but exits from
 # the core option parser before SSH, NIC setup, DPDK, or traffic.
