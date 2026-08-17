@@ -82,15 +82,26 @@ ALL_CPUS="$(printf '%s\n' "$DPDK_LCORES,$QUIC_CPUS" | tr ',' '\n' | sort -n -u |
 TX_OWNER="${DPA[0]}"
 export P5_PARALLEL_CONNECTIONS="$CONNECTIONS" P5_PARALLEL_LOCAL_PORT_BASE=45000
 TOPO=(--env ENABLE_MULTICORE="$MULTI" --env SERVER_DPDK_LCORES="$DPDK_LCORES" --env CLIENT_DPDK_LCORES="$DPDK_LCORES" --env SERVER_QUIC_CPUS="$QUIC_CPUS" --env CLIENT_QUIC_CPUS="$QUIC_CPUS" --env SERVER_PARTITION_MAP="$PARTITION_MAP" --env CLIENT_PARTITION_MAP="$PARTITION_MAP" --env SERVER_TX_OWNER_LCORE="$TX_OWNER" --env CLIENT_TX_OWNER_LCORE="$TX_OWNER" --env GREENQUIC_TX_OWNER_ALSO_RX=1 --env P5_PARALLEL_CONNECTIONS="$CONNECTIONS" --env P5_PARALLEL_LOCAL_PORT_BASE=45000 --env ENABLE_RECORD=1 --env ENABLE_CSTATE_RECORD=1 --env GQ_MSR_SAMPLE_INTERVAL_MS=6 --env GQ_FREQ_SAMPLE_INTERVAL_MS=1 --env MSQUIC_EXECUTION_PROFILE="$EXEC_PROFILE" --env MSQUIC_QUIC_AFFINITIZE="$AFFINITIZE")
+
+# Diagnostics must never gate QUIC traffic.
+set +e
 python3 "$CPU_BUSY" --cpus "$ALL_CPUS" --interval-ms 20 --output "$OUTPUT_DIR/cpu_busy_server.csv" >"$OUTPUT_DIR/cpu_busy_server_sampler.log" 2>&1 & SERVER_BUSY_PID=$!
-CLIENT_BUSY_PID="$(ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman "rm -f '$REMOTE_BUSY'; nohup python3 '$CPU_BUSY' --cpus '$ALL_CPUS' --interval-ms 20 --output '$REMOTE_BUSY' >/tmp/p5_arch_busy_${CASE_NAME}_$$.log 2>&1 </dev/null & echo \$!")"
-[[ "$CLIENT_BUSY_PID" =~ ^[0-9]+$ ]] || { echo 'ERROR: client busy sampler' >&2; exit 2; }
+CLIENT_BUSY_PID="$(ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman "rm -f '$REMOTE_BUSY'; nohup python3 '$CPU_BUSY' --cpus '$ALL_CPUS' --interval-ms 20 --output '$REMOTE_BUSY' >/tmp/p5_arch_busy_${CASE_NAME}_$$.log 2>&1 </dev/null & echo \$!" 2>/dev/null)"
+set -e
+if [[ ! "$CLIENT_BUSY_PID" =~ ^[0-9]+$ ]]; then
+    echo 'WARN: client CPU-busy sampler unavailable; traffic will continue' >&2
+    CLIENT_BUSY_PID=""
+fi
+
 set +e
 bash "$OFF_PUBLIC" --runs "$RUNS" --downloads "$CONNECTIONS" --gap-seconds 0 --server-cooldown-seconds 5 --between-tests-seconds 5 --mode-order off --seed 20260817 --output-dir "$OUTPUT_DIR" "${TOPO[@]}"
 CONTROLLER_RC=$?
 set -e
 kill -TERM "$SERVER_BUSY_PID" 2>/dev/null||true; wait "$SERVER_BUSY_PID" 2>/dev/null||true; SERVER_BUSY_PID=""
-ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman "kill -TERM '$CLIENT_BUSY_PID' 2>/dev/null||true; for i in \$(seq 1 100); do kill -0 '$CLIENT_BUSY_PID' 2>/dev/null||exit 0; sleep .1; done; exit 0" >/dev/null 2>&1||true; CLIENT_BUSY_PID=""
+if [[ -n "$CLIENT_BUSY_PID" ]]; then
+    ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman "kill -TERM '$CLIENT_BUSY_PID' 2>/dev/null||true; for i in \$(seq 1 100); do kill -0 '$CLIENT_BUSY_PID' 2>/dev/null||exit 0; sleep .1; done; exit 0" >/dev/null 2>&1||true
+    CLIENT_BUSY_PID=""
+fi
 scp -q -o BatchMode=yes -o ConnectTimeout=15 root@tinyman:"$REMOTE_BUSY" "$OUTPUT_DIR/cpu_busy_client.csv" || true
 SUCCESS_LOGS=0
 for f in "$OUTPUT_DIR"/client_rep*_off.log; do [[ -f "$f" ]]||continue; grep -Eq "\\[GreenQUIC-PARALLEL\\] batch=1 complete_us=.* connections=$CONNECTIONS connected=$CONNECTIONS completed=$CONNECTIONS success=1" "$f" && SUCCESS_LOGS=$((SUCCESS_LOGS+1)); done
