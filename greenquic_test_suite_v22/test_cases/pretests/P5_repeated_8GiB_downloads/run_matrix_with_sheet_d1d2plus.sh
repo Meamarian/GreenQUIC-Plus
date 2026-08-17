@@ -15,6 +15,7 @@ done
 [[ -n "$OUT" ]] || { echo 'ERROR: --output-dir is required for D1/D2+ reporting' >&2; exit 2; }
 python3 -m py_compile \
   "$HERE/build_d1_d2plus_report_v3.py" \
+  "$HERE/build_d1_d2plus_report_v4.py" \
   "$HERE/clock_sync.py" \
   "$HERE/rebuild_d1d2_power_timeseries.py" \
   "$HERE/audit_d1d2plus_clock_drift.py"
@@ -38,7 +39,7 @@ report_rc=0
 timeseries_rc=0
 audit_rc=0
 set +e
-python3 "$HERE/build_d1_d2plus_report_v3.py" --input "$OUT"
+python3 "$HERE/build_d1_d2plus_report_v4.py" --input "$OUT"
 report_rc=$?
 python3 "$HERE/rebuild_d1d2_power_timeseries.py" --input "$OUT"
 timeseries_rc=$?
