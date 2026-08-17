@@ -1,37 +1,17 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
-BASE="$HERE/run_matrix_from_idex.sh"
-CLIENT="$HERE/run_client_parallel_multicore.sh"
-AGG="$HERE/aggregate_parallel_goodput.py"
-ACTIVE="$HERE/analyze_p5_parallel_active.py"
-VALIDATOR="$HERE/validate_p5_multicore_matrix.py"
-
-RUNS=2
-CONNECTIONS=4
-OUTPUT_DIR=""
-USER_ARGS=()
-while (($#)); do
-    case "$1" in
-        --runs) RUNS="${2:?}"; shift 2 ;;
-        --connections) CONNECTIONS="${2:?}"; shift 2 ;;
-        --output-dir) OUTPUT_DIR="${2:?}"; shift 2 ;;
-        -h|--help) echo "usage: $0 [--runs N] [--connections N] [--output-dir DIR] [normal P5 matrix options]"; exit 0;;
-        *) USER_ARGS+=("$1"); shift;;
-    esac
-done
-[[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: runs must be positive" >&2; exit 2; }
-[[ "$CONNECTIONS" =~ ^[2-9][0-9]*$ ]] || { echo "ERROR: connections must be >=2" >&2; exit 2; }
-for f in "$BASE" "$CLIENT" "$AGG" "$ACTIVE" "$VALIDATOR"; do [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2; exit 2; }; done
-
+BASE="$HERE/run_matrix_from_idex.sh";CLIENT="$HERE/run_client_parallel_multicore.sh";AGG="$HERE/aggregate_parallel_goodput.py";ACTIVE="$HERE/analyze_p5_parallel_active.py";VALIDATOR="$HERE/validate_p5_multicore_matrix.py"
+RUNS=2;CONNECTIONS=4;OUTPUT_DIR="";USER_ARGS=()
+while (($#)); do case "$1" in --runs) RUNS="${2:?}";shift 2;;--connections) CONNECTIONS="${2:?}";shift 2;;--output-dir) OUTPUT_DIR="${2:?}";shift 2;;-h|--help) echo "usage: $0 [--runs N] [--connections N] [--output-dir DIR] [normal P5 matrix options]";exit 0;;*) USER_ARGS+=("$1");shift;;esac;done
+[[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: runs must be positive" >&2;exit 2; };[[ "$CONNECTIONS" =~ ^[2-9][0-9]*$ ]] || { echo "ERROR: connections must be >=2" >&2;exit 2; }
+for f in "$BASE" "$CLIENT" "$AGG" "$ACTIVE" "$VALIDATOR";do [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2;exit 2; };done
 OUTPUT_DIR="${OUTPUT_DIR:-$HERE/matrix_results/P5_PARALLEL_MC_${CONNECTIONS}c_${RUNS}r_$(date +%Y%m%d_%H%M%S)}"
-ROOT="$HERE/../../../common/files/server_root";mkdir -p "$ROOT"
-for ((i=1;i<=CONNECTIONS;i++)); do f="$ROOT/file_8G_mc$(printf '%02d' "$i").bin";[[ -e "$f" ]] || truncate -s 8589934592 "$f";[[ "$(stat -Lc '%s' "$f")" == 8589934592 ]] || { echo "ERROR: wrong sparse payload size $f" >&2; exit 2; };done
+ROOT="$HERE/../../../common/files/server_root";mkdir -p "$ROOT";for ((i=1;i<=CONNECTIONS;i++));do f="$ROOT/file_8G_mc$(printf '%02d' "$i").bin";[[ -e "$f" ]] || truncate -s 8589934592 "$f";[[ "$(stat -Lc '%s' "$f")" == 8589934592 ]] || { echo "ERROR: wrong sparse payload size $f" >&2;exit 2; };done
 
-# Build a disposable controller. The preserved/base P5 scripts remain untouched.
-# Besides changing the client entry point, change the completion detector from
-# the sequential request=N/N marker to the exact successful parallel-batch marker.
+# Disposable-only transform: preserve base P5 files, switch to the parallel
+# client, and make post-cooldown/aligned-RAPL completion follow the successful
+# parallel batch rather than the sequential request=N/N marker.
 TMP="$(mktemp "$HERE/.parallel_matrix.XXXXXX.sh")";trap 'rm -f "$TMP"' EXIT
 python3 - "$BASE" "$TMP" <<'PY'
 from pathlib import Path
@@ -42,8 +22,7 @@ if count<1:raise SystemExit(f'ERROR: base P5 runner contains no {old} anchor')
 src=src.replace(old,new)
 needle='Path(sys.argv[2]).write_text(src, encoding="utf-8")'
 if src.count(needle)!=1:raise SystemExit(f'ERROR: public P5 wrapper write anchor count={src.count(needle)}, expected 1')
-injection=r'''# P5-PARALLEL-COMPLETION-V1
-parallel_old = r\'''    final_download_pattern="[GreenQUIC-P5] request=${DOWNLOADS}/${DOWNLOADS} complete_us="
+completion_old='''    final_download_pattern="[GreenQUIC-P5] request=${DOWNLOADS}/${DOWNLOADS} complete_us="
     workload_complete=0
     while kill -0 "$client_pipeline_pid" 2>/dev/null; do
         if grep -F "$final_download_pattern" "$client_log" 2>/dev/null | tail -n1 | grep -Fq 'success=1'; then
@@ -52,8 +31,8 @@ parallel_old = r\'''    final_download_pattern="[GreenQUIC-P5] request=${DOWNLOA
         fi
         sleep 0.1
     done
-\'''
-parallel_new = r\'''    final_download_pattern="[GreenQUIC-PARALLEL] batch=1 complete_us="
+'''
+completion_new='''    final_download_pattern="[GreenQUIC-PARALLEL] batch=1 complete_us="
     workload_complete=0
     while kill -0 "$client_pipeline_pid" 2>/dev/null; do
         if grep -E "\\[GreenQUIC-PARALLEL\\] batch=1 complete_us=.* connections=${DOWNLOADS} connected=${DOWNLOADS} completed=${DOWNLOADS} success=1" "$client_log" 2>/dev/null | tail -n1 | grep -q .; then
@@ -62,9 +41,8 @@ parallel_new = r\'''    final_download_pattern="[GreenQUIC-PARALLEL] batch=1 com
         fi
         sleep 0.1
     done
-\'''
-replace_once(parallel_old, parallel_new, "parallel completion detector")
-Path(sys.argv[2]).write_text(src, encoding="utf-8")'''
+'''
+injection=("# P5-PARALLEL-COMPLETION-V1\n"+"parallel_old = "+repr(completion_old)+"\n"+"parallel_new = "+repr(completion_new)+"\n"+'replace_once(parallel_old, parallel_new, "parallel completion detector")\n'+needle)
 src=src.replace(needle,injection,1)
 Path(sys.argv[2]).write_text(src,encoding='utf-8')
 print(f'P5 parallel controller patch: client anchors={count}; parallel completion detector injected')
@@ -74,62 +52,31 @@ grep -Fq 'env $client_env_words bash ./run_client_parallel_multicore.sh' "$TMP" 
 grep -Fq 'P5-PARALLEL-COMPLETION-V1' "$TMP" || { echo "ERROR: generated P5 controller lacks parallel completion transform" >&2;exit 2; }
 
 export P5_PARALLEL_CONNECTIONS="$CONNECTIONS" P5_PARALLEL_LOCAL_PORT_BASE=45000
-TOPOLOGY_ENV=(
-    --env ENABLE_MULTICORE=1
-    --env SERVER_DPDK_LCORES=19,20
-    --env CLIENT_DPDK_LCORES=19,20
-    --env SERVER_QUIC_CPUS=21,22,23,24
-    --env CLIENT_QUIC_CPUS=21,22,23,24
-    --env SERVER_PARTITION_MAP=0:19,1:19,2:20,3:20
-    --env CLIENT_PARTITION_MAP=0:19,1:19,2:20,3:20
-    --env SERVER_TX_OWNER_LCORE=19
-    --env CLIENT_TX_OWNER_LCORE=19
-    --env GREENQUIC_TX_OWNER_ALSO_RX=1
-    --env P5_PARALLEL_CONNECTIONS="$CONNECTIONS"
-    --env P5_PARALLEL_LOCAL_PORT_BASE=45000
-    --env ENABLE_RECORD=1
-    --env ENABLE_CSTATE_RECORD=1
-    --env GQ_MSR_SAMPLE_INTERVAL_MS=6
-    --env GQ_FREQ_SAMPLE_INTERVAL_MS=1
-    --env MSQUIC_EXECUTION_PROFILE=max_throughput
-)
-
-echo "======================================================================"
-echo "P5 PARALLEL MULTICORE AGGREGATE-GOODPUT MATRIX"
-echo "modes=OFF,BASIC,PLUS runs=$RUNS connections=$CONNECTIONS payload=8GiB/connection"
-echo "DPDK=19,20 QUIC=21-24 RXQ=2 TXQ=2 local_ports=45000..$((44999+CONNECTIONS))"
-echo "recording: RAPL=6ms frequency=1ms C-state=19,20 profile=max_throughput"
-echo "active metrics: exact parallel batch start->complete; RAPL prorated at sample boundaries; frequency time-weighted"
-echo "======================================================================"
-
+TOPOLOGY_ENV=(--env ENABLE_MULTICORE=1 --env SERVER_DPDK_LCORES=19,20 --env CLIENT_DPDK_LCORES=19,20 --env SERVER_QUIC_CPUS=21,22,23,24 --env CLIENT_QUIC_CPUS=21,22,23,24 --env SERVER_PARTITION_MAP=0:19,1:19,2:20,3:20 --env CLIENT_PARTITION_MAP=0:19,1:19,2:20,3:20 --env SERVER_TX_OWNER_LCORE=19 --env CLIENT_TX_OWNER_LCORE=19 --env GREENQUIC_TX_OWNER_ALSO_RX=1 --env P5_PARALLEL_CONNECTIONS="$CONNECTIONS" --env P5_PARALLEL_LOCAL_PORT_BASE=45000 --env ENABLE_RECORD=1 --env ENABLE_CSTATE_RECORD=1 --env GQ_MSR_SAMPLE_INTERVAL_MS=6 --env GQ_FREQ_SAMPLE_INTERVAL_MS=1 --env MSQUIC_EXECUTION_PROFILE=max_throughput)
+echo "======================================================================";echo "P5 PARALLEL MULTICORE AGGREGATE-GOODPUT MATRIX";echo "modes=OFF,BASIC,PLUS runs=$RUNS connections=$CONNECTIONS payload=8GiB/connection";echo "DPDK=19,20 QUIC=21-24 RXQ=2 TXQ=2 local_ports=45000..$((44999+CONNECTIONS))";echo "recording: RAPL=6ms frequency=1ms C-state=19,20 profile=max_throughput";echo "active metrics: exact parallel batch start->complete; RAPL boundary-prorated; frequency time-weighted";echo "======================================================================"
 bash "$TMP" --runs "$RUNS" --downloads "$CONNECTIONS" --gap-seconds 0 --server-cooldown-seconds 5 --between-tests-seconds 5 --mode-order balanced --seed 20260817 --output-dir "$OUTPUT_DIR" "${TOPOLOGY_ENV[@]}" "${USER_ARGS[@]}"
-
-[[ -d "$OUTPUT_DIR" ]] || { echo "ERROR: result directory missing: $OUTPUT_DIR" >&2; exit 1; }
+[[ -d "$OUTPUT_DIR" ]] || { echo "ERROR: result directory missing: $OUTPUT_DIR" >&2;exit 1; }
 python3 "$AGG" --matrix "$OUTPUT_DIR" --expected-runs "$RUNS" --connections "$CONNECTIONS"
 python3 "$ACTIVE" --matrix "$OUTPUT_DIR" --runs "$RUNS" --connections "$CONNECTIONS"
 python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS"
-
 python3 - "$OUTPUT_DIR" "$RUNS" <<'PY'
 from pathlib import Path
 import json,re,sys
-root=Path(sys.argv[1]);runs=int(sys.argv[2]);modes=('off','basic','plus')
-pat=re.compile(r'\[GreenQUIC-MC\] QUEUE_STATS[^\n]*rxq0=(\d+)[^\n]*rxq1=(\d+)[^\n]*txq0=(\d+)[^\n]*txq1=(\d+)[^\n]*tx_hash_fallback=(\d+)')
-problems=[];records=[]
+root=Path(sys.argv[1]);runs=int(sys.argv[2]);modes=('off','basic','plus');pat=re.compile(r'\[GreenQUIC-MC\] QUEUE_STATS[^\n]*rxq0=(\d+)[^\n]*rxq1=(\d+)[^\n]*txq0=(\d+)[^\n]*txq1=(\d+)[^\n]*tx_hash_fallback=(\d+)');problems=[];records=[]
 for role in ('server','client'):
-  for rep in range(1,runs+1):
-    for mode in modes:
-      p=root/f'{role}_rep{rep:02d}_{mode}.log'
-      if not p.is_file():problems.append(f'{role} rep{rep:02d} {mode}: exact controller log missing: {p.name}');continue
-      rows=pat.findall(p.read_text(errors='replace'))
-      if not rows:problems.append(f'{role} rep{rep:02d} {mode}: queue stats missing in {p.name}');continue
-      rx0,rx1,tx0,tx1,fallback=map(int,rows[-1]);records.append({'role':role,'repetition':rep,'mode':mode,'rxq0':rx0,'rxq1':rx1,'txq0':tx0,'txq1':tx1,'tx_hash_fallback':fallback,'log':str(p)})
-      if role=='server' and (tx0==0 or tx1==0):problems.append(f'{role} rep{rep:02d} {mode}: TX queues not both active ({tx0},{tx1})')
-      if role=='client' and (rx0==0 or rx1==0):problems.append(f'{role} rep{rep:02d} {mode}: RSS RX queues not both active ({rx0},{rx1})')
-out=root/'parallel_queue_activity.json';out.write_text(json.dumps({'schema':'greenquic-p5-parallel-queue-activity-v1','records':records,'errors':problems,'status':'PASS' if not problems else 'FAIL'},indent=2)+'\n')
+ for rep in range(1,runs+1):
+  for mode in modes:
+   p=root/f'{role}_rep{rep:02d}_{mode}.log'
+   if not p.is_file():problems.append(f'{role} rep{rep:02d} {mode}: exact controller log missing: {p.name}');continue
+   matches=pat.findall(p.read_text(errors='replace'))
+   if not matches:problems.append(f'{role} rep{rep:02d} {mode}: queue stats missing in {p.name}');continue
+   rx0,rx1,tx0,tx1,fallback=map(int,matches[-1]);records.append({'role':role,'repetition':rep,'mode':mode,'rxq0':rx0,'rxq1':rx1,'txq0':tx0,'txq1':tx1,'tx_hash_fallback':fallback,'log':str(p)})
+   if role=='server' and (tx0==0 or tx1==0):problems.append(f'{role} rep{rep:02d} {mode}: TX queues not both active ({tx0},{tx1})')
+   if role=='client' and (rx0==0 or rx1==0):problems.append(f'{role} rep{rep:02d} {mode}: RSS RX queues not both active ({rx0},{rx1})')
+(root/'parallel_queue_activity.json').write_text(json.dumps({'schema':'greenquic-p5-parallel-queue-activity-v1','records':records,'errors':problems,'status':'PASS' if not problems else 'FAIL'},indent=2)+'\n')
 if problems:raise SystemExit('ERROR: multicore queue-use validation failed:\n  '+'\n  '.join(problems))
 print('P5 PARALLEL QUEUE-USE VALIDATION PASS: server TXQ0/TXQ1 and client RXQ0/RXQ1 active in every run/mode')
 PY
-
 cat > "$OUTPUT_DIR/PARALLEL_MULTICORE_CONFIG.txt" <<EOF
 branch=performance2/p5-multicore
 workload=one_process_multiple_simultaneous_quic_connections
@@ -152,9 +99,4 @@ active_rapl=sample_overlap_prorated
 active_frequency=midpoint_cell_time_weighted_cpu19_cpu20
 mode_isolation=OFF_no_policy_BASIC_physical_only_PLUS_physical_plus_quic_hints
 EOF
-
-echo "P5 PARALLEL MULTICORE MATRIX PASS"
-echo "RESULTS: $OUTPUT_DIR"
-echo "GOODPUT+VARIANCE: $OUTPUT_DIR/parallel_tables/parallel_goodput_summary.csv"
-echo "ACTIVE ENERGY+FREQUENCY: $OUTPUT_DIR/parallel_tables/parallel_active_metrics.csv"
-echo "ACTIVE SUMMARY+VARIANCE: $OUTPUT_DIR/parallel_tables/parallel_active_summary.csv"
+echo "P5 PARALLEL MULTICORE MATRIX PASS";echo "RESULTS: $OUTPUT_DIR";echo "GOODPUT+VARIANCE: $OUTPUT_DIR/parallel_tables/parallel_goodput_summary.csv";echo "ACTIVE ENERGY+FREQUENCY: $OUTPUT_DIR/parallel_tables/parallel_active_metrics.csv";echo "ACTIVE SUMMARY+VARIANCE: $OUTPUT_DIR/parallel_tables/parallel_active_summary.csv"
