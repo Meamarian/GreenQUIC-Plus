@@ -15,24 +15,32 @@ tiny(){ local q; printf -v q '%q' "$1"; retry ssh "${SSH[@]}" idex "ssh -o Batch
 [[ "$RUNS" =~ ^[1-9][0-9]*$ && "$CONNS" =~ ^[2-9][0-9]*$ ]] || { echo 'ERROR invalid runs/connections' >&2; exit 2; }
 if [[ "${1:-}" == --detach ]]; then
   nohup caffeinate -dimsu env P5_ARCH_RUNS="$RUNS" P5_ARCH_CONNECTIONS="$CONNS" P5_ARCH_TAG="$TAG" bash "$0" --foreground >"$LOCAL_MAC" 2>&1 </dev/null & pid=$!; disown "$pid" 2>/dev/null || true
-  echo "STARTED P5 ARCH BOTTLENECK SWEEP PID=$pid"; echo "TAG=$TAG"; echo "MAC_LOG=$LOCAL_MAC"; echo "REMOTE_LIVE_LOG=$LOCAL_LIVE"; echo "FINAL_TERMINAL_LOG=$LOCAL_TERM"; echo "FULL_RESULTS=$LOCAL_FULL"; echo "SHARE_RESULTS=$LOCAL_SHARE"; echo '16 architecture cases A-P; case/diagnostic failures do not stop later cases.'; exit 0
+  echo "STARTED P5 ARCH BOTTLENECK SWEEP PID=$pid"; echo "TAG=$TAG"; echo "MAC_LOG=$LOCAL_MAC"; echo "REMOTE_LIVE_LOG=$LOCAL_LIVE"; echo "FINAL_TERMINAL_LOG=$LOCAL_TERM"; echo "FULL_RESULTS=$LOCAL_FULL"; echo "SHARE_RESULTS=$LOCAL_SHARE"; echo '16 architecture cases A-P; only QUIC traffic failure fails a case; diagnostic/postprocess failures are preserved and later cases continue.'; exit 0
 fi
 [[ "${1:-}" == --foreground ]] && shift || true; [[ $# -eq 0 ]] || { echo "ERROR unknown args $*" >&2; exit 2; }
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"; REPO="$(git -C "$HERE" rev-parse --show-toplevel)"; SHA="$(git -C "$REPO" rev-parse HEAD)"; CUR="$(git -C "$REPO" branch --show-current)"
 [[ "$CUR" == "$BRANCH" ]] || { echo "ERROR branch=$CUR expected=$BRANCH" >&2; exit 2; }
 [[ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ]] || { echo 'ERROR tracked local changes present' >&2; exit 2; }
 BASE_CLEAN="$HERE/safe_cleanup_greenquic_processes.py"; BN_CLEAN="$HERE/safe_cleanup_p5_bottleneck_processes.py"; [[ -f "$BASE_CLEAN" && -f "$BN_CLEAN" ]] || { echo 'ERROR cleanup helper missing' >&2; exit 2; }
-# FIRST REMOTE ACTION: safe stale-process cleanup on both endpoints.
+
+# FIRST REMOTE ACTION: ancestry-safe stale-process cleanup on both endpoints.
 CDIR="/tmp/gq_arch_clean_${TAG}"; log 'installing safe cleaner on IDEX + Tinyman'; retry ssh "${SSH[@]}" idex "mkdir -p '$CDIR'"; retry scp "${SSH[@]}" "$BASE_CLEAN" "$BN_CLEAN" "idex:$CDIR/"; retry ssh "${SSH[@]}" idex "ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman 'mkdir -p $CDIR'; scp -q '$CDIR/'*.py root@tinyman:'$CDIR/'"
-retry ssh "${SSH[@]}" idex "python3 '$CDIR/safe_cleanup_p5_bottleneck_processes.py'" || true; tiny "python3 '$CDIR/safe_cleanup_p5_bottleneck_processes.py'" || true
-log 'initial safe cleanup complete'
+retry ssh "${SSH[@]}" idex "python3 '$CDIR/safe_cleanup_p5_bottleneck_processes.py'"
+tiny "python3 '$CDIR/safe_cleanup_p5_bottleneck_processes.py'"
+retry ssh "${SSH[@]}" idex "python3 '$CDIR/safe_cleanup_p5_bottleneck_processes.py' --check"
+tiny "python3 '$CDIR/safe_cleanup_p5_bottleneck_processes.py' --check"
+log 'initial safe cleanup PASS on IDEX + Tinyman'
+
 # Exact Mac commit -> IDEX -> Tinyman.
 BUNDLE="$(mktemp "${TMPDIR:-/tmp}/gq_arch.XXXXXX.bundle")"; RB="/tmp/gq_arch_${TAG}.bundle"; trap 'rm -f "$BUNDLE"' EXIT
 git -C "$REPO" bundle create "$BUNDLE" "$BRANCH"; retry scp "${SSH[@]}" "$BUNDLE" "idex:$RB"; retry ssh "${SSH[@]}" idex "cd /root/mohsen && git reset --hard && git fetch '$RB' '$BRANCH' && git checkout -B '$BRANCH' FETCH_HEAD && git reset --hard FETCH_HEAD"; retry ssh "${SSH[@]}" idex "scp -q '$RB' root@tinyman:'$RB'"; tiny "cd /root/mohsen && git reset --hard && git fetch '$RB' '$BRANCH' && git checkout -B '$BRANCH' FETCH_HEAD && git reset --hard FETCH_HEAD"
 ISHA="$(retry ssh "${SSH[@]}" idex 'cd /root/mohsen && git rev-parse HEAD')"; TSHA="$(tiny 'cd /root/mohsen && git rev-parse HEAD')"; [[ "$ISHA" == "$SHA" && "$TSHA" == "$SHA" ]] || { echo "ERROR SHA local=$SHA idex=$ISHA tiny=$TSHA" >&2; exit 2; }; log "synced both endpoints @ $SHA"
-# Traffic-free preflight. Includes exact runtime patch anchor and temporary-controller transform validation.
-retry ssh "${SSH[@]}" idex "cd '$P5' && for f in ./run_p5_arch_bottleneck_sweep.sh ./run_p5_arch_case_diag.sh ./run_p5_arch_off_case.sh ./build_p5_arch_profile.sh; do bash -n \$f || exit \$?; done && python3 -m py_compile ./enable_p5_arch_runtime_config.py ./thread_topology_sampler.py ./summarize_p5_arch_sweep.py ./cpu_busy_sampler.py ./analyze_p5_bottleneck_case.py ./quic_cpu_activity_sampler.py && python3 ./enable_p5_arch_runtime_config.py --self-test && bash ./run_p5_arch_off_case.sh --self-test"
-COUNT="$(retry ssh "${SSH[@]}" idex "cd '$P5' && grep -Ec '^run_case [A-P]_' ./run_p5_arch_bottleneck_sweep.sh")"; [[ "$COUNT" == 16 ]] || { echo "ERROR expected 16 A-P cases, got $COUNT" >&2; exit 2; }; log 'architecture sweep static preflight PASS: 16 cases'
+
+# Traffic-free preflight. Validate the exact P5-local runtime helper on a temp copy,
+# including AFFINITIZE insertion and the OFF all-CPU max-frequency transform.
+retry ssh "${SSH[@]}" idex "cd '$P5' && for f in ./run_p5_arch_bottleneck_sweep.sh ./run_p5_arch_case_diag.sh ./run_p5_arch_off_case.sh ./build_p5_arch_profile.sh; do bash -n \$f || exit \$?; done && python3 -m py_compile ./enable_p5_arch_runtime_config.py ./thread_topology_sampler.py ./summarize_p5_arch_sweep.py ./cpu_busy_sampler.py ./analyze_p5_bottleneck_case.py ./quic_cpu_activity_sampler.py && python3 ./enable_p5_arch_runtime_config.py --self-test && t=\$(mktemp) && cp ./gq_common_p5.sh \$t && python3 ./enable_p5_arch_runtime_config.py \$t && grep -Fq GREENQUIC-P5-ARCH-AFFINITIZE-RUNTIME-V1 \$t && grep -Fq GREENQUIC-P5-ARCH-OFF-ALL-CPU-MAX-V1 \$t && rm -f \$t && bash ./run_p5_arch_off_case.sh --self-test"
+COUNT="$(retry ssh "${SSH[@]}" idex "cd '$P5' && grep -Ec '^run_case [A-P]_' ./run_p5_arch_bottleneck_sweep.sh")"; [[ "$COUNT" == 16 ]] || { echo "ERROR expected 16 A-P cases, got $COUNT" >&2; exit 2; }; log 'architecture sweep static preflight PASS: 16 cases + exact runtime overlay'
+
 TMP="$(mktemp "${TMPDIR:-/tmp}/gq_arch_remote.XXXXXX.sh")"
 cat >"$TMP" <<'REMOTE'
 #!/usr/bin/env bash
