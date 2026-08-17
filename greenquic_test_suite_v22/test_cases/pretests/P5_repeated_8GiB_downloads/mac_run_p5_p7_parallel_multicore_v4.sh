@@ -15,6 +15,7 @@ REMOTE_LOG="/root/P5_P7_MC_${TAG}.log"
 REMOTE_STATE="/tmp/P5_P7_MC_${TAG}.state"
 REMOTE_SUMMARY="/tmp/P5_P7_MC_${TAG}_goodput_all_cases.tsv"
 LOCAL_LOG="$HOME/Downloads/P5_P7_MC_${TAG}.mac.log"
+LOCAL_REMOTE_LOG="$HOME/Downloads/P5_P7_MC_${TAG}.remote-live.log"
 LOCAL_EXPORT="$HOME/Downloads/P5_P7_MC_EXPORT_${TAG}"
 SSH=(-o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=3)
 
@@ -31,6 +32,7 @@ if [[ "${1:-}" == "--detach" ]]; then
     echo "STARTED P5+P7 PARALLEL MULTICORE V4 PID=$pid"
     echo "TAG=$TAG"
     echo "MAC_LOG=$LOCAL_LOG"
+    echo "REMOTE_LIVE_LOG=$LOCAL_REMOTE_LOG"
     echo "FINAL_EXPORT=$LOCAL_EXPORT"
     echo "The long experiment runs detached on idex; Mac->idex SSH loss cannot kill it after remote launch."
     exit 0
@@ -108,8 +110,16 @@ touch "$STATE.DONE"
 REMOTE
 bash -n "$TMP"
 retry scp "${SSH[@]}" "$TMP" "idex:$REMOTE_RUNNER"
-retry ssh "${SSH[@]}" idex "chmod +x '$REMOTE_RUNNER'; nohup setsid bash '$REMOTE_RUNNER' '$P5' '$P7' '$P5_MATRIX' '$P7_MATRIX' '$RUNS' '$CONNECTIONS' '$REMOTE_STATE' '$REMOTE_SUMMARY' >'$REMOTE_LOG' 2>&1 </dev/null & echo REMOTE_PID=\$!"
+LAUNCH_OUT="$(retry ssh "${SSH[@]}" idex "chmod +x '$REMOTE_RUNNER'; nohup setsid bash '$REMOTE_RUNNER' '$P5' '$P7' '$P5_MATRIX' '$P7_MATRIX' '$RUNS' '$CONNECTIONS' '$REMOTE_STATE' '$REMOTE_SUMMARY' >'$REMOTE_LOG' 2>&1 </dev/null & pid=\$!; echo \$pid > '$REMOTE_STATE.PID'; echo REMOTE_PID=\$pid")"
+echo "$LAUNCH_OUT"
+REMOTE_PID="$(printf '%s\n' "$LAUNCH_OUT" | sed -n 's/^REMOTE_PID=//p' | tail -1)"
+[[ "$REMOTE_PID" =~ ^[0-9]+$ ]] || { echo "ERROR: could not parse remote PID from: $LAUNCH_OUT" >&2; exit 2; }
 log "detached P5+P7 multicore suite started on idex"
+
+# Stream the real remote experiment log to the Mac continuously. If the SSH
+# connection drops, resume from the next unseen line; the detached remote
+# experiment itself is unaffected.
+: > "$LOCAL_REMOTE_LOG"
 while true; do
     if ssh "${SSH[@]}" idex "test -f '$REMOTE_STATE.DONE'" >/dev/null 2>&1; then break; fi
     if ssh "${SSH[@]}" idex "test -f '$REMOTE_STATE.FAIL'" >/dev/null 2>&1; then
@@ -117,9 +127,29 @@ while true; do
         ssh "${SSH[@]}" idex "cat '$REMOTE_STATE.FAIL'; tail -160 '$REMOTE_LOG'" >&2 || true
         exit 1
     fi
-    log "waiting; temporary Mac->idex SSH loss is harmless"
-    sleep 60
+
+    LOCAL_LINES="$(wc -l < "$LOCAL_REMOTE_LOG" | tr -d '[:space:]')"
+    START_LINE=$((LOCAL_LINES + 1))
+    log "LIVE REMOTE LOG (resume line $START_LINE): $REMOTE_LOG"
+    set +e
+    ssh "${SSH[@]}" idex "touch '$REMOTE_LOG'; tail -n +$START_LINE -F --pid='$REMOTE_PID' '$REMOTE_LOG'" | tee -a "$LOCAL_REMOTE_LOG"
+    STREAM_RC=${PIPESTATUS[0]}
+    set -e
+
+    if (( STREAM_RC == 255 )); then
+        log "live-log SSH lost; remote run is still detached; reconnecting in 5 s"
+        sleep 5
+    elif (( STREAM_RC != 0 )); then
+        log "live-log stream exited rc=$STREAM_RC; rechecking remote state"
+        sleep 2
+    fi
 done
+
+# Catch any final lines written between tail exit and DONE detection.
+LOCAL_LINES="$(wc -l < "$LOCAL_REMOTE_LOG" | tr -d '[:space:]')"
+START_LINE=$((LOCAL_LINES + 1))
+ssh "${SSH[@]}" idex "sed -n '${START_LINE},\$p' '$REMOTE_LOG'" 2>/dev/null | tee -a "$LOCAL_REMOTE_LOG" || true
+
 mkdir -p "$LOCAL_EXPORT/P5" "$LOCAL_EXPORT/P7"
 retry scp "${SSH[@]}" "idex:$REMOTE_SUMMARY" "$LOCAL_EXPORT/goodput_all_cases.tsv"
 for rel in parallel_tables/parallel_goodput_summary.csv parallel_tables/parallel_goodput_all_runs.csv parallel_tables/parallel_active_summary.csv parallel_queue_activity.json PARALLEL_MULTICORE_CONFIG.txt; do retry scp "${SSH[@]}" "idex:$P5_MATRIX/$rel" "$LOCAL_EXPORT/P5/$(basename "$rel")"; done
