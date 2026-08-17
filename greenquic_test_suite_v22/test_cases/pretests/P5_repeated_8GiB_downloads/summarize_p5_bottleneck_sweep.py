@@ -17,7 +17,8 @@ def main() -> int:
     args = ap.parse_args()
     root = args.root.resolve()
     rows = []
-    for case_dir in sorted(p for p in root.iterdir() if p.is_dir() and p.name[:2] in {f'{c}_' for c in 'ABCDEFGHIJ'}):
+    valid_prefixes = {f'{c}_' for c in 'ABCDEFGHIJKL'}
+    for case_dir in sorted(p for p in root.iterdir() if p.is_dir() and p.name[:2] in valid_prefixes):
         summary = case_dir / 'bottleneck_tables' / 'case_summary.json'
         cfg = case_dir / 'BOTTLENECK_CASE_CONFIG.env'
         if not summary.is_file():
@@ -83,7 +84,7 @@ def main() -> int:
     txt = []
     txt.append('P5 BOTTLENECK SWEEP SUMMARY')
     txt.append('All cases: OFF mode, 4 simultaneous 8GiB QUIC connections, identical run count.')
-    txt.append('A->B isolates DPDK core-count scaling. C-J are controlled design perturbations.')
+    txt.append('A->B isolates DPDK core-count scaling. C-L are controlled design perturbations.')
     txt.append('')
     txt.append('case                         goodput    SD       vs1c      vs2c      power     DPDK engaged  effect')
     for r in rows:
