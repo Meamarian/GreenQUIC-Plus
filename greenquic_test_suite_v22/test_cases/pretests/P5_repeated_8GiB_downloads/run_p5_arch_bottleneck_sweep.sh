@@ -97,7 +97,7 @@ J  2 DPDK / 4 QUIC, all QUIC partitions mapped to DPDK19 -- serialization stress
 K  2 DPDK / 4 QUIC, grouped map 0,1->19 and 2,3->20
 L  2 DPDK / 4 QUIC, classic MP TX-ring synchronization
 M  2 DPDK / 4 QUIC, RTS TX-ring synchronization
-N  2 DPDK / 4 QUIC, sharded per-producer handoff -- direct structural comparison with B
+N  1 DPDK / 4 QUIC, sharded per-producer SPSC handoff -- safe single-consumer comparison with F
 O  2 DPDK / 4 QUIC, UDP-segmentation/offload capability path (fails closed if unsupported)
 P  rebuild + repeat B at end -- drift/thermal control
 
@@ -127,7 +127,7 @@ BRC_RTS=0; build_profile ring_rts P5_SUPER_RING_SYNC=rts || BRC_RTS=$?
 run_case M_2D_4Q_ring_rts ring_rts "$BRC_RTS" 19,20 21,22,23,24 balanced max_throughput 1
 
 BRC_SH=0; build_profile sharded P5_P2_TX_HANDOFF=sharded P5_P2_SHARD_ACTIVE_MASK=1 || BRC_SH=$?
-run_case N_2D_4Q_sharded sharded "$BRC_SH" 19,20 21,22,23,24 balanced max_throughput 1
+run_case N_1D_4Q_sharded sharded "$BRC_SH" 19 21,22,23,24 balanced max_throughput 1
 
 BRC_USO=0; build_profile udpseg P5_P2_UDP_SEG=1 P5_P2_UDP_SEG_MAX=4 || BRC_USO=$?
 run_case O_2D_4Q_udpseg udpseg "$BRC_USO" 19,20 21,22,23,24 balanced max_throughput 1
