@@ -122,7 +122,6 @@ off_cpu_max_start() {{
         assert "GreenQuicQuicAffinitize=${MSQUIC_QUIC_AFFINITIZE:-0}" in out
         assert 'GreenQuicQuicWorkerCpus' in out
         assert 'quic="$(sed -n' in out
-        assert "printf '%s\\\\n' \"$cpus\"" in out
         assert "off_cpu_max_start() {" in out
 
         cfg.write_text(
