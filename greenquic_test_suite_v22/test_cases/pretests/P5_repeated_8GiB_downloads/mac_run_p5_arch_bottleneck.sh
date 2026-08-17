@@ -31,6 +31,16 @@ retry ssh "${SSH[@]}" idex "python3 '$CDIR/safe_cleanup_p5_bottleneck_processes.
 tiny "python3 '$CDIR/safe_cleanup_p5_bottleneck_processes.py' --check"
 log 'initial safe cleanup PASS on IDEX + Tinyman'
 
+# Install perf before any build/preflight/traffic. Debian trixie provides the
+# perf command through the linux-perf package. Retry transient apt failures,
+# then fail closed if perf is still unavailable.
+PERF_INSTALL='set -Eeuo pipefail; export DEBIAN_FRONTEND=noninteractive; if ! command -v perf >/dev/null 2>&1; then for attempt in 1 2 3; do echo "[P5-ARCH-PERF] host=$(hostname -s) apt_attempt=$attempt"; if apt-get update && apt-get install -y --no-install-recommends linux-perf; then break; fi; if [ "$attempt" -ge 3 ]; then echo "ERROR: failed to install linux-perf after 3 attempts" >&2; exit 2; fi; sleep 5; done; fi; command -v perf >/dev/null 2>&1 || { echo "ERROR: perf command unavailable after linux-perf install" >&2; exit 2; }; echo "[P5-ARCH-PERF] host=$(hostname -s) path=$(command -v perf) version=$(perf --version)"'
+log 'ensuring linux-perf is installed on IDEX'
+retry ssh "${SSH[@]}" idex "$PERF_INSTALL"
+log 'ensuring linux-perf is installed on Tinyman'
+tiny "$PERF_INSTALL"
+log 'linux-perf PASS on IDEX + Tinyman'
+
 # Exact Mac commit -> IDEX -> Tinyman.
 BUNDLE="$(mktemp "${TMPDIR:-/tmp}/gq_arch.XXXXXX.bundle")"; RB="/tmp/gq_arch_${TAG}.bundle"; trap 'rm -f "$BUNDLE"' EXIT
 git -C "$REPO" bundle create "$BUNDLE" "$BRANCH"; retry scp "${SSH[@]}" "$BUNDLE" "idex:$RB"; retry ssh "${SSH[@]}" idex "cd /root/mohsen && git reset --hard && git fetch '$RB' '$BRANCH' && git checkout -B '$BRANCH' FETCH_HEAD && git reset --hard FETCH_HEAD"; retry ssh "${SSH[@]}" idex "scp -q '$RB' root@tinyman:'$RB'"; tiny "cd /root/mohsen && git reset --hard && git fetch '$RB' '$BRANCH' && git checkout -B '$BRANCH' FETCH_HEAD && git reset --hard FETCH_HEAD"
