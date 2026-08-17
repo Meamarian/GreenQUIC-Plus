@@ -17,10 +17,10 @@ STATUS="$ROOT/CASE_STATUS.tsv"
 printf 'case\tbuild_profile\tbuild_rc\ttraffic_rc\tcontroller_rc\tanalysis_rc\n' >"$STATUS"
 
 # P5 already contains parser/runtime support for GreenQuicQuicAffinitize, but its
-# local dpdk.ini writer omitted the key. Enable the key in the disposable node
-# checkout only; the patch is idempotent and is applied on both endpoints.
-python3 "$PATCH" "$HERE/../../../common/bin/gq_common.sh"
-ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman "cd '$HERE' && python3 ./enable_p5_arch_runtime_config.py ../../../common/bin/gq_common.sh"
+# P5-local dpdk.ini writer omitted the key. Patch the ACTUAL helper sourced by
+# run_role_p5.sh on both disposable node checkouts. This is idempotent.
+python3 "$PATCH" "$HERE/gq_common_p5.sh"
+ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman "cd '$HERE' && python3 ./enable_p5_arch_runtime_config.py ./gq_common_p5.sh"
 
 cleanup_between(){
   echo '--- safe cleanup IDEX ---'; python3 "$CLEAN" || true
