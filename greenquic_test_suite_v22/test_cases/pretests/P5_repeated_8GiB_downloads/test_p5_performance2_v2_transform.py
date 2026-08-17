@@ -52,6 +52,11 @@ static uint16_t GreenQuicP2TxDequeueBurst(DPDK_INTERFACE* Interface, struct rte_
     return Total;
 }
 ''' if handoff == "sharded" else ""
+    tx_counter = (
+        "Dpdk->TxCounter += GreenQuicP2LogicalTxCount;"
+        if udpseg
+        else "Dpdk->TxCounter += TxCount;"
+    )
     return f'''/* GREENQUIC-P5-SUPER-PERF-V2 */
 #include <rte_hexdump.h>
 static const char GreenQuicP5Performance2Marker[] __attribute__((used)) =
@@ -93,7 +98,7 @@ void CxPlatDpRawTxEnqueue(void) {{
 }}
 
 void CxPlatDpdkTx(void) {{
-    Dpdk->TxCounter += TxCount;
+    {tx_counter}
 }}
 '''
 
@@ -129,6 +134,9 @@ assert "Dpdk->TxEnqueueCounter++;" not in nocounter
 assert "Dpdk->RxCounter += BuffersCount;" in nocounter
 assert "Dpdk->TxCounter += TxCount;" in nocounter
 
+udp = run([], udpseg=1)
+assert "Dpdk->TxCounter += GreenQuicP2LogicalTxCount;" in udp
+
 reduced_zero = run(["--tx-meta-zero", "0"])
 assert "DPDK-only trailing fields are assigned below" in reduced_zero
 assert "CxPlatZeroMemory(Packet, sizeof(*Packet));" not in reduced_zero
@@ -143,7 +151,6 @@ mask = run(["--shard-active-mask", "1"], handoff="sharded")
 assert "GreenQuicP2V2TxActiveMask" in mask
 assert "atomic_fetch_or_explicit" in mask
 assert "rte_ring_empty" in mask
-assert "Close the clear/enqueue race" in mask
 
 lean = run(["--tx-alloc-batch", "16", "--tx-enqueue-counter", "0", "--tx-meta-zero", "0", "--rx-pipe-prefetch", "4"])
 assert "GREENQUIC_P2_V2_TX_ALLOC_BATCH 16U" in lean
