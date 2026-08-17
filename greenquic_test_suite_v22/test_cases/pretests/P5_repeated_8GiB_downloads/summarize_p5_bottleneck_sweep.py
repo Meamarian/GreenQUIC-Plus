@@ -29,7 +29,7 @@ def main() -> int:
     args = ap.parse_args()
     root = args.root.resolve()
     rows = []
-    valid_prefixes = {f'{c}_' for c in 'ABCDEFGHIJKL'}
+    valid_prefixes = {f'{c}_' for c in 'ABCDEFGHIJKLMNOP'}
     for case_dir in sorted(p for p in root.iterdir() if p.is_dir() and p.name[:2] in valid_prefixes):
         summary = case_dir / 'bottleneck_tables' / 'case_summary.json'
         cfg = case_dir / 'BOTTLENECK_CASE_CONFIG.env'
@@ -112,7 +112,7 @@ def main() -> int:
     txt = []
     txt.append('P5 BOTTLENECK SWEEP SUMMARY')
     txt.append('All cases: OFF mode, 4 simultaneous 8GiB QUIC connections, identical run count.')
-    txt.append('A->B isolates DPDK core-count scaling. C,D compare to A; E-L compare to B.')
+    txt.append('A->B isolates DPDK core scaling; every other case changes one controlled build dimension.')
     txt.append('')
     txt.append('case                         goodput    SD       reference          delta-ref   power     DPDK engaged  effect')
     for r in rows:
@@ -137,6 +137,7 @@ def main() -> int:
             txt.append('Interpretation flag: the second DPDK lcore reduced goodput materially.')
     if ranked:
         txt.append(f"Best observed case: {ranked[0]['case']} = {float(ranked[0]['mean_goodput_gbps']):.6f} Gbit/s")
+
     positives = [r for r in passed if r.get('effect_class') == 'material positive']
     if positives:
         txt.append('Material positive controlled perturbations: ' + ', '.join(
@@ -144,8 +145,27 @@ def main() -> int:
         ))
     else:
         txt.append('Material positive controlled perturbations: none at the 3% threshold.')
+
+    groups = {
+        'producer-ring synchronization': ('C_1c_ring_mp', 'D_1c_ring_rts'),
+        'TX allocation/metadata': ('E_2c_txalloc1', 'F_2c_txalloc32', 'M_2c_txmetazero0'),
+        'RX hot path': ('G_2c_rxpipe0', 'H_2c_rxpipe4', 'L_2c_rxburst64'),
+        'TX consumer batching': ('I_2c_txburst32', 'J_2c_txburst64', 'K_2c_drain4'),
+        'OFF bookkeeping': ('N_2c_skipoffcount', 'O_2c_debug0'),
+        'ring capacity': ('P_2c_ring8192',),
+    }
     txt.append('')
-    txt.append('CPU busy columns and per-case lcore_activity.csv must be inspected before assigning causality.')
+    txt.append('Controlled-group flags (>=3% gain against each case reference):')
+    for label, names in groups.items():
+        hits = [by[n] for n in names if n in by and by[n].get('delta_vs_reference_pct', '') != '' and float(by[n]['delta_vs_reference_pct']) >= 3.0]
+        if hits:
+            txt.append('  ' + label + ': CANDIDATE -> ' + ', '.join(f"{r['case']} {float(r['delta_vs_reference_pct']):+.2f}%" for r in hits))
+        else:
+            txt.append('  ' + label + ': no >=3% gain observed')
+
+    txt.append('')
+    txt.append('CPU busy columns and each case bottleneck_tables/lcore_activity.csv must be inspected before assigning causality.')
+    txt.append('A positive throughput result is only considered credible when configured DPDK lcores are engaged and per-connection goodput moves consistently.')
     out_txt = root / 'BOTTLENECK_SWEEP_SUMMARY.txt'
     out_txt.write_text('\n'.join(txt) + '\n', encoding='utf-8')
     print(out_txt.read_text(encoding='utf-8'), end='')
