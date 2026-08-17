@@ -16,7 +16,12 @@ for f in "$BASE" "$REPORTER" "$SUMMARY"; do
     exit 2
   fi
 done
-python3 -m py_compile "$HERE/build_p7_d1_d2plus_report_v3.py" "$HERE/p7_frequency_sampler.py" "$REPORTER" "$SUMMARY"
+python3 -m py_compile \
+  "$HERE/build_p7_d1_d2plus_report_v3.py" \
+  "$HERE/build_p7_d1_d2plus_report_v4.py" \
+  "$HERE/p7_frequency_sampler.py" \
+  "$REPORTER" \
+  "$SUMMARY"
 
 # The base P7 wrapper historically checks BASE and REPORTER with -x even though
 # both are invoked through bash/python3. Some bundle/worktree paths may not
@@ -37,6 +42,6 @@ trap restore_helper_modes EXIT INT TERM
 bash "$BASE" "$@"
 restore_helper_modes
 trap - EXIT INT TERM
-python3 "$HERE/build_p7_d1_d2plus_report_v3.py" --input "$OUT"
+python3 "$HERE/build_p7_d1_d2plus_report_v4.py" --input "$OUT"
 echo "D1_D2PLUS_REPORT=$OUT/the_sheet_rules_all/d1_d2plus"
 echo "D1_D2PLUS_ALIGNMENT=$OUT/the_sheet_rules_all/d1_d2plus/alignment_quality.json"
