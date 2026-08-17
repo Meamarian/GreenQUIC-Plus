@@ -19,7 +19,6 @@ for arg in "$@"; do
     fi
 done
 
-# Recover output-dir/runs for post-run reporting without changing the base CLI.
 RUNS=2
 OUTPUT_DIR=""
 args=("$@")
@@ -32,8 +31,8 @@ done
 [[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: invalid --runs=$RUNS" >&2; exit 2; }
 [[ -n "$OUTPUT_DIR" ]] || { echo "ERROR: fair P5 runner requires explicit --output-dir" >&2; exit 2; }
 
-# Mandatory rebuild on both endpoints so the runtime contains the exact current
-# per-flow two-TX-queue transform AND per-lcore RX/TX packet evidence marker.
+# Build both endpoints from the same synced commit. The build verifier requires
+# the queue and lcore runtime markers, so stale binaries cannot enter traffic.
 echo "P5 FAIR: building verified multicore binary with per-lcore RX/TX evidence on IDEX"
 bash "$BUILD"
 echo "P5 FAIR: building verified multicore binary with per-lcore RX/TX evidence on Tinyman"
@@ -47,31 +46,47 @@ from pathlib import Path
 import sys
 src=Path(sys.argv[1]).read_text(encoding='utf-8')
 
-# QUIC worker CPU utilization is diagnostic. The configured worker set remains
-# part of the fair configuration, but the scheduler is not required to execute
-# on every allowed CPU in every run.
+# QUIC worker utilization is diagnostic. The configured worker set is fixed,
+# but the scheduler is not required to execute on every allowed CPU every run.
 old="if j.get('status')!='PASS': raise SystemExit(f\"ERROR: P5 {label} did not execute on every requested QUIC CPU\")"
-new="if j.get('status')!='PASS': print(f\"WARN: P5 {label} did not execute on every configured QUIC CPU; continuing because this is a diagnostic, not a traffic/fairness gate\")"
+new="if j.get('status')!='PASS': print(f\"WARN: P5 {label} did not execute on every configured QUIC CPU; continuing because this is diagnostic only\")"
 if src.count(old)!=1:
     raise SystemExit(f'ERROR: P5 QUIC activity gate anchor count={src.count(old)}')
 src=src.replace(old,new,1)
 
-# Topology/recording validator remains authoritative evidence, but a failed
-# post-run diagnostic must not erase completed traffic or prevent P7.
+# Keep the legacy topology/recording output, but do not make it erase traffic.
 old='python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS"\n'
-new='python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS" || echo "WARN: P5 topology/recording validation failed; preserving results and continuing diagnostics"\n'
+new='python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS" || echo "WARN: P5 topology/recording validation failed; preserving results"\n'
 if src.count(old)!=1:
     raise SystemExit(f'ERROR: P5 validator anchor count={src.count(old)}')
 src=src.replace(old,new,1)
 
-# The legacy queue-direction check incorrectly treated a zero RX direction on a
-# still-busy TX-owning lcore as an idle core. Preserve its JSON as a diagnostic,
-# but do not stop. The new LCORE_STATS analyzer is the engagement authority.
+# Legacy directional queue validation required server TXQ0/TXQ1 and client
+# RXQ0/RXQ1 independently. That can reject a busy lcore whose other direction
+# is carrying the work. Preserve it as a diagnostic only.
 old='if problems:raise SystemExit(\'ERROR: multicore queue-use validation failed:\\n  \'+\'\\n  \'.join(problems))'
 new='if problems:print(\'WARN: legacy directional queue validation failed (nonfatal):\\n  \'+\'\\n  \'.join(problems))'
 if src.count(old)!=1:
     raise SystemExit(f'ERROR: legacy queue gate anchor count={src.count(old)}')
 src=src.replace(old,new,1)
+
+# The base runner has one exact boundary: this command executes all P5 traffic.
+# If it fails, the P5 traffic phase is failed. If it succeeds, every subsequent
+# command is analysis/validation/reporting and must be nonfatal.
+traffic_old='bash "$TMP" --runs "$RUNS" --downloads "$CONNECTIONS" --gap-seconds 0 --server-cooldown-seconds 5 --between-tests-seconds 5 --mode-order balanced --seed 20260817 --output-dir "$OUTPUT_DIR" "${TOPOLOGY_ENV[@]}" "${USER_ARGS[@]}"\n'
+traffic_new='''set +e
+bash "$TMP" --runs "$RUNS" --downloads "$CONNECTIONS" --gap-seconds 0 --server-cooldown-seconds 5 --between-tests-seconds 5 --mode-order balanced --seed 20260817 --output-dir "$OUTPUT_DIR" "${TOPOLOGY_ENV[@]}" "${USER_ARGS[@]}"
+GREENQUIC_FAIR_TRAFFIC_RC=$?
+if [[ "$GREENQUIC_FAIR_TRAFFIC_RC" != 0 ]]; then
+    echo "P5 FAIR TRAFFIC FAIL rc=$GREENQUIC_FAIR_TRAFFIC_RC; preserving partial results" >&2
+    exit "$GREENQUIC_FAIR_TRAFFIC_RC"
+fi
+# Traffic is complete. Do not let post-run diagnostics stop P7.
+set +e
+'''
+if src.count(traffic_old)!=1:
+    raise SystemExit(f'ERROR: P5 traffic boundary anchor count={src.count(traffic_old)}')
+src=src.replace(traffic_old,traffic_new,1)
 
 Path(sys.argv[2]).write_text(src,encoding='utf-8')
 PY
@@ -119,9 +134,6 @@ dpdk=load('dpdk_lcore_activity_validation.json')
 topo=load('multicore_validation.json')
 server=load('quic_cpu_activity_server.json')
 client=load('quic_cpu_activity_client.json')
-# Fairness gate: exact P5 traffic completed, topology is the intended 2-DPDK-
-# lcore configuration, and BOTH DPDK lcores processed real dataplane packets.
-# QUIC worker utilization is reported but intentionally not a hard gate.
 fair = 'PASS' if dpdk.get('status')=='PASS' and topo.get('status')=='PASS' else 'FAIL'
 out={
  'schema':'greenquic-p5-fairness-status-v1',
@@ -132,7 +144,7 @@ out={
  'client_quic_cpu_activity_status':client.get('status','UNKNOWN'),
  'quic_cpu_activity_is_hard_gate':False,
  'fairness_status':fair,
- 'power_note':'OFF-mode RAPL/frequency/C-state is a cross-check. Because both DPDK CPUs are fixed to max in OFF, power alone cannot prove packet processing on CPU19/CPU20; per-lcore RX/TX counters are authoritative.',
+ 'power_note':'OFF-mode RAPL/frequency/C-state is a cross-check. Both DPDK CPUs are fixed to max in OFF, so power alone cannot prove packet work; per-lcore RX/TX counters are authoritative.',
  'dpdk_analyzer_rc':dpdk_rc,
 }
 (root/'P5_FAIRNESS_STATUS.json').write_text(json.dumps(out,indent=2)+'\n')
@@ -143,7 +155,5 @@ print('  topology/recording=',out['topology_recording_status'])
 print('  QUIC CPU activity diagnostic: server=',out['server_quic_cpu_activity_status'],'client=',out['client_quic_cpu_activity_status'])
 PY
 
-# Never turn completed P5 traffic into a phase failure because of a post-run
-# diagnostic. The JSON/CSV status carries validity into the final comparison.
 echo "P5 FAIR PHASE COMPLETE: traffic completed; diagnostics preserved even if fairness status is FAIL"
 exit 0
