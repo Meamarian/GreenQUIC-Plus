@@ -35,23 +35,25 @@ cleanup_local(){ rm -f "/tmp/greenquic_parallel_mc_${TAG}.bundle"; }
 trap cleanup_local EXIT
 
 printf '\n=== 1. FETCH BRANCH ON MAC ===\n'
-git fetch origin "$BASE_BRANCH" "$BRANCH"
-HEAD="$(git rev-parse "origin/$BRANCH")"
-MERGE_BASE="$(git merge-base "origin/$BASE_BRANCH" "origin/$BRANCH")"
+git fetch origin \
+    "refs/heads/$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH" \
+    "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+HEAD="$(git rev-parse "refs/remotes/origin/$BRANCH")"
+MERGE_BASE="$(git merge-base "refs/remotes/origin/$BASE_BRANCH" "refs/remotes/origin/$BRANCH")"
 [[ "$MERGE_BASE" == "$BASE_SHA" ]] || {
     echo "ERROR: branch merge-base changed: $MERGE_BASE expected $BASE_SHA" >&2
     exit 2
 }
-if [[ -n "$(git diff --name-only "origin/$BASE_BRANCH..origin/$BRANCH" --diff-filter=MDRTUXB)" ]]; then
+if [[ -n "$(git diff --name-only "refs/remotes/origin/$BASE_BRANCH..refs/remotes/origin/$BRANCH" --diff-filter=MDRTUXB)" ]]; then
     echo "ERROR: multicore branch modifies/deletes base files; expected additive isolation only" >&2
-    git diff --name-status "origin/$BASE_BRANCH..origin/$BRANCH" >&2
+    git diff --name-status "refs/remotes/origin/$BASE_BRANCH..refs/remotes/origin/$BRANCH" >&2
     exit 2
 fi
 printf 'branch=%s\nhead=%s\nbase=%s\n' "$BRANCH" "$HEAD" "$MERGE_BASE"
 
 printf '\n=== 2. CREATE SMALL INCREMENTAL BUNDLE ===\n'
 BUNDLE="/tmp/greenquic_parallel_mc_${TAG}.bundle"
-git bundle create "$BUNDLE" "origin/$BRANCH" "^$BASE_SHA"
+git bundle create "$BUNDLE" "refs/remotes/origin/$BRANCH" "^$BASE_SHA"
 git bundle verify "$BUNDLE"
 BUNDLE_REF="$(git bundle list-heads "$BUNDLE" | awk -v h="$HEAD" '$1==h {print $2; exit}')"
 [[ -n "$BUNDLE_REF" ]] || { echo "ERROR: cannot determine branch ref in incremental bundle" >&2; exit 2; }
