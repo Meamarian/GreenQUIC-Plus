@@ -93,7 +93,7 @@ chmod 0700 "$TMP";bash -n "$TMP"
 grep -Fq 'bash "$HERE/run_server_parallel_multicore.sh" --run-dir "$srun" --rep "$rep"' "$TMP" || {
  echo "ERROR: generated P7 controller does not invoke server multicore wrapper via bash" >&2; exit 2;
 }
-grep -Fq "bash '$CLIENT_DIR/run_client_parallel_multicore.sh' --run-dir '$crun_remote' --rep '$rep' --gate '$gate'" "$TMP" || {
+grep -Fq "bash '\$CLIENT_DIR/run_client_parallel_multicore.sh' --run-dir '\$crun_remote' --rep '\$rep' --gate '\$gate'" "$TMP" || {
  echo "ERROR: generated P7 controller does not invoke client multicore wrapper via bash" >&2; exit 2;
 }
 
