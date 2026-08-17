@@ -6,12 +6,13 @@ from __future__ import annotations
 The N architecture case intentionally combines Performance2's per-producer
 sharded SPSC handoff with exactly one DPDK consumer. In that composition the
 multicore transform still emits queue-routing helpers that are deliberately not
-used by the sharded producer path. With -Werror, those dead helpers and the
-queue-local TxRing variable make an otherwise valid single-consumer build fail.
+used by the sharded producer/consumer path. With -Werror, those dead helpers
+and the queue-local TxRing variable make an otherwise valid single-consumer
+build fail.
 
 V4 keeps V3 behavior unchanged for shared handoff. For sharded handoff only it:
   * removes the unused queue-local TxRing variable from CxPlatDpdkTx; and
-  * marks the two deliberately unused multi-queue producer helpers as unused.
+  * marks the deliberately unused multi-queue routing helpers as unused.
 
 No sharded producer is routed to multiple DPDK consumers; N remains a
 single-consumer experiment.
@@ -34,7 +35,7 @@ subprocess.run([sys.executable, str(v3), str(path)], check=True)
 text = path.read_text(encoding="utf-8", errors="replace")
 
 # Shared-handoff profiles need all queue-routing helpers. Only the sharded
-# single-consumer composition has intentionally dead producer-routing helpers.
+# single-consumer composition has intentionally dead queue-routing helpers.
 if "txhandoff=sharded" not in text:
     print("P5 multicore TXQ V4 PASS: shared handoff unchanged")
     raise SystemExit(0)
@@ -52,6 +53,11 @@ replacements = (
         "static void\nGreenQuicSignalTxQueueWork(\n",
         "static __attribute__((unused)) void\nGreenQuicSignalTxQueueWork(\n",
         "GreenQuicSignalTxQueueWork",
+    ),
+    (
+        "static struct rte_ring*\nGreenQuicGetTxRing(\n",
+        "static __attribute__((unused)) struct rte_ring*\nGreenQuicGetTxRing(\n",
+        "GreenQuicGetTxRing",
     ),
     (
         "static uint16_t\nGreenQuicSelectTxQueue(\n",
