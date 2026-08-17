@@ -27,6 +27,12 @@ retry(){
     done
 }
 
+tiny(){
+    local cmd="${1:?missing Tinyman command}" q
+    printf -v q '%q' "$cmd"
+    retry ssh "${SSH[@]}" idex "ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman $q"
+}
+
 [[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: P5_MC_RUNS must be positive" >&2; exit 2; }
 [[ "$CONNECTIONS" =~ ^[2-9][0-9]*$ ]] || { echo "ERROR: P5_MC_CONNECTIONS must be >=2" >&2; exit 2; }
 [[ -f "$V4" && -f "$CLEANER" ]] || { echo "ERROR: V4/cleanup helper missing" >&2; exit 2; }
@@ -61,28 +67,36 @@ LOCAL_BRANCH="$(git -C "$LOCAL_REPO" branch --show-current)"
 }
 
 # FIRST REMOTE ACTION: install and execute the ancestry-safe process cleanup.
-log "installing safe cleanup helper on IDEX"
+log "installing safe cleanup helper on IDEX + Tinyman"
 retry scp "${SSH[@]}" "$CLEANER" "idex:$REMOTE_CLEANER"
-retry ssh "${SSH[@]}" idex "chmod 0700 '$REMOTE_CLEANER'; scp -q -o BatchMode=yes -o ConnectTimeout=15 '$REMOTE_CLEANER' root@tinyman:'$REMOTE_CLEANER'; ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman chmod 0700 '$REMOTE_CLEANER'"
+retry ssh "${SSH[@]}" idex "scp -q -o BatchMode=yes -o ConnectTimeout=15 '$REMOTE_CLEANER' root@tinyman:'$REMOTE_CLEANER'"
+retry ssh "${SSH[@]}" idex "chmod 0700 '$REMOTE_CLEANER'"
+tiny "chmod 0700 '$REMOTE_CLEANER'"
 
 run_cleanup_idex(){
-    local marker="/tmp/gq_cleanup_${TAG}_idex.done" logf="/tmp/gq_cleanup_${TAG}_idex.log" jsonf="/tmp/gq_cleanup_${TAG}_idex.json"
-    retry ssh "${SSH[@]}" idex "rm -f '$marker' '$logf' '$jsonf'; nohup setsid python3 '$REMOTE_CLEANER' --marker '$marker' --json '$jsonf' >'$logf' 2>&1 </dev/null & echo CLEANUP_PID=\$!"
+    local marker="/tmp/gq_cleanup_${TAG}_idex.done"
+    local logf="/tmp/gq_cleanup_${TAG}_idex.log"
+    local jsonf="/tmp/gq_cleanup_${TAG}_idex.json"
+    retry ssh "${SSH[@]}" idex \
+        "rm -f '$marker' '$logf' '$jsonf'; nohup setsid python3 '$REMOTE_CLEANER' --marker '$marker' --json '$jsonf' >'$logf' 2>&1 </dev/null & echo CLEANUP_PID=\$!"
     while true; do
-        if retry ssh "${SSH[@]}" idex "test -f '$marker'" >/dev/null 2>&1; then break; fi
+        if ssh "${SSH[@]}" idex "test -f '$marker'" >/dev/null 2>&1; then break; fi
         sleep 1
     done
-    retry ssh "${SSH[@]}" idex "cat '$logf'; test \"\$(cat '$marker')\" = PASS; python3 '$REMOTE_CLEANER' --check"
+    retry ssh "${SSH[@]}" idex \
+        "cat '$logf'; test \"\$(cat '$marker')\" = PASS; python3 '$REMOTE_CLEANER' --check"
 }
 
 run_cleanup_tinyman(){
-    local marker="/tmp/gq_cleanup_${TAG}_tinyman.done" logf="/tmp/gq_cleanup_${TAG}_tinyman.log" jsonf="/tmp/gq_cleanup_${TAG}_tinyman.json"
-    retry ssh "${SSH[@]}" idex "ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman \"rm -f '$marker' '$logf' '$jsonf'; nohup setsid python3 '$REMOTE_CLEANER' --marker '$marker' --json '$jsonf' >'$logf' 2>&1 </dev/null & echo CLEANUP_PID=\\\$!\""
+    local marker="/tmp/gq_cleanup_${TAG}_tinyman.done"
+    local logf="/tmp/gq_cleanup_${TAG}_tinyman.log"
+    local jsonf="/tmp/gq_cleanup_${TAG}_tinyman.json"
+    tiny "rm -f '$marker' '$logf' '$jsonf'; nohup setsid python3 '$REMOTE_CLEANER' --marker '$marker' --json '$jsonf' >'$logf' 2>&1 </dev/null & echo CLEANUP_PID=\$!"
     while true; do
-        if retry ssh "${SSH[@]}" idex "ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman test -f '$marker'" >/dev/null 2>&1; then break; fi
+        if tiny "test -f '$marker'" >/dev/null 2>&1; then break; fi
         sleep 1
     done
-    retry ssh "${SSH[@]}" idex "ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman \"cat '$logf'; test \\\"\$(cat '$marker')\\\" = PASS; python3 '$REMOTE_CLEANER' --check\""
+    tiny "cat '$logf'; test \"\$(cat '$marker')\" = PASS; python3 '$REMOTE_CLEANER' --check"
 }
 
 log "cleaning stale GreenQUIC/P5/P7 process trees on IDEX"
