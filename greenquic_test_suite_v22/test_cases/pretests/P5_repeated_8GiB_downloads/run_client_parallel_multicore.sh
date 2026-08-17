@@ -20,8 +20,8 @@ actual_client_bin="$GQ_INTEROP_CLIENT_BIN"
 [[ -f "$VERIFY_BINARY" ]] || { echo "ERROR: compiled-runtime verifier missing: $VERIFY_BINARY" >&2; exit 2; }
 bash "$VERIFY_BINARY" client "$actual_client_bin"
 
-# Four (by default) distinct URLs prevent output-name collisions, and forced
-# local UDP ports create distinct 5-tuples for RSS on both P5 and P7.
+# Distinct URLs prevent output-name collisions, and forced local UDP ports make
+# each simultaneous QUIC connection a distinct 5-tuple for RSS.
 server_root="$REPO_ROOT/greenquic_test_suite_v22/common/files/server_root"
 download_root="$REPO_ROOT/greenquic_test_suite_v22/common/downloads"
 mkdir -p "$server_root" "$download_root" "$HERE/results"
@@ -42,11 +42,6 @@ REQUEST_PATHS="${REQUEST_PATHS%$'\n'}"
 export REQUEST_PATHS
 export DOWNLOADS_PER_RUN="$CONNECTIONS"
 export GAP_US=0
-# Reuse the proven one-process/many-URL controller path. The transformed
-# quicinterop sees GQ_INTEROP_P5_PARALLEL=1 and creates one independent QUIC
-# connection per URL. Do not switch this to the stock parallel_connections
-# workload, which can fall back to multiple client processes and would be
-# invalid for one shared DPDK EAL/NIC instance.
 export WORKLOAD_KIND=multi_stream_single_connection
 export GQ_INTEROP_P5_SEQUENCE=0
 export GQ_INTEROP_P5_PARALLEL=1
@@ -55,46 +50,48 @@ export GQ_INTEROP_P5_LOCAL_PORT_BASE="$LOCAL_PORT_BASE"
 export GQ_INTEROP_P5_PARALLEL_READY_TIMEOUT_US=120000000
 export ENABLE_CSTATE_RECORD="${ENABLE_CSTATE_RECORD:-1}"
 
-# run_role_p5 performs the normal P5 teardown and bundling. Mark the results
-# directory first, then augment that exact newly-created bundle; do not invoke a
-# second bundler because the first bundler has already moved the raw log and
-# manifest into details/.
-marker="$HERE/results/.parallel_client_${MODE}_$$_$(date +%s%N).marker"
+# IMPORTANT: run_role_p5.sh creates the raw client artifacts, but it does NOT
+# create the final unified client bundle. Mirror the proven normal run_client.sh
+# ordering exactly: run_role -> exact log/stamp -> manifest -> report -> bundle.
+marker="$HERE/logs/.parallel_client_${MODE}_$$_$(date +%s%N).marker"
+mkdir -p "$HERE/logs"
 touch "$marker"
 cleanup_marker(){ rm -f "$marker"; }
 trap cleanup_marker EXIT
 
 "$HERE/run_role_p5.sh" client "$HERE" "$MODE" 0
 
-run_dir="$(
-    find "$HERE/results" -mindepth 1 -maxdepth 1 -type d \
-        -name "*__client__${MODE}*" -newer "$marker" -printf '%T@ %p\n' 2>/dev/null |
-    sort -nr | head -n1 | cut -d' ' -f2-
+client_log="$(
+    find "$HERE/logs" -maxdepth 1 -type f -name "client_${MODE}_*.log" -newer "$marker" \
+        -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2-
 )"
-[[ -n "$run_dir" && -d "$run_dir/details" ]] || {
-    echo "ERROR: exact newly-created parallel client bundle not found" >&2
+[[ -n "$client_log" && -f "$client_log" ]] || {
+    echo "ERROR: exact parallel client log not found after run_role_p5" >&2
+    exit 2
+}
+base="$(basename "$client_log")"
+stamp="${base#client_${MODE}_}"
+stamp="${stamp%.log}"
+
+manifest="$HERE/results/client_download_manifest_${MODE}_${stamp}.json"
+[[ -f "$manifest" ]] || {
+    echo "ERROR: exact parallel client manifest not found: $manifest" >&2
     exit 2
 }
 
-details="$run_dir/details"
-client_log="$(find "$details" -maxdepth 1 -type f -name '*_log.txt' -print | head -n1)"
-manifest="$(find "$details" -maxdepth 1 -type f -name '*_download_manifest.json' -print | head -n1)"
-[[ -n "$client_log" && -f "$client_log" ]] || { echo "ERROR: bundled parallel client log missing in $details" >&2; exit 2; }
-[[ -n "$manifest" && -f "$manifest" ]] || { echo "ERROR: bundled client manifest missing in $details" >&2; exit 2; }
-
 read -r actual_bytes actual_files < <(python3 - "$manifest" <<'PY'
 import json,sys
-r=json.load(open(sys.argv[1],encoding='utf-8'));print(int(r.get('total_bytes',0)),int(r.get('file_count',0)))
+r=json.load(open(sys.argv[1],encoding='utf-8'))
+print(int(r.get('total_bytes',0)),int(r.get('file_count',0)))
 PY
 )
 expected_bytes=$((PAYLOAD_BYTES * CONNECTIONS))
 [[ "$actual_files" == "$CONNECTIONS" ]] || { echo "ERROR: expected $CONNECTIONS completions, got $actual_files" >&2; exit 2; }
 [[ "$actual_bytes" == "$expected_bytes" ]] || { echo "ERROR: payload bytes $actual_bytes != $expected_bytes" >&2; exit 2; }
 
-stem="$(basename "$run_dir")"
-metrics="$details/${stem}_parallel_metrics.json"
-summary="$details/${stem}_parallel_summary.txt"
-goodput="$details/${stem}_parallel_goodput.json"
+metrics="$HERE/results/p5_parallel_metrics_${MODE}_${stamp}.json"
+summary="$HERE/results/p5_parallel_summary_${MODE}_${stamp}.txt"
+goodput="$HERE/results/goodput_parallel_${MODE}_${stamp}.json"
 python3 "$HERE/report_p5_parallel_run.py" \
     --log "$client_log" \
     --manifest "$manifest" \
@@ -104,7 +101,31 @@ python3 "$HERE/report_p5_parallel_run.py" \
     --text-out "$summary" \
     --goodput-out "$goodput"
 
-# The outer matrix captures stdout in client_repNN_MODE.log. Printing this
-# summary there gives the matrix-level aggregate-goodput/variance parser an
-# exact per-test source while the JSON stays inside the unified run bundle.
+# Create the same unified result bundle as normal P5 only AFTER goodput exists,
+# so the common bundler moves the exact raw log/manifest/RAPL/frequency/C-state
+# data plus the parallel goodput JSON into details/.
+python3 "$HERE/../../../common/bin/bundle_run_results.py" \
+    --test-dir "$HERE" \
+    --role client \
+    --mode "$MODE" \
+    --stamp "$stamp"
+
+run_dir="$(
+    find "$HERE/results" -mindepth 1 -maxdepth 1 -type d \
+        -name "${stamp}__$(basename "$HERE")__client__${MODE}*" \
+        -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2-
+)"
+[[ -n "$run_dir" && -d "$run_dir/details" ]] || {
+    echo "ERROR: parallel client bundle was not created for exact stamp=$stamp mode=$MODE" >&2
+    exit 2
+}
+
+# The common bundler does not know these branch-only report names. Preserve them
+# beside the normal artifacts for matrix-level active-window analysis.
+cp -p "$metrics" "$run_dir/details/"
+cp -p "$summary" "$run_dir/details/"
+
+# The outer matrix captures stdout in client_repNN_MODE.log. Print the complete
+# per-connection + aggregate goodput summary for every repetition.
 cat "$summary"
+echo "[GreenQUIC-PARALLEL-BUNDLE] stamp=$stamp mode=$MODE bundle=$(basename "$run_dir") status=PASS"
