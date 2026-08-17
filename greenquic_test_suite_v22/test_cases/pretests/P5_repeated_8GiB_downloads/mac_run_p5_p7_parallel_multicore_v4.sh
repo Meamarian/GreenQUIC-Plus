@@ -40,6 +40,24 @@ fi
 [[ "${1:-}" == "--foreground" ]] && shift || true
 [[ $# -eq 0 ]] || { echo "ERROR: unknown arguments: $*" >&2; exit 2; }
 
+# FIRST ACTION: kill stale P5/P7/GreenQUIC processes on both test hosts. This is
+# deliberately process-only cleanup: result directories are preserved.
+CLEAN_CMD='set +e
+pkill -TERM -x quicinterop 2>/dev/null || true
+pkill -TERM -x quicinteropserver 2>/dev/null || true
+for pat in "[P]5_P7_MC_" "[r]un_parallel_multicore_matrix.sh" "[r]un_matrix_from_idex.sh" "[r]un_matrix_with_sheet.sh" "[r]un_client_parallel_multicore.sh" "[r]un_server_parallel_multicore.sh" "[r]un_role_p5.sh" "[q]uic_cpu_activity_sampler.py" "[g]q_rapl_msr_sampler" "[g]q_cstate_trace" "[f]requency_sampler.py" "[p]7_frequency_sampler.py" "[p]ower_trace.py" "[c]lock_sync_parallel.py"; do pkill -TERM -f "$pat" 2>/dev/null || true; done
+sleep 2
+pkill -KILL -x quicinterop 2>/dev/null || true
+pkill -KILL -x quicinteropserver 2>/dev/null || true
+for pat in "[P]5_P7_MC_" "[r]un_parallel_multicore_matrix.sh" "[r]un_matrix_from_idex.sh" "[r]un_matrix_with_sheet.sh" "[r]un_client_parallel_multicore.sh" "[r]un_server_parallel_multicore.sh" "[r]un_role_p5.sh" "[q]uic_cpu_activity_sampler.py" "[g]q_rapl_msr_sampler" "[g]q_cstate_trace" "[f]requency_sampler.py" "[p]7_frequency_sampler.py" "[p]ower_trace.py" "[c]lock_sync_parallel.py"; do pkill -KILL -f "$pat" 2>/dev/null || true; done
+rm -f /tmp/p5_start_gate_* /tmp/p7_*.gate /tmp/P5_P7_MC_*.state.PID 2>/dev/null || true
+true'
+log "cleaning stale P5/P7 processes on IDEX"
+retry ssh "${SSH[@]}" idex "$CLEAN_CMD"
+log "cleaning stale P5/P7 processes on Tinyman"
+retry ssh "${SSH[@]}" idex "ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman $(printf '%q' "$CLEAN_CMD")"
+log "stale-process cleanup PASS on IDEX + Tinyman"
+
 # The Mac checkout is the source of truth. Neither idex nor tinyman needs GitHub credentials.
 LOCAL_REPO="$(git rev-parse --show-toplevel)"
 LOCAL_SHA="$(git -C "$LOCAL_REPO" rev-parse HEAD)"
@@ -86,22 +104,29 @@ cd "$P7" || exit 91
 bash ./run_parallel_multicore_matrix.sh --runs "$RUNS" --connections "$CONNECTIONS" --output-dir "$P7_MATRIX"
 P7RC=$?
 if [[ $P7RC -ne 0 ]]; then echo "P7:$P7RC" > "$STATE.FAIL"; exit "$P7RC"; fi
-python3 - "$P5_MATRIX/parallel_tables/parallel_goodput_summary.csv" "$P7_MATRIX/parallel_tables/parallel_goodput_summary.csv" "$SUMMARY" <<'PY'
+python3 - \
+ "$P5_MATRIX/parallel_tables/parallel_goodput_summary.csv" \
+ "$P7_MATRIX/parallel_tables/parallel_goodput_summary.csv" \
+ "$P5_MATRIX/parallel_tables/parallel_goodput_per_core_summary.csv" \
+ "$P7_MATRIX/parallel_tables/parallel_goodput_per_core_summary.csv" \
+ "$SUMMARY" <<'PY'
 import csv,sys
-p5,p7,out=sys.argv[1:]
+p5,p7,p5c,p7c,out=sys.argv[1:]
 rows=list(csv.DictReader(open(p7,newline='',encoding='utf-8'))) + list(csv.DictReader(open(p5,newline='',encoding='utf-8')))
-by={r['mode'].lower():r for r in rows}
+cores=list(csv.DictReader(open(p7c,newline='',encoding='utf-8'))) + list(csv.DictReader(open(p5c,newline='',encoding='utf-8')))
+by={r['mode'].lower():r for r in rows}; cb={r['mode'].lower():r for r in cores}
 order=('linux','off','basic','plus')
-missing=[m for m in order if m not in by]
+missing=[m for m in order if m not in by or m not in cb]
 if missing: raise SystemExit('missing cases: '+','.join(missing))
 linux=float(by['linux']['mean_goodput_gbps']); off=float(by['off']['mean_goodput_gbps'])
-fields=['case','n','mean_goodput_gbps','stdev_goodput_gbps','variance_goodput_gbps2','min_goodput_gbps','max_goodput_gbps','delta_vs_linux_pct','delta_vs_off_pct']
+fields=['case','n','mean_goodput_gbps','stdev_goodput_gbps','variance_goodput_gbps2','min_goodput_gbps','max_goodput_gbps','goodput_per_2_dataplane_cores_gbps','verified_quic_core_count','verified_quic_cpus','goodput_per_verified_quic_core_gbps','delta_vs_linux_pct','delta_vs_off_pct']
 with open(out,'w',newline='',encoding='utf-8') as f:
  w=csv.DictWriter(f,fieldnames=fields,delimiter='\t'); w.writeheader()
  for mode in order:
-  r=by[mode]; mean=float(r['mean_goodput_gbps'])
-  w.writerow({'case':mode.upper(),'n':r['n'],'mean_goodput_gbps':f'{mean:.6f}','stdev_goodput_gbps':f"{float(r['stdev_goodput_gbps']):.6f}",'variance_goodput_gbps2':f"{float(r['variance_goodput_gbps2']):.6f}",'min_goodput_gbps':f"{float(r['min_goodput_gbps']):.6f}",'max_goodput_gbps':f"{float(r['max_goodput_gbps']):.6f}",'delta_vs_linux_pct':f'{((mean/linux)-1)*100:.3f}' if linux else 'nan','delta_vs_off_pct':f'{((mean/off)-1)*100:.3f}' if off else 'nan'})
+  r=by[mode]; c=cb[mode]; mean=float(r['mean_goodput_gbps'])
+  w.writerow({'case':mode.upper(),'n':r['n'],'mean_goodput_gbps':f'{mean:.6f}','stdev_goodput_gbps':f"{float(r['stdev_goodput_gbps']):.6f}",'variance_goodput_gbps2':f"{float(r['variance_goodput_gbps2']):.6f}",'min_goodput_gbps':f"{float(r['min_goodput_gbps']):.6f}",'max_goodput_gbps':f"{float(r['max_goodput_gbps']):.6f}",'goodput_per_2_dataplane_cores_gbps':c['normalized_goodput_per_dataplane_core_gbps'],'verified_quic_core_count':c['verified_quic_core_count'],'verified_quic_cpus':c['verified_quic_cpus'],'goodput_per_verified_quic_core_gbps':c['normalized_goodput_per_verified_quic_core_gbps'],'delta_vs_linux_pct':f'{((mean/linux)-1)*100:.3f}' if linux else 'nan','delta_vs_off_pct':f'{((mean/off)-1)*100:.3f}' if off else 'nan'})
 print('\nFINAL GOODPUT SUMMARY: LINUX vs OFF vs BASIC vs PLUS')
+print('Per-core columns are normalized aggregate goodput, not direct payload-byte attribution.')
 print(open(out,encoding='utf-8').read(),end='')
 PY
 SRC=$?
@@ -124,7 +149,7 @@ while true; do
     if ssh "${SSH[@]}" idex "test -f '$REMOTE_STATE.DONE'" >/dev/null 2>&1; then break; fi
     if ssh "${SSH[@]}" idex "test -f '$REMOTE_STATE.FAIL'" >/dev/null 2>&1; then
         echo "ERROR: remote suite failed" >&2
-        ssh "${SSH[@]}" idex "cat '$REMOTE_STATE.FAIL'; tail -160 '$REMOTE_LOG'" >&2 || true
+        ssh "${SSH[@]}" idex "cat '$REMOTE_STATE.FAIL'; tail -200 '$REMOTE_LOG'" >&2 || true
         exit 1
     fi
 
@@ -152,8 +177,34 @@ ssh "${SSH[@]}" idex "sed -n '${START_LINE},\$p' '$REMOTE_LOG'" 2>/dev/null | te
 
 mkdir -p "$LOCAL_EXPORT/P5" "$LOCAL_EXPORT/P7"
 retry scp "${SSH[@]}" "idex:$REMOTE_SUMMARY" "$LOCAL_EXPORT/goodput_all_cases.tsv"
-for rel in parallel_tables/parallel_goodput_summary.csv parallel_tables/parallel_goodput_all_runs.csv parallel_tables/parallel_active_summary.csv parallel_queue_activity.json PARALLEL_MULTICORE_CONFIG.txt; do retry scp "${SSH[@]}" "idex:$P5_MATRIX/$rel" "$LOCAL_EXPORT/P5/$(basename "$rel")"; done
-for rel in parallel_tables/parallel_goodput_summary.csv parallel_tables/parallel_goodput_all_runs.csv parallel_tables/parallel_active_summary.csv PARALLEL_MULTICORE_CONFIG.txt; do retry scp "${SSH[@]}" "idex:$P7_MATRIX/$rel" "$LOCAL_EXPORT/P7/$(basename "$rel")"; done
+for rel in \
+    parallel_tables/parallel_goodput_summary.csv \
+    parallel_tables/parallel_goodput_all_runs.csv \
+    parallel_tables/parallel_goodput_per_core_summary.csv \
+    parallel_tables/parallel_active_summary.csv \
+    parallel_queue_activity.json \
+    multicore_validation.json \
+    quic_cpu_activity_server.json quic_cpu_activity_server.csv \
+    quic_cpu_activity_client.json quic_cpu_activity_client.csv \
+    PARALLEL_MULTICORE_CONFIG.txt
+do
+    retry scp "${SSH[@]}" "idex:$P5_MATRIX/$rel" "$LOCAL_EXPORT/P5/$(basename "$rel")"
+done
+for rel in \
+    parallel_tables/parallel_goodput_summary.csv \
+    parallel_tables/parallel_goodput_all_runs.csv \
+    parallel_tables/parallel_goodput_per_core_summary.csv \
+    parallel_tables/parallel_active_summary.csv \
+    multicore_validation.json \
+    parallel_irq_activity.json \
+    quic_cpu_activity_server.json quic_cpu_activity_server.csv \
+    quic_cpu_activity_client.json quic_cpu_activity_client.csv \
+    PARALLEL_MULTICORE_CONFIG.txt
+do
+    if ssh "${SSH[@]}" idex "test -f '$P7_MATRIX/$rel'" >/dev/null 2>&1; then
+        retry scp "${SSH[@]}" "idex:$P7_MATRIX/$rel" "$LOCAL_EXPORT/P7/$(basename "$rel")"
+    fi
+done
 retry scp "${SSH[@]}" "idex:$REMOTE_LOG" "$LOCAL_EXPORT/remote.log"
 log "COMPLETE"
 log "P5_MATRIX=$P5_MATRIX"
@@ -163,9 +214,19 @@ echo
 echo "FINAL GOODPUT SUMMARY"
 cat "$LOCAL_EXPORT/goodput_all_cases.tsv"
 echo
-python3 - "$LOCAL_EXPORT/P5/parallel_queue_activity.json" <<'PY'
+python3 - \
+ "$LOCAL_EXPORT/P5/parallel_queue_activity.json" \
+ "$LOCAL_EXPORT/P5/quic_cpu_activity_server.json" \
+ "$LOCAL_EXPORT/P5/quic_cpu_activity_client.json" \
+ "$LOCAL_EXPORT/P7/quic_cpu_activity_server.json" \
+ "$LOCAL_EXPORT/P7/quic_cpu_activity_client.json" <<'PY'
 import json,sys
-j=json.load(open(sys.argv[1],encoding='utf-8'))
-print('P5 DPDK MULTICORE VALIDATION:',j.get('status','UNKNOWN'))
-if j.get('status')!='PASS': raise SystemExit(1)
+q=json.load(open(sys.argv[1],encoding='utf-8'))
+print('P5 DPDK MULTICORE QUEUE VALIDATION:',q.get('status','UNKNOWN'))
+if q.get('status')!='PASS': raise SystemExit(1)
+for label,path in zip(('P5 server QUIC CPUs','P5 client QUIC CPUs','P7 server QUIC CPUs','P7 client QUIC CPUs'),sys.argv[2:]):
+ j=json.load(open(path,encoding='utf-8')); active=[r['cpu'] for r in j.get('rows',[]) if r.get('active')]
+ print(f"{label}: {j.get('status')} active={active}")
+ if j.get('status')!='PASS': raise SystemExit(1)
+print('ALL REQUESTED QUIC CPUs 21,22,23,24 HAVE RUNTIME PROCESS ACTIVITY ON BOTH ENDPOINTS')
 PY
