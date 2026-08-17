@@ -7,6 +7,7 @@ base.CMD_SUBSTRINGS = tuple(base.CMD_SUBSTRINGS) + (
     '/P5_repeated_8GiB_downloads/run_p5_parallel_off_case.sh',
     '/P5_repeated_8GiB_downloads/run_p5_bottleneck_sweep.sh',
     '/tmp/P5_BOTTLENECK_SWEEP_',
+    '/tmp/P5_BOTTLENECK_',
     'cpu_busy_sampler.py',
 )
 
