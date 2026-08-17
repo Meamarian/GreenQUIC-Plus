@@ -102,7 +102,7 @@ def main():
         ('partition grouped K vs B',delta(K,ref),'partition-to-DPDK locality'),
         ('ring MP L vs B',delta(L,ref),'producer-ring synchronization'),
         ('ring RTS M vs B',delta(M,ref),'producer-ring synchronization'),
-        ('sharded handoff N vs B',delta(N,ref),'shared producer handoff contention'),
+        ('sharded handoff N vs F',delta(N,F),'shared producer handoff contention under a safe single consumer'),
         ('UDP segmentation O vs B',delta(O,ref),'per-packet/segmentation overhead'),
         ('drift P vs B',delta(P,ref),'thermal/time drift'),
     ]
