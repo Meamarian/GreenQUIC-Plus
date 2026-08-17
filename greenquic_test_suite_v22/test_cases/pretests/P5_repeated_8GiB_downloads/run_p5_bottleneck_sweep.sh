@@ -5,7 +5,7 @@ HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 BUILD="$HERE/build_p5_multicore_performance2.sh"
 CASE_RUNNER="$HERE/run_p5_parallel_off_case.sh"
 SUMMARY="$HERE/summarize_p5_bottleneck_sweep.py"
-CLEANER="$HERE/safe_cleanup_greenquic_processes.py"
+CLEANER="$HERE/safe_cleanup_p5_bottleneck_processes.py"
 
 RUNS="${P5_BOTTLENECK_RUNS:-2}"
 CONNECTIONS="${P5_BOTTLENECK_CONNECTIONS:-4}"
@@ -28,6 +28,7 @@ COMMON_PROFILE=(
   P5_SUPER_RX_BURST=32
   P5_SUPER_TX_BURST=16
   P5_SUPER_RING_SIZE=4096
+  P5_SUPER_RING_SYNC=legacy
   P5_SUPER_DRAIN_BURSTS=2
   P5_SUPER_DRAIN_THRESHOLD=0
   P5_SUPER_TX_LOCK_MODE=single_owner
@@ -46,13 +47,13 @@ cleanup_between_cases(){
   echo "--- safe cleanup between cases: IDEX ---"
   python3 "$CLEANER" || true
   echo "--- safe cleanup between cases: Tinyman ---"
-  ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman "python3 '$CLEANER' || true" || true
+  ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman "cd '$HERE' && python3 '$CLEANER' || true" || true
 }
 
 build_profile(){
   local profile="$1"; shift
   local args=("${COMMON_PROFILE[@]}" "$@")
-  local q="" item
+  local q=""
   printf '======================================================================\n'
   printf 'BUILD PROFILE %s\n' "$profile"
   printf '  %s\n' "${args[@]}"
@@ -134,8 +135,10 @@ G_2c_rxpipe0       : B + RX pipeline prefetch 2 -> 0
 H_2c_rxpipe4       : B + RX pipeline prefetch 2 -> 4
 I_2c_txburst32     : B + hardware TX burst 16 -> 32
 J_2c_drain4        : B + TX drain bursts per poll 2 -> 4
+K_2c_ring_mp       : B + producer ring synchronization legacy-HTS -> classic MP
+L_2c_ring_rts      : B + producer ring synchronization legacy-HTS -> RTS
 
-Interpretation rule: A->B isolates core scaling. C-J identify which design stage,
+Interpretation rule: A->B isolates core scaling. C-L identify which design stage,
 if any, changes throughput when the two DPDK lcores are already engaged.
 EOF
 
@@ -177,6 +180,14 @@ run_case I_2c_txburst32 19,20 txburst32 "$BUILD_RC" P5_SUPER_TX_BURST=32
 BUILD_RC=0
 build_profile drain4 P5_SUPER_DRAIN_BURSTS=4 || BUILD_RC=$?
 run_case J_2c_drain4 19,20 drain4 "$BUILD_RC" P5_SUPER_DRAIN_BURSTS=4
+
+BUILD_RC=0
+build_profile ring_mp P5_SUPER_RING_SYNC=mp || BUILD_RC=$?
+run_case K_2c_ring_mp 19,20 ring_mp "$BUILD_RC" P5_SUPER_RING_SYNC=mp
+
+BUILD_RC=0
+build_profile ring_rts P5_SUPER_RING_SYNC=rts || BUILD_RC=$?
+run_case L_2c_ring_rts 19,20 ring_rts "$BUILD_RC" P5_SUPER_RING_SYNC=rts
 
 cleanup_between_cases
 python3 "$SUMMARY" --root "$OUTPUT_ROOT"
