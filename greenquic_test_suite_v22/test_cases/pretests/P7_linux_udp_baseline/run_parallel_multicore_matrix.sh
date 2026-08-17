@@ -4,6 +4,7 @@ HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 BASE="$HERE/run_matrix_from_idex.sh"
 IRQ_HELPER="$HERE/p7_multicore_irq.py"
 VALIDATOR="$HERE/validate_p7_multicore_matrix.py"
+IRQ_ACTIVITY="$HERE/validate_p7_parallel_irq_activity.py"
 REPORTER="$HERE/build_p7_report_multicore.py"
 AGG="$HERE/aggregate_p7_parallel_goodput.py"
 RUNS=2; CONNECTIONS=4; OUTPUT_DIR=""; USER_ARGS=()
@@ -17,10 +18,10 @@ while (($#)); do
  esac
 done
 [[ "$RUNS" =~ ^[1-9][0-9]*$ && "$CONNECTIONS" =~ ^[2-9][0-9]*$ ]] || { echo "ERROR: invalid runs/connections" >&2;exit 2; }
-for f in "$BASE" "$IRQ_HELPER" "$VALIDATOR" "$REPORTER" "$AGG" "$HERE/run_server_parallel_multicore.sh" "$HERE/run_client_parallel_multicore.sh";do [[ -f "$f" ]]||{ echo "ERROR: missing $f" >&2;exit 2;};done
+for f in "$BASE" "$IRQ_HELPER" "$VALIDATOR" "$IRQ_ACTIVITY" "$REPORTER" "$AGG" "$HERE/run_server_parallel_multicore.sh" "$HERE/run_client_parallel_multicore.sh";do [[ -f "$f" ]]||{ echo "ERROR: missing $f" >&2;exit 2;};done
 OUTPUT_DIR="${OUTPUT_DIR:-$HERE/matrix_results/P7_PARALLEL_MC_${CONNECTIONS}c_${RUNS}r_$(date +%Y%m%d_%H%M%S)}"
 
-# Matching sparse server aliases for the exact same four URLs used by P5.
+# Matching sparse server aliases for the exact same URLs used by P5.
 ROOT="$HERE/../../../common/files/server_root";mkdir -p "$ROOT"
 for ((i=1;i<=CONNECTIONS;i++));do f="$ROOT/file_8G_mc$(printf '%02d' "$i").bin";[[ -e "$f" ]]||truncate -s 8589934592 "$f";[[ "$(stat -Lc '%s' "$f")" == 8589934592 ]]||{ echo "ERROR: bad payload $f" >&2;exit 2;};done
 
@@ -40,8 +41,7 @@ def one(old,new,label):
 one('"$HERE/run_server.sh" --run-dir "$srun" --rep "$rep"', '"$HERE/run_server_parallel_multicore.sh" --run-dir "$srun" --rep "$rep"', 'server wrapper')
 one("'$CLIENT_DIR/run_client.sh' --run-dir '$crun_remote' --rep '$rep' --gate '$gate'", "'$CLIENT_DIR/run_client_parallel_multicore.sh' --run-dir '$crun_remote' --rep '$rep' --gate '$gate'", 'client wrapper')
 
-# After channel tuning map each ice TxRx queue to one dataplane CPU. This is the
-# same fail-closed mapping used by the earlier multicore baseline wrapper.
+# After channel tuning map each ice TxRx queue to one dataplane CPU.
 old=r'''env "${P7_ENV[@]}" bash -c 'source "$1/p7_common.sh"; iface="$(cat "$2/iface")"; p7_pin_irqs "$iface" "$P7_DATAPLANE_CPU"; p7_disable_rps "$iface"' _ "$HERE" "$LOCAL_STATE"
 remote_env "bash -c 'source \"$CLIENT_DIR/p7_common.sh\"; iface=\"\$(cat \"$REMOTE_STATE/iface\")\"; p7_pin_irqs \"\$iface\" \"\$P7_DATAPLANE_CPU\"; p7_disable_rps \"\$iface\"'"
 '''
@@ -55,16 +55,15 @@ remote "cat '$REMOTE_STATE/multicore_irq_map.json'" > "$OUTPUT_DIR/setup/client_
 python3 - "$OUTPUT_DIR/setup/server_multicore_irq_map.json" "$OUTPUT_DIR/setup/client_multicore_irq_map.json" <<'PYIRQ'
 import json,sys
 for p in sys.argv[1:]:
- d=json.load(open(p));used={int(x['cpu']) for x in d.get('mappings',[])}
- if used!={19,20}:raise SystemExit(f'ERROR: {p} IRQ CPUs={sorted(used)}')
-print('P7 parallel local+remote queue IRQ maps verified: CPUs 19,20')
+ d=json.load(open(p));m=sorted(d.get('mappings',[]),key=lambda x:int(x.get('queue_order',999999)))[:2];used={int(x['cpu']) for x in m}
+ if len(m)!=2 or used!={19,20}:raise SystemExit(f'ERROR: {p} first-two queue IRQ CPUs={sorted(used)} count={len(m)}')
+print('P7 parallel local+remote queue IRQ maps verified: exactly two data queues on CPUs 19,20')
 PYIRQ
 '''
 if src.count(old)!=1:raise SystemExit(f'ERROR: IRQ/RPS post-channel anchor count={src.count(old)}')
 src=src.replace(old,new,1)
 
-# Parallel requests finish out of order. Do not use "request=N completed" as a
-# proxy for all requests; wait until N completion records exist.
+# Parallel requests finish out of order. Count N completions.
 old=r'''    for _ in $(seq 1 1800); do
         grep -qE "\[GreenQUIC-P7\] request=${DOWNLOADS_PER_RUN} complete_us=.* success=1" "$srun/server.log" 2>/dev/null && break
         kill -0 "$server_pid" 2>/dev/null || p7_die "server died during transfer"
@@ -112,6 +111,7 @@ bash "$TMP" "${USER_ARGS[@]}" "${FIXED[@]}"
 
 python3 "$AGG" --matrix "$OUTPUT_DIR" --runs "$RUNS" --connections "$CONNECTIONS"
 python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS"
+python3 "$IRQ_ACTIVITY" --matrix "$OUTPUT_DIR" --runs "$RUNS"
 rm -rf "$OUTPUT_DIR/the_sheet_rules_all"
 python3 "$REPORTER" --matrix-dir "$OUTPUT_DIR" --output "$OUTPUT_DIR/the_sheet_rules_all"
 python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS" --report-dir "$OUTPUT_DIR/the_sheet_rules_all"
@@ -128,6 +128,7 @@ quic_cpus=21,22,23,24
 pin_irq=1
 disable_rps=1
 stop_irqbalance=1
+disable_rdma=1
 nic_offloads=paper
 udp_rmem_bytes=6815744
 udp_wmem_bytes=6815744
