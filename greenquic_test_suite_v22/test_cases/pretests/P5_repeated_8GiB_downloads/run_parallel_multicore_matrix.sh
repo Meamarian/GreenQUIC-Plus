@@ -2,25 +2,19 @@
 set -Eeuo pipefail
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 BASE="$HERE/run_matrix_from_idex.sh";CLIENT="$HERE/run_client_parallel_multicore.sh";AGG="$HERE/aggregate_parallel_goodput.py";ACTIVE="$HERE/analyze_p5_parallel_active.py";VALIDATOR="$HERE/validate_p5_multicore_matrix.py"
-RUNS=2;CONNECTIONS=4;OUTPUT_DIR="";USER_ARGS=()
-while (($#)); do case "$1" in --runs) RUNS="${2:?}";shift 2;;--connections) CONNECTIONS="${2:?}";shift 2;;--output-dir) OUTPUT_DIR="${2:?}";shift 2;;-h|--help) echo "usage: $0 [--runs N] [--connections N] [--output-dir DIR] [normal P5 matrix options]";exit 0;;*) USER_ARGS+=("$1");shift;;esac;done
+RUNS=2;CONNECTIONS=4;OUTPUT_DIR="";CONTROLLER_PREFLIGHT=0;USER_ARGS=()
+while (($#)); do case "$1" in --runs) RUNS="${2:?}";shift 2;;--connections) CONNECTIONS="${2:?}";shift 2;;--output-dir) OUTPUT_DIR="${2:?}";shift 2;;--controller-preflight) CONTROLLER_PREFLIGHT=1;shift;;-h|--help) echo "usage: $0 [--runs N] [--connections N] [--output-dir DIR] [--controller-preflight] [normal P5 matrix options]";exit 0;;*) USER_ARGS+=("$1");shift;;esac;done
 [[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: runs must be positive" >&2;exit 2; };[[ "$CONNECTIONS" =~ ^[2-9][0-9]*$ ]] || { echo "ERROR: connections must be >=2" >&2;exit 2; }
 for f in "$BASE" "$CLIENT" "$AGG" "$ACTIVE" "$VALIDATOR";do [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2;exit 2; };done
 OUTPUT_DIR="${OUTPUT_DIR:-$HERE/matrix_results/P5_PARALLEL_MC_${CONNECTIONS}c_${RUNS}r_$(date +%Y%m%d_%H%M%S)}"
 ROOT="$HERE/../../../common/files/server_root";mkdir -p "$ROOT";for ((i=1;i<=CONNECTIONS;i++));do f="$ROOT/file_8G_mc$(printf '%02d' "$i").bin";[[ -e "$f" ]] || truncate -s 8589934592 "$f";[[ "$(stat -Lc '%s' "$f")" == 8589934592 ]] || { echo "ERROR: wrong sparse payload size $f" >&2;exit 2; };done
-
-# Disposable-only transform: preserve base P5 files, switch to the parallel
-# client, and make post-cooldown/aligned-RAPL completion follow the successful
-# parallel batch rather than the sequential request=N/N marker.
 TMP="$(mktemp "$HERE/.parallel_matrix.XXXXXX.sh")";trap 'rm -f "$TMP"' EXIT
 python3 - "$BASE" "$TMP" <<'PY'
 from pathlib import Path
 import sys
-src=Path(sys.argv[1]).read_text(encoding='utf-8')
-old='./run_client.sh';new='bash ./run_client_parallel_multicore.sh';count=src.count(old)
+src=Path(sys.argv[1]).read_text(encoding='utf-8');old='./run_client.sh';new='bash ./run_client_parallel_multicore.sh';count=src.count(old)
 if count<1:raise SystemExit(f'ERROR: base P5 runner contains no {old} anchor')
-src=src.replace(old,new)
-needle='Path(sys.argv[2]).write_text(src, encoding="utf-8")'
+src=src.replace(old,new);needle='Path(sys.argv[2]).write_text(src, encoding="utf-8")'
 if src.count(needle)!=1:raise SystemExit(f'ERROR: public P5 wrapper write anchor count={src.count(needle)}, expected 1')
 completion_old='''    final_download_pattern="[GreenQUIC-P5] request=${DOWNLOADS}/${DOWNLOADS} complete_us="
     workload_complete=0
@@ -43,22 +37,23 @@ completion_new='''    final_download_pattern="[GreenQUIC-PARALLEL] batch=1 compl
     done
 '''
 injection=("# P5-PARALLEL-COMPLETION-V1\n"+"parallel_old = "+repr(completion_old)+"\n"+"parallel_new = "+repr(completion_new)+"\n"+'replace_once(parallel_old, parallel_new, "parallel completion detector")\n'+needle)
-src=src.replace(needle,injection,1)
-Path(sys.argv[2]).write_text(src,encoding='utf-8')
-print(f'P5 parallel controller patch: client anchors={count}; parallel completion detector injected')
+src=src.replace(needle,injection,1);Path(sys.argv[2]).write_text(src,encoding='utf-8');print(f'P5 parallel controller patch: client anchors={count}; parallel completion detector injected')
 PY
 chmod 0700 "$TMP";bash -n "$TMP"
-grep -Fq 'env $client_env_words bash ./run_client_parallel_multicore.sh' "$TMP" || { echo "ERROR: generated P5 controller does not invoke multicore client via bash" >&2;exit 2; }
-grep -Fq 'P5-PARALLEL-COMPLETION-V1' "$TMP" || { echo "ERROR: generated P5 controller lacks parallel completion transform" >&2;exit 2; }
+grep -Fq 'env $client_env_words bash ./run_client_parallel_multicore.sh' "$TMP" || { echo "ERROR: generated P5 controller does not invoke multicore client via bash" >&2;exit 2; };grep -Fq 'P5-PARALLEL-COMPLETION-V1' "$TMP" || { echo "ERROR: generated P5 controller lacks parallel completion transform" >&2;exit 2; }
+# Execute the outer wrapper only with --help. This forces its embedded transform
+# to patch the real preserved core and fail on any stale anchor, but exits from
+# the core option parser before SSH, NIC setup, DPDK, or traffic.
+bash "$TMP" --help >/dev/null
+printf 'P5 PARALLEL NESTED CONTROLLER PREFLIGHT PASS (no traffic/NIC changes)\n'
+if [[ "$CONTROLLER_PREFLIGHT" == 1 ]];then exit 0;fi
 
 export P5_PARALLEL_CONNECTIONS="$CONNECTIONS" P5_PARALLEL_LOCAL_PORT_BASE=45000
 TOPOLOGY_ENV=(--env ENABLE_MULTICORE=1 --env SERVER_DPDK_LCORES=19,20 --env CLIENT_DPDK_LCORES=19,20 --env SERVER_QUIC_CPUS=21,22,23,24 --env CLIENT_QUIC_CPUS=21,22,23,24 --env SERVER_PARTITION_MAP=0:19,1:19,2:20,3:20 --env CLIENT_PARTITION_MAP=0:19,1:19,2:20,3:20 --env SERVER_TX_OWNER_LCORE=19 --env CLIENT_TX_OWNER_LCORE=19 --env GREENQUIC_TX_OWNER_ALSO_RX=1 --env P5_PARALLEL_CONNECTIONS="$CONNECTIONS" --env P5_PARALLEL_LOCAL_PORT_BASE=45000 --env ENABLE_RECORD=1 --env ENABLE_CSTATE_RECORD=1 --env GQ_MSR_SAMPLE_INTERVAL_MS=6 --env GQ_FREQ_SAMPLE_INTERVAL_MS=1 --env MSQUIC_EXECUTION_PROFILE=max_throughput)
 echo "======================================================================";echo "P5 PARALLEL MULTICORE AGGREGATE-GOODPUT MATRIX";echo "modes=OFF,BASIC,PLUS runs=$RUNS connections=$CONNECTIONS payload=8GiB/connection";echo "DPDK=19,20 QUIC=21-24 RXQ=2 TXQ=2 local_ports=45000..$((44999+CONNECTIONS))";echo "recording: RAPL=6ms frequency=1ms C-state=19,20 profile=max_throughput";echo "active metrics: exact parallel batch start->complete; RAPL boundary-prorated; frequency time-weighted";echo "======================================================================"
 bash "$TMP" --runs "$RUNS" --downloads "$CONNECTIONS" --gap-seconds 0 --server-cooldown-seconds 5 --between-tests-seconds 5 --mode-order balanced --seed 20260817 --output-dir "$OUTPUT_DIR" "${TOPOLOGY_ENV[@]}" "${USER_ARGS[@]}"
 [[ -d "$OUTPUT_DIR" ]] || { echo "ERROR: result directory missing: $OUTPUT_DIR" >&2;exit 1; }
-python3 "$AGG" --matrix "$OUTPUT_DIR" --expected-runs "$RUNS" --connections "$CONNECTIONS"
-python3 "$ACTIVE" --matrix "$OUTPUT_DIR" --runs "$RUNS" --connections "$CONNECTIONS"
-python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS"
+python3 "$AGG" --matrix "$OUTPUT_DIR" --expected-runs "$RUNS" --connections "$CONNECTIONS";python3 "$ACTIVE" --matrix "$OUTPUT_DIR" --runs "$RUNS" --connections "$CONNECTIONS";python3 "$VALIDATOR" --matrix "$OUTPUT_DIR" --runs "$RUNS"
 python3 - "$OUTPUT_DIR" "$RUNS" <<'PY'
 from pathlib import Path
 import json,re,sys
