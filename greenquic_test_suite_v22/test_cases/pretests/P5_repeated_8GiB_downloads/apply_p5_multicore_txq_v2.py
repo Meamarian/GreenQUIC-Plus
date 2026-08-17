@@ -12,7 +12,6 @@ src = base.read_text(encoding='utf-8')
 
 # V2 compatibility fixes for the current Performance2 source. Keep the original
 # V1 transform readable, but adapt anchors that drifted in the live datapath.
-# The actual GreenQuicConfigureRoles loop uses uint32_t, not uint16_t.
 role_loop = 'for (uint16_t Index = 0; Index < RTE_MAX_LCORE; ++Index)'
 role_loop_fixed = 'for (uint32_t Index = 0; Index < RTE_MAX_LCORE; ++Index)'
 role_count = src.count(role_loop)
@@ -20,8 +19,6 @@ if role_count != 2:
     raise SystemExit(f'ERROR: V1 role-map loop anchor count={role_count}, expected 2')
 src = src.replace(role_loop, role_loop_fixed)
 
-# V1 used the first token occurrence when finding function boundaries. The live
-# datapath also contains prototypes, so resolve actual definitions instead.
 old_slice = '''def function_slice(name: str, next_name: str) -> tuple[int, int, str]:
     start = text.find(name)
     if start < 0:
@@ -62,11 +59,6 @@ if src.count(old_slice) != 1:
     raise SystemExit(f'ERROR: V1 function_slice anchor count={src.count(old_slice)}')
 src = src.replace(old_slice, new_slice, 1)
 
-# In the current datapath, Interface is declared before packet metadata is
-# finalized and Dpdk is declared later. Do not require the declarations to be
-# adjacent. Also rewrite the old shared-ring uses BEFORE inserting the new
-# selector, otherwise a global replacement can corrupt the selector fallback
-# into "TxRing = ... : TxRing".
 old_enqueue = r'''# Declare routing immediately after Dpdk/Interface are available. Performance2
 # may add diagnostics around this point, so anchor only the common declarations.
 decl = "    DPDK_DATAPATH* Dpdk = Packet->Dpdk;\n    DPDK_INTERFACE* Interface = Packet->Interface;\n"
@@ -109,12 +101,6 @@ if src.count(old_enqueue) != 1:
     raise SystemExit(f'ERROR: V1 TxEnqueue compatibility block count={src.count(old_enqueue)}')
 src = src.replace(old_enqueue, new_enqueue, 1)
 
-# CxPlatDpdkTx currently receives Interface as a function argument:
-#   CxPlatDpdkTx(DPDK_DATAPATH* Dpdk, uint16_t Core, DPDK_INTERFACE* Interface)
-# There is therefore no local "DPDK_INTERFACE* Interface = ..." declaration.
-# Adapt V1 to insert queue-local state after the existing Buffers declaration.
-# Also replace the *actual* current one-owner guard while preserving its
-# GreenQuicOnTxPoll bookkeeping for a non-owner lcore.
 old_tx_consumer = r'''# Replace the old one-owner guard if it survived Performance2.
 body = body.replace(
     "    if (Dpdk->GreenQuicEnableMultiCore &&\n"
@@ -170,8 +156,6 @@ elif legacy_guard in body:
 else:
     raise SystemExit("ERROR: CxPlatDpdkTx one-owner guard shape changed")
 
-# Interface is a function parameter in the current datapath. Insert the queue
-# id/ring immediately after the existing local TX burst buffer declaration.
 anchor = "    struct rte_mbuf* Buffers[Dpdk->TxBurstSize];\n"
 if body.count(anchor) != 1:
     raise SystemExit(
@@ -190,6 +174,56 @@ if src.count(old_tx_consumer) != 1:
         f'ERROR: V1 CxPlatDpdkTx compatibility block count={src.count(old_tx_consumer)}'
     )
 src = src.replace(old_tx_consumer, new_tx_consumer, 1)
+
+# Performance2 sharded handoff intentionally replaces shared-ring backlog reads
+# with GreenQuicP2TxBacklog(), which includes the producer SPSC rings. N is a
+# single-DPDK-consumer experiment, so preserving that aggregate backlog helper is
+# the correct composition. For normal/shared builds, keep V1's per-owner ring
+# rewrite unchanged. Fail closed if neither known shape is present.
+old_policy = r'''# Policy/idle logic must observe each owner's local software ring rather than
+# queue 0. These functions are untouched by the Performance2 hot-path patchers.
+for fn, nxt in (
+    ("GreenQuicCanEnterWorkWait(", "GreenQuicSignalLcoreWork("),
+    ("GreenQuicTryCStateIdle(", "GreenQuicOnRxPoll("),
+    ("GreenQuicApplyPolicy(", "GreenQuicMaybePrintStats("),
+):
+    replace_in_function(
+        fn,
+        nxt,
+        "rte_ring_count(Interface->TxRingBuffer)",
+        "rte_ring_count(GreenQuicGetTxRing(Dpdk, Interface, Core))",
+        f"local TX ring in {fn}",
+    )
+'''
+new_policy = r'''# Policy/idle backlog can arrive in two validated shapes.
+for fn, nxt in (
+    ("GreenQuicCanEnterWorkWait(", "GreenQuicSignalLcoreWork("),
+    ("GreenQuicTryCStateIdle(", "GreenQuicOnRxPoll("),
+    ("GreenQuicApplyPolicy(", "GreenQuicMaybePrintStats("),
+):
+    start, end, body = function_slice(fn, nxt)
+    shared_ring = "rte_ring_count(Interface->TxRingBuffer)"
+    sharded_backlog = "GreenQuicP2TxBacklog(Interface)"
+    if shared_ring in body:
+        replace_in_function(
+            fn,
+            nxt,
+            shared_ring,
+            "rte_ring_count(GreenQuicGetTxRing(Dpdk, Interface, Core))",
+            f"local TX ring in {fn}",
+        )
+    elif sharded_backlog in body:
+        # Preserve aggregate sharded backlog. This build is exercised only by
+        # the safe single-consumer N case.
+        pass
+    else:
+        raise SystemExit(
+            f"ERROR: TX backlog shape in {fn}: expected shared ring or sharded helper"
+        )
+'''
+if src.count(old_policy) != 1:
+    raise SystemExit(f'ERROR: V1 policy/backlog compatibility block count={src.count(old_policy)}')
+src = src.replace(old_policy, new_policy, 1)
 
 with tempfile.NamedTemporaryFile('w', suffix='.py', delete=False, encoding='utf-8') as f:
     f.write(src)
