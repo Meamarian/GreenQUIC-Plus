@@ -4,6 +4,7 @@ set -Eeuo pipefail
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
 source "$HERE/config.env"
 REPO_ROOT="$(cd -- "$HERE/../../../.." && pwd)"
+VERIFY_BINARY="$HERE/verify_p5_parallel_multicore_binary.sh"
 
 MODE="${GQ_MODE_OVERRIDE:-basic}"
 case "$MODE" in off|basic|plus) ;; *) echo "ERROR: invalid GQ_MODE_OVERRIDE=$MODE" >&2; exit 2;; esac
@@ -16,13 +17,8 @@ LOCAL_PORT_BASE="${P5_PARALLEL_LOCAL_PORT_BASE:-45000}"
 
 export GQ_INTEROP_CLIENT_BIN="${GQ_INTEROP_CLIENT_BIN:-$REPO_ROOT/msquic/build-greenquic-p5/bin/Release/quicinterop}"
 actual_client_bin="$GQ_INTEROP_CLIENT_BIN"
-for marker in GREENQUIC-P5-PARALLEL-CONNECTIONS-V1 GREENQUIC-P5-MULTICORE-TXQ-V1; do
-    grep -aFq -- "$marker" "$actual_client_bin" 2>/dev/null || {
-        echo "ERROR: selected P5 client lacks $marker: $actual_client_bin" >&2
-        echo "Run ./build_p5_multicore_performance2.sh first." >&2
-        exit 2
-    }
-done
+[[ -f "$VERIFY_BINARY" ]] || { echo "ERROR: compiled-runtime verifier missing: $VERIFY_BINARY" >&2; exit 2; }
+bash "$VERIFY_BINARY" client "$actual_client_bin"
 
 # Four (by default) distinct URLs prevent output-name collisions, and forced
 # local UDP ports create distinct 5-tuples for RSS on both P5 and P7.
@@ -46,6 +42,11 @@ REQUEST_PATHS="${REQUEST_PATHS%$'\n'}"
 export REQUEST_PATHS
 export DOWNLOADS_PER_RUN="$CONNECTIONS"
 export GAP_US=0
+# Reuse the proven one-process/many-URL controller path. The transformed
+# quicinterop sees GQ_INTEROP_P5_PARALLEL=1 and creates one independent QUIC
+# connection per URL. Do not switch this to the stock parallel_connections
+# workload, which can fall back to multiple client processes and would be
+# invalid for one shared DPDK EAL/NIC instance.
 export WORKLOAD_KIND=multi_stream_single_connection
 export GQ_INTEROP_P5_SEQUENCE=0
 export GQ_INTEROP_P5_PARALLEL=1
