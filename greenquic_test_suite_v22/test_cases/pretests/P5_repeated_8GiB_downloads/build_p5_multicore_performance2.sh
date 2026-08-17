@@ -90,16 +90,21 @@ CLIENT="$BUILD/bin/Release/quicinterop"
 SERVER="$BUILD/bin/Release/quicinteropserver"
 for bin in "$CLIENT" "$SERVER"; do
     [[ -x "$bin" ]] || { echo "ERROR: missing executable $bin" >&2; exit 2; }
+
+    # Only check strings that are part of compiled runtime/config behavior.
+    # GREENQUIC-P5-MULTICORE-TXQ-V1 is a source-audit comment marker and is
+    # intentionally NOT expected in an optimized executable.
     for marker in \
         GreenQuicEnableMultiCore \
         GreenQuicPartitionDpdkMap \
-        GREENQUIC-P5-MULTICORE-TXQ-V1 \
         greenquic-mc-queue-v1 \
+        'GreenQUIC multicore TX queue topology invalid' \
+        'GreenQUIC multicore TX requires one TX queue per DPDK RX owner' \
         GREENQUIC-P5-PERFORMANCE2-V1 \
         GREENQUIC-P5-PERFORMANCE2-V2
     do
         grep -aFq -- "$marker" "$bin" || {
-            echo "ERROR: multicore/performance marker '$marker' missing from $bin" >&2
+            echo "ERROR: compiled multicore/performance evidence '$marker' missing from $bin" >&2
             exit 2
         }
     done
