@@ -48,27 +48,23 @@ LOCAL_BRANCH="$(git -C "$LOCAL_REPO" branch --show-current)"
 BUNDLE="$(mktemp "${TMPDIR:-/tmp}/greenquic_mc.XXXXXX.bundle")"
 REMOTE_BUNDLE="/tmp/greenquic_mc_${TAG}.bundle"
 trap 'rm -f "$BUNDLE" "${TMP:-}"' EXIT
-git -C "$LOCAL_REPO" bundle create "$BUNDLE" "$LOCAL_SHA"
+git -C "$LOCAL_REPO" bundle create "$BUNDLE" "$BRANCH"
 
-after_bundle_sync(){
-    local host="$1"
-    if [[ "$host" == "idex" ]]; then
-        retry scp "${SSH[@]}" "$BUNDLE" "idex:$REMOTE_BUNDLE"
-        retry ssh "${SSH[@]}" idex "cd /root/mohsen && git reset --hard && git clean -fd && git fetch '$REMOTE_BUNDLE' '$LOCAL_SHA' && git checkout -B '$BRANCH' '$LOCAL_SHA' && git reset --hard '$LOCAL_SHA'"
-    else
-        retry ssh "${SSH[@]}" idex "scp -o ConnectTimeout=15 '$REMOTE_BUNDLE' root@tinyman:'$REMOTE_BUNDLE'"
-        retry ssh "${SSH[@]}" idex "ssh -o ConnectTimeout=15 root@tinyman \"cd /root/mohsen && git reset --hard && git clean -fd && git fetch '$REMOTE_BUNDLE' '$LOCAL_SHA' && git checkout -B '$BRANCH' '$LOCAL_SHA' && git reset --hard '$LOCAL_SHA'\""
-    fi
+sync_idex(){
+    retry scp "${SSH[@]}" "$BUNDLE" "idex:$REMOTE_BUNDLE"
+    retry ssh "${SSH[@]}" idex "cd /root/mohsen && git reset --hard && git fetch '$REMOTE_BUNDLE' '$BRANCH' && test \"\$(git rev-parse FETCH_HEAD)\" = '$LOCAL_SHA' && git checkout -B '$BRANCH' '$LOCAL_SHA' && git reset --hard '$LOCAL_SHA'"
 }
-
-after_bundle_sync idex
-after_bundle_sync tinyman
+sync_tinyman(){
+    retry ssh "${SSH[@]}" idex "scp -o ConnectTimeout=15 '$REMOTE_BUNDLE' root@tinyman:'$REMOTE_BUNDLE'"
+    retry ssh "${SSH[@]}" idex "ssh -o ConnectTimeout=15 root@tinyman \"cd /root/mohsen && git reset --hard && git fetch '$REMOTE_BUNDLE' '$BRANCH' && test \\\"\\\$(git rev-parse FETCH_HEAD)\\\" = '$LOCAL_SHA' && git checkout -B '$BRANCH' '$LOCAL_SHA' && git reset --hard '$LOCAL_SHA'\""
+}
+sync_idex
+sync_tinyman
 IDEX_SHA="$(ssh "${SSH[@]}" idex 'cd /root/mohsen && git rev-parse HEAD')"
 TINY_SHA="$(ssh "${SSH[@]}" idex "ssh -o ConnectTimeout=15 root@tinyman 'cd /root/mohsen && git rev-parse HEAD'")"
 [[ "$IDEX_SHA" == "$LOCAL_SHA" && "$TINY_SHA" == "$LOCAL_SHA" ]] || { echo "ERROR: commit mismatch local=$LOCAL_SHA idex=$IDEX_SHA tinyman=$TINY_SHA" >&2; exit 2; }
 log "Mac + idex + tinyman synced to $BRANCH @ $LOCAL_SHA"
 
-# Fail before traffic if either generated multicore controller is stale.
 retry ssh "${SSH[@]}" idex "cd '$P5' && bash ./run_parallel_multicore_matrix.sh --controller-preflight --runs '$RUNS' --connections '$CONNECTIONS'"
 retry ssh "${SSH[@]}" idex "cd '$P7' && bash ./run_parallel_multicore_matrix.sh --controller-preflight --runs '$RUNS' --connections '$CONNECTIONS'"
 log "P5 + P7 multicore controller preflight PASS"
@@ -79,18 +75,15 @@ cat >"$TMP" <<'REMOTE'
 set +e
 P5="$1"; P7="$2"; P5_MATRIX="$3"; P7_MATRIX="$4"; RUNS="$5"; CONNECTIONS="$6"; STATE="$7"; SUMMARY="$8"
 rm -f "$STATE.DONE" "$STATE.FAIL" "$SUMMARY"
-
 cd "$P5" || exit 90
 bash ./run_parallel_multicore_matrix.sh --runs "$RUNS" --connections "$CONNECTIONS" --output-dir "$P5_MATRIX"
 P5RC=$?
 if [[ $P5RC -ne 0 ]]; then echo "P5:$P5RC" > "$STATE.FAIL"; exit "$P5RC"; fi
-
 sleep 10
 cd "$P7" || exit 91
 bash ./run_parallel_multicore_matrix.sh --runs "$RUNS" --connections "$CONNECTIONS" --output-dir "$P7_MATRIX"
 P7RC=$?
 if [[ $P7RC -ne 0 ]]; then echo "P7:$P7RC" > "$STATE.FAIL"; exit "$P7RC"; fi
-
 python3 - "$P5_MATRIX/parallel_tables/parallel_goodput_summary.csv" "$P7_MATRIX/parallel_tables/parallel_goodput_summary.csv" "$SUMMARY" <<'PY'
 import csv,sys
 p5,p7,out=sys.argv[1:]
@@ -111,17 +104,12 @@ print(open(out,encoding='utf-8').read(),end='')
 PY
 SRC=$?
 if [[ $SRC -ne 0 ]]; then echo "SUMMARY:$SRC" > "$STATE.FAIL"; exit "$SRC"; fi
-
 touch "$STATE.DONE"
-exit 0
 REMOTE
 bash -n "$TMP"
 retry scp "${SSH[@]}" "$TMP" "idex:$REMOTE_RUNNER"
-
-# Critical: new session on idex, fully independent of the Mac SSH process.
 retry ssh "${SSH[@]}" idex "chmod +x '$REMOTE_RUNNER'; nohup setsid bash '$REMOTE_RUNNER' '$P5' '$P7' '$P5_MATRIX' '$P7_MATRIX' '$RUNS' '$CONNECTIONS' '$REMOTE_STATE' '$REMOTE_SUMMARY' >'$REMOTE_LOG' 2>&1 </dev/null & echo REMOTE_PID=\$!"
 log "detached P5+P7 multicore suite started on idex"
-
 while true; do
     if ssh "${SSH[@]}" idex "test -f '$REMOTE_STATE.DONE'" >/dev/null 2>&1; then break; fi
     if ssh "${SSH[@]}" idex "test -f '$REMOTE_STATE.FAIL'" >/dev/null 2>&1; then
@@ -132,17 +120,11 @@ while true; do
     log "waiting; temporary Mac->idex SSH loss is harmless"
     sleep 60
 done
-
 mkdir -p "$LOCAL_EXPORT/P5" "$LOCAL_EXPORT/P7"
 retry scp "${SSH[@]}" "idex:$REMOTE_SUMMARY" "$LOCAL_EXPORT/goodput_all_cases.tsv"
-for rel in parallel_tables/parallel_goodput_summary.csv parallel_tables/parallel_goodput_all_runs.csv parallel_tables/parallel_active_summary.csv parallel_queue_activity.json PARALLEL_MULTICORE_CONFIG.txt; do
-    retry scp "${SSH[@]}" "idex:$P5_MATRIX/$rel" "$LOCAL_EXPORT/P5/$(basename "$rel")"
-done
-for rel in parallel_tables/parallel_goodput_summary.csv parallel_tables/parallel_goodput_all_runs.csv parallel_tables/parallel_active_summary.csv PARALLEL_MULTICORE_CONFIG.txt; do
-    retry scp "${SSH[@]}" "idex:$P7_MATRIX/$rel" "$LOCAL_EXPORT/P7/$(basename "$rel")"
-done
+for rel in parallel_tables/parallel_goodput_summary.csv parallel_tables/parallel_goodput_all_runs.csv parallel_tables/parallel_active_summary.csv parallel_queue_activity.json PARALLEL_MULTICORE_CONFIG.txt; do retry scp "${SSH[@]}" "idex:$P5_MATRIX/$rel" "$LOCAL_EXPORT/P5/$(basename "$rel")"; done
+for rel in parallel_tables/parallel_goodput_summary.csv parallel_tables/parallel_goodput_all_runs.csv parallel_tables/parallel_active_summary.csv PARALLEL_MULTICORE_CONFIG.txt; do retry scp "${SSH[@]}" "idex:$P7_MATRIX/$rel" "$LOCAL_EXPORT/P7/$(basename "$rel")"; done
 retry scp "${SSH[@]}" "idex:$REMOTE_LOG" "$LOCAL_EXPORT/remote.log"
-
 log "COMPLETE"
 log "P5_MATRIX=$P5_MATRIX"
 log "P7_MATRIX=$P7_MATRIX"
