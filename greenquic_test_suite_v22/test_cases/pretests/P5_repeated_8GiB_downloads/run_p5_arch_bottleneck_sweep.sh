@@ -6,15 +6,16 @@ CASE="$HERE/run_p5_arch_case_diag.sh"
 SUM="$HERE/summarize_p5_arch_sweep.py"
 CLEAN="$HERE/safe_cleanup_p5_bottleneck_processes.py"
 PATCH="$HERE/enable_p5_arch_runtime_config.py"
+VERIFY="$HERE/verify_p5_arch_effective_config.py"
 RUNS="${P5_ARCH_RUNS:-2}"; CONNS="${P5_ARCH_CONNECTIONS:-4}"; TAG="${P5_ARCH_TAG:-$(date +%Y%m%d_%H%M%S)}"
 ROOT="${P5_ARCH_OUTPUT_ROOT:-$HERE/matrix_results/P5_ARCH_BOTTLENECK_${CONNS}c_${RUNS}r_${TAG}}"
 [[ "$RUNS" =~ ^[1-9][0-9]*$ && "$CONNS" =~ ^[2-9][0-9]*$ ]] || { echo 'ERROR invalid runs/connections' >&2; exit 2; }
-for f in "$BUILD" "$CASE" "$SUM" "$CLEAN" "$PATCH" "$HERE/thread_topology_sampler.py" "$HERE/run_p5_arch_off_case.sh"; do [[ -f "$f" ]] || { echo "ERROR missing $f" >&2; exit 2; }; done
+for f in "$BUILD" "$CASE" "$SUM" "$CLEAN" "$PATCH" "$VERIFY" "$HERE/thread_topology_sampler.py" "$HERE/run_p5_arch_off_case.sh"; do [[ -f "$f" ]] || { echo "ERROR missing $f" >&2; exit 2; }; done
 for shf in "$BUILD" "$CASE" "$HERE/run_p5_arch_off_case.sh"; do bash -n "$shf"; done
-python3 -m py_compile "$SUM" "$PATCH" "$HERE/thread_topology_sampler.py" "$HERE/quic_cpu_activity_sampler.py" "$HERE/analyze_p5_bottleneck_case.py" "$HERE/cpu_busy_sampler.py"
+python3 -m py_compile "$SUM" "$PATCH" "$VERIFY" "$HERE/thread_topology_sampler.py" "$HERE/quic_cpu_activity_sampler.py" "$HERE/analyze_p5_bottleneck_case.py" "$HERE/cpu_busy_sampler.py"
 mkdir -p "$ROOT/build_logs"
 STATUS="$ROOT/CASE_STATUS.tsv"
-printf 'case\tbuild_profile\tbuild_rc\ttraffic_rc\tcontroller_rc\tanalysis_rc\n' >"$STATUS"
+printf 'case\tbuild_profile\tbuild_rc\ttraffic_rc\tcontroller_rc\tanalysis_rc\teffective_config_rc\n' >"$STATUS"
 
 # P5 already contains parser/runtime support for GreenQuicQuicAffinitize, but its
 # P5-local dpdk.ini writer omitted the key. Patch the ACTUAL helper sourced by
@@ -38,9 +39,13 @@ build_profile(){
 }
 run_case(){
   local name="$1" profile="$2" brc="$3" dpdk="$4" quic="$5" part="$6" execp="$7" aff="$8"; shift 8
-  local dir="$ROOT/$name" rc=125 cr='' ar=''; mkdir -p "$dir"
+  local dir="$ROOT/$name" rc=125 cr='' ar='' vrc=125 pmap='' multi=''; mkdir -p "$dir"
   echo "===== CASE $name DPDK=$dpdk QUIC=$quic partition=$part exec=$execp aff=$aff ====="
-  if ((brc!=0)); then printf '%s\t%s\t%s\t125\t\t\n' "$name" "$profile" "$brc" >>"$STATUS"; echo "SKIP $name build failed" >&2; return 0; fi
+  if ((brc!=0)); then
+    printf '%s\t%s\t%s\t125\t\t\t125\n' "$name" "$profile" "$brc" >>"$STATUS"
+    echo "SKIP $name build failed" >&2
+    return 0
+  fi
   cleanup_between
   set +e
   bash "$CASE" --case-name "$name" --runs "$RUNS" --connections "$CONNS" --dpdk-lcores "$dpdk" --quic-cpus "$quic" --partition-style "$part" --execution-profile "$execp" --affinitize "$aff" --output-dir "$dir" "$@"
@@ -49,16 +54,35 @@ run_case(){
   if [[ -f "$dir/ARCH_CASE_STATUS.env" ]]; then
     cr="$(awk -F= '$1=="controller_rc"{print $2}' "$dir/ARCH_CASE_STATUS.env")"
     ar="$(awk -F= '$1=="analysis_rc"{print $2}' "$dir/ARCH_CASE_STATUS.env")"
+    pmap="$(awk -F= '$1=="partition_map"{print substr($0,index($0,"=")+1)}' "$dir/ARCH_CASE_STATUS.env")"
+    multi="$(awk -F= '$1=="enable_multicore"{print $2}' "$dir/ARCH_CASE_STATUS.env")"
+    if [[ -n "$pmap" && ( "$multi" == 0 || "$multi" == 1 ) ]]; then
+      set +e
+      python3 "$VERIFY" \
+        --case-dir "$dir" \
+        --dpdk-lcores "$dpdk" \
+        --quic-cpus "$quic" \
+        --partition-map "$pmap" \
+        --affinitize "$aff" \
+        --execution-profile "$execp" \
+        --enable-multicore "$multi"
+      vrc=$?
+      set -e
+      ((vrc==0)) || echo "WARN: $name effective runtime topology validation rc=$vrc; traffic result is preserved" >&2
+    else
+      echo "WARN: $name cannot verify effective topology because ARCH_CASE_STATUS.env is incomplete" >&2
+    fi
   fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$profile" "$brc" "$rc" "$cr" "$ar" >>"$STATUS"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$profile" "$brc" "$rc" "$cr" "$ar" "$vrc" >>"$STATUS"
   ((rc==0)) || echo "WARN: $name traffic rc=$rc; continuing to next case" >&2
 }
 
 cat >"$ROOT/SWEEP_DESIGN.txt" <<EOF
 P5 architectural bottleneck localization -- 16 cases A-P
-All normal traffic cases: OFF, $CONNS simultaneous 8-GiB QUIC downloads, $RUNS repetitions, MTU1500.
-Goal: find architectural changes large enough to move ~8.7 Gbit/s toward >=11 Gbit/s.
+All normal traffic cases: OFF, $CONNS simultaneous 8-GiB QUIC downloads, $RUNS repetitions, MTU1500 unless a case explicitly changes an architecture feature.
+Goal: find structural changes large enough to move ~8.7 Gbit/s toward >=11 Gbit/s.
 Traffic success is independent of diagnostics/plotting/report success.
+Each case independently validates the effective generated dpdk.ini topology on server and client.
 
 A  2 DPDK / 4 QUIC workers, AFFINITIZE=0 -- reproduce current behavior
 B  2 DPDK / 4 QUIC workers, AFFINITIZE=1 -- primary reference
@@ -73,13 +97,14 @@ J  2 DPDK / 4 QUIC, all QUIC partitions mapped to DPDK19 -- serialization stress
 K  2 DPDK / 4 QUIC, grouped map 0,1->19 and 2,3->20
 L  2 DPDK / 4 QUIC, classic MP TX-ring synchronization
 M  2 DPDK / 4 QUIC, RTS TX-ring synchronization
-N  1 DPDK / 4 QUIC, optimized sharded per-producer SPSC handoff -- compare with F
+N  2 DPDK / 4 QUIC, sharded per-producer handoff -- direct structural comparison with B
 O  2 DPDK / 4 QUIC, UDP-segmentation/offload capability path (fails closed if unsupported)
 P  rebuild + repeat B at end -- drift/thermal control
 
 Every case captures aggregate/per-connection goodput, all process TIDs with CPU-time/CPU-set evidence,
-selected QUIC-worker activity, /proc/stat CPU busy traces, and per-DPDK-lcore packet counters when emitted.
-A completed QUIC batch remains TRAFFIC PASS even if a plot/report/diagnostic fails after transfer completion.
+selected QUIC-worker activity, /proc/stat CPU busy traces, per-DPDK-lcore packet counters when emitted,
+and an effective-runtime-config PASS/FAIL derived from generated dpdk.ini artifacts.
+A completed QUIC batch remains TRAFFIC PASS even if a plot/report/diagnostic/effective-config check fails afterward.
 EOF
 
 BRC=0; build_profile baseline || BRC=$?
@@ -102,7 +127,7 @@ BRC_RTS=0; build_profile ring_rts P5_SUPER_RING_SYNC=rts || BRC_RTS=$?
 run_case M_2D_4Q_ring_rts ring_rts "$BRC_RTS" 19,20 21,22,23,24 balanced max_throughput 1
 
 BRC_SH=0; build_profile sharded P5_P2_TX_HANDOFF=sharded P5_P2_SHARD_ACTIVE_MASK=1 || BRC_SH=$?
-run_case N_1D_4Q_sharded sharded "$BRC_SH" 19 21,22,23,24 balanced max_throughput 1
+run_case N_2D_4Q_sharded sharded "$BRC_SH" 19,20 21,22,23,24 balanced max_throughput 1
 
 BRC_USO=0; build_profile udpseg P5_P2_UDP_SEG=1 P5_P2_UDP_SEG_MAX=4 || BRC_USO=$?
 run_case O_2D_4Q_udpseg udpseg "$BRC_USO" 19,20 21,22,23,24 balanced max_throughput 1
