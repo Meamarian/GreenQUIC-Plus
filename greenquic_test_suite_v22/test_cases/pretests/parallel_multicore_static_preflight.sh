@@ -65,14 +65,17 @@ for marker in ('GreenQuicEnableMultiCore','GreenQuicRxQueueByLcore','RTE_ETH_MQ_
 if 'GREENQUIC-P5-MULTICORE-TXQ-V1' in text:raise SystemExit('ERROR: disposable-only TXQ transform leaked into checked-in MsQuic datapath')
 if 'for (uint32_t Index = 0; Index < RTE_MAX_LCORE; ++Index)' not in text:
  raise SystemExit('ERROR: current GreenQuicConfigureRoles role-map loop shape changed')
+# Current CxPlatDpdkTx receives Interface as a parameter. Keep this explicit so
+# future signature drift is caught before the disposable transform runs.
+sig='''CxPlatDpdkTx(\n    _In_ DPDK_DATAPATH* Dpdk,\n    _In_ uint16_t Core,\n    _In_ DPDK_INTERFACE* Interface\n    )'''
+if sig not in text:raise SystemExit('ERROR: current CxPlatDpdkTx signature changed')
 print('PASS: checked-in datapath remains base architecture; disposable-only TXQ marker absent')
+print('PASS: current CxPlatDpdkTx Interface-parameter signature verified')
 PY
 
 # Reproduce the exact disposable datapath transformation order used by
 # build_p5_client -> build_p5_super_performance -> build_p5_performance2 ->
-# build_p5_multicore_performance2.  In particular, apply_p5_datapath_fix.py
-# MUST run before the packet-counter guard; it creates the P5 packet-total,
-# EPOLL-fd and record-at-log0 markers that the real P5 build relies on.
+# build_p5_multicore_performance2. apply_p5_datapath_fix.py must run first.
 for f in \
     "$P5/apply_p5_datapath_fix.py" \
     "$P5/apply_p5_super_performance.py" \
@@ -175,6 +178,53 @@ grep -Fq 'PortConfig.rxmode.mtu = 1500;' "$TMP_DP" || {
     echo "ERROR: full-chain preflight lost fair-comparison MTU 1500" >&2
     exit 2
 }
+
+# Validate the exact transformed hot paths structurally, not just markers.
+python3 - "$TMP_DP" <<'PY'
+from pathlib import Path
+import re,sys
+text=Path(sys.argv[1]).read_text(encoding='utf-8',errors='replace')
+
+def fn(name,next_name):
+    start=text.find(name)
+    while start >= 0:
+        brace=text.find('{',start+len(name));semi=text.find(';',start+len(name))
+        if brace >= 0 and (semi < 0 or brace < semi):break
+        start=text.find(name,start+len(name))
+    if start < 0:raise SystemExit(f'ERROR: transformed function missing: {name}')
+    end=text.find(next_name,brace+1)
+    if end < 0:raise SystemExit(f'ERROR: transformed next function missing: {next_name}')
+    return text[start:end]
+
+enq=fn('CxPlatDpRawTxEnqueue(', 'CxPlatDpdkTx(')
+if 'const uint16_t TxQueueId = GreenQuicSelectTxQueue(Dpdk, Packet->Mbuf);' not in enq:
+    raise SystemExit('ERROR: transformed TxEnqueue lacks per-flow queue selection')
+if 'rte_ring_mp_enqueue(TxRing, Packet->Mbuf)' not in enq and 'rte_ring_enqueue(TxRing, Packet->Mbuf)' not in enq:
+    raise SystemExit('ERROR: transformed TxEnqueue does not enqueue to selected TxRing')
+if 'GreenQuicSignalTxQueueWork(Dpdk, TxQueueId);' not in enq:
+    raise SystemExit('ERROR: transformed TxEnqueue does not wake selected TX owner')
+
+tx=fn('CxPlatDpdkTx(', 'CxPlatDpdkRxWorkerThread(')
+required=(
+ 'const uint16_t TxQueueId = GreenQuicGetTxQueueId(Dpdk, Core);',
+ 'struct rte_ring* TxRing = GreenQuicGetTxRing(Dpdk, Interface, Core);',
+ 'if (Dpdk->GreenQuicEnableMultiCore && !GreenQuicLcoreOwnsTx(Dpdk, Core))',
+ 'rte_ring_count(TxRing)',
+ 'rte_ring_sc_dequeue_burst(\n            TxRing,',
+)
+for needle in required:
+    if needle not in tx:raise SystemExit(f'ERROR: transformed CxPlatDpdkTx missing: {needle}')
+if 'Core != Dpdk->GreenQuicTxOwnerLcore' in tx:
+    raise SystemExit('ERROR: old single-TX-owner guard survived in transformed CxPlatDpdkTx')
+if 'Interface->TxRingBuffer' in tx:
+    raise SystemExit('ERROR: shared TX ring reference survived in transformed CxPlatDpdkTx')
+if not re.search(r'rte_eth_tx_burst\(\s*Interface->Port,\s*TxQueueId\s*,',tx):
+    raise SystemExit('ERROR: strict-OFF TX burst is not routed through TxQueueId')
+if not re.search(r'GreenQuicTrackedTxBurst\(\s*Interface->Port,\s*TxQueueId\s*,',tx):
+    raise SystemExit('ERROR: BASIC/PLUS TX burst is not routed through TxQueueId')
+print('PASS: transformed TxEnqueue uses stable per-flow queue/ring and queue-specific wake')
+print('PASS: transformed CxPlatDpdkTx lets both TX owners drain only their own ring/NIC queue')
+PY
 
 rm -f "$TMP_DP"
 trap - EXIT
