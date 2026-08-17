@@ -21,6 +21,8 @@ COMMON_RUNTIME_EVIDENCE=(
     GreenQuicEnableMultiCore
     GreenQuicPartitionDpdkMap
     greenquic-mc-queue-v1
+    greenquic-mc-lcore-v1
+    'LCORE_STATS schema=greenquic-mc-lcore-v1'
     'GreenQUIC multicore TX queue topology invalid'
     'GreenQUIC multicore TX requires one TX queue per DPDK RX owner'
     GREENQUIC-P5-PERFORMANCE2-V1
