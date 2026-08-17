@@ -53,6 +53,13 @@ stop(){
 }
 trap 'rc=$?; trap - EXIT INT TERM; stop; exit $rc' EXIT INT TERM
 
+# GREENQUIC-P5-ARCH-FRESH-CONFIG-EVIDENCE-V1
+# A case may fail before the peer application starts. Never let a dpdk.ini from
+# an earlier case masquerade as current-case effective-config evidence.
+rm -f "$HERE/runtime/server/dpdk.ini"
+ssh -o BatchMode=yes -o ConnectTimeout=12 root@tinyman \
+    "rm -f '$HERE/runtime/client/dpdk.ini'" >/dev/null 2>&1 || true
+
 # Diagnostics are evidence only. Failure to start any sampler must not block traffic.
 set +e
 python3 "$THREAD" --binary "$SBIN" --json "$OUTPUT/thread_topology_server.json" --csv "$OUTPUT/thread_topology_server.csv" --interval-ms 20 >"$OUTPUT/thread_topology_server.log" 2>&1 & SP=$!
