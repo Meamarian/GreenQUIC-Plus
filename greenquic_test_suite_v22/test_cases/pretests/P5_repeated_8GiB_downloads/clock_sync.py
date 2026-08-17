@@ -16,7 +16,18 @@ REMOTE_PROBE = r'''python3 -u -c 'import json,sys,time
 print("READY", flush=True)
 for _ in sys.stdin:
     print(json.dumps({"wall_ns":time.time_ns(),"monotonic_ns":time.monotonic_ns()}), flush=True)' '''
-FINAL_RE = re.compile(r"\[GreenQUIC-P5\]\s+request=(\d+)/(\d+)\s+complete_us=.*\bsuccess=1\b")
+
+# The normal P5 workload is sequential, while the multicore throughput workload
+# completes as one successful parallel batch. Clock-drift auditing must accept
+# either completion contract; otherwise a valid parallel transfer never gets an
+# end-of-run clock sample.
+FINAL_SEQ_RE = re.compile(
+    r"\[GreenQUIC-P5\]\s+request=(\d+)/(\d+)\s+complete_us=.*\bsuccess=1\b"
+)
+FINAL_PARALLEL_RE = re.compile(
+    r"\[GreenQUIC-PARALLEL\]\s+batch=1\s+complete_us=\d+\s+duration_us=\d+\s+"
+    r"connections=(\d+)\s+connected=(\d+)\s+completed=(\d+)\s+success=1\b"
+)
 
 
 def _readline_timeout(pipe, timeout_s: float) -> str:
@@ -151,8 +162,12 @@ def client_log_for(start_out: Path) -> Path | None:
 
 
 def final_download_seen(text: str) -> bool:
-    for match in FINAL_RE.finditer(text):
+    for match in FINAL_SEQ_RE.finditer(text):
         if int(match.group(1)) == int(match.group(2)):
+            return True
+    for match in FINAL_PARALLEL_RE.finditer(text):
+        connections, connected, completed = map(int, match.groups())
+        if connections > 0 and connected == connections and completed == connections:
             return True
     return False
 
@@ -211,6 +226,18 @@ def self_test() -> int:
     assert client_log_for(Path("/x/clock_sync_rep01_plus.json")) == Path("/x/client_rep01_plus.log")
     assert final_download_seen("[GreenQUIC-P5] request=6/6 complete_us=123 path=x duration_us=1 success=1")
     assert not final_download_seen("[GreenQUIC-P5] request=5/6 complete_us=123 path=x duration_us=1 success=1")
+    assert final_download_seen(
+        "[GreenQUIC-PARALLEL] batch=1 complete_us=123 duration_us=100 "
+        "connections=4 connected=4 completed=4 success=1"
+    )
+    assert not final_download_seen(
+        "[GreenQUIC-PARALLEL] batch=1 complete_us=123 duration_us=100 "
+        "connections=4 connected=4 completed=3 success=1"
+    )
+    assert not final_download_seen(
+        "[GreenQUIC-PARALLEL] batch=1 complete_us=123 duration_us=100 "
+        "connections=4 connected=4 completed=4 success=0"
+    )
     samples = [
         {
             "client_minus_controller_offset_ns": 100,
@@ -232,7 +259,7 @@ def self_test() -> int:
     result = result_from_samples("tinyman", samples)
     assert result["client_minus_controller_monotonic_offset_ns"] == 210
     assert result["controller_midpoint_monotonic_ns"] == 2000
-    print("clock_sync self-test PASS")
+    print("clock_sync self-test PASS (sequential + parallel completion)")
     return 0
 
 
