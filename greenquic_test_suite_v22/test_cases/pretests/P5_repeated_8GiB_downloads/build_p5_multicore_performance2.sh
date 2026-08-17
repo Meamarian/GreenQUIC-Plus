@@ -9,9 +9,10 @@ BUILD="$REPO_ROOT/msquic/build-greenquic-p5"
 DPDK="$REPO_ROOT/msquic/deps/dpdk-install"
 BASE="$HERE/build_p5_performance2.sh"
 PARALLEL_TRANSFORM="$HERE/apply_p5_parallel_connections.py"
-TXQ_TRANSFORM="$HERE/apply_p5_multicore_txq.py"
+TXQ_TRANSFORM="$HERE/apply_p5_multicore_txq_v2.py"
+TXQ_TRANSFORM_BASE="$HERE/apply_p5_multicore_txq.py"
 
-for f in "$BASE" "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM"; do
+for f in "$BASE" "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_BASE"; do
     [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2; exit 2; }
 done
 [[ -d "$DPDK" ]] || { echo "ERROR: DPDK install missing: $DPDK" >&2; exit 2; }
@@ -33,7 +34,7 @@ bash "$BASE"
 
 python3 "$PARALLEL_TRANSFORM" "$SOURCE"
 python3 "$TXQ_TRANSFORM" "$DATAPATH"
-python3 -m py_compile "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM"
+python3 -m py_compile "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_BASE"
 
 # Static source audit before compilation.
 python3 - "$SOURCE" "$DATAPATH" <<'PY'
@@ -62,12 +63,17 @@ required_dp=(
 missing=[x for x in required_source if x not in source] + [x for x in required_dp if x not in dp]
 if missing:
     raise SystemExit('ERROR: multicore source audit missing: '+', '.join(missing))
-# The old multicore architecture had exactly one NIC TX queue. It must no longer
-# survive as the active role assignment in this disposable source.
 if 'Dpdk->GreenQuicTxOwnerCount = NextTxQueue;' not in dp:
     raise SystemExit('ERROR: per-lcore TX owner count assignment missing')
 if 'Hash % Dpdk->GreenQuicTxOwnerCount' not in dp:
     raise SystemExit('ERROR: stable flow-to-TX-queue mapping missing')
+# Fail if the active multicore role assignment still contains the legacy
+# one-NIC-TX-queue setup from the original optional multicore implementation.
+role_start=dp.find('static void\nGreenQuicConfigureRoles(')
+role_end=dp.find('CxPlatDpdkReadConfig(', role_start)
+role=dp[role_start:role_end] if role_start >= 0 and role_end > role_start else ''
+if not role or 'Dpdk->GreenQuicTxOwnerCount = NextTxQueue;' not in role:
+    raise SystemExit('ERROR: cannot prove two-queue TX role assignment in GreenQuicConfigureRoles')
 print('P5 parallel multicore source audit PASS')
 PY
 
