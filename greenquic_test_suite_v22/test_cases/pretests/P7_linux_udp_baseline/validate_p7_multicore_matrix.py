@@ -123,34 +123,40 @@ def main() -> int:
                     )
 
             for scope in ("active", "gap", "combined"):
-                freq = (
-                    ((summary.get("scopes") or {}).get(scope) or {})
-                    .get("frequency") or {}
-                )
+                scope_row = ((summary.get("scopes") or {}).get(scope) or {})
+                duration = scope_row.get("duration_s")
+                try:
+                    duration_f = float(duration or 0.0)
+                except Exception:
+                    duration_f = 0.0
+
+                # Parallel-connection experiments intentionally have no
+                # inter-download gap. An empty zero-duration scope is valid and
+                # must not be treated as missing frequency/C-state data.
+                if duration_f <= 0.0:
+                    continue
+
+                freq = scope_row.get("frequency") or {}
                 missing = {19, 20} - {int(key) for key in freq.keys()}
                 if missing:
                     errors.append(
                         f"{endpoint} rep{rep_index:02d} {scope}: summary frequency missing CPUs {sorted(missing)}"
                     )
 
-                scope_row = ((summary.get("scopes") or {}).get(scope) or {})
-                duration = scope_row.get("duration_s")
                 states = scope_row.get("cstate") or {}
                 try:
-                    duration_f = float(duration)
                     idle_cpu_s = sum(
                         float((row or {}).get("seconds", 0.0))
                         for row in states.values()
                     )
                 except Exception:
                     continue
-                if duration_f > 0:
-                    normalized = idle_cpu_s / (duration_f * 2.0) * 100.0
-                    if normalized < -1e-6 or normalized > 100.000001:
-                        errors.append(
-                            f"{endpoint} rep{rep_index:02d} {scope}: normalized "
-                            f"C-state idle fraction={normalized:.6f}% outside 0..100"
-                        )
+                normalized = idle_cpu_s / (duration_f * 2.0) * 100.0
+                if normalized < -1e-6 or normalized > 100.000001:
+                    errors.append(
+                        f"{endpoint} rep{rep_index:02d} {scope}: normalized "
+                        f"C-state idle fraction={normalized:.6f}% outside 0..100"
+                    )
 
     if args.report_dir:
         validation = args.report_dir / "multicore" / "multicore_validation.json"
@@ -167,7 +173,7 @@ def main() -> int:
                 errors.append(f"invalid multicore report validation: {exc}")
 
     audit = {
-        "schema": "greenquic-p7-multicore-matrix-audit-v1",
+        "schema": "greenquic-p7-multicore-matrix-audit-v2",
         "matrix": str(root),
         "runs": args.runs,
         "dataplane_cpus": [19, 20],
@@ -176,8 +182,9 @@ def main() -> int:
         "errors": errors,
         "status": "PASS" if not errors else "FAIL",
         "rss_note": (
-            "A single QUIC connection may hash to one Linux RX queue. "
-            "This validates a two-queue/two-CPU baseline, not RX scaling."
+            "Parallel runs force distinct client UDP source ports. The IRQ map "
+            "validates the two-queue/two-CPU Linux topology; traffic distribution "
+            "can additionally be inspected from the saved interrupt/ethtool snapshots."
         ),
     }
     (root / "multicore_validation.json").write_text(
@@ -192,7 +199,6 @@ def main() -> int:
 
     print("P7 MULTICORE VALIDATION PASS")
     print("dataplane CPUs=19,20 combined_channels=2 QUIC CPUs=21,22,23,24")
-    print("NOTE: single QUIC connection does not prove RSS scaling across both queues.")
     return 0
 
 
