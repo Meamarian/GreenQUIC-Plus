@@ -37,9 +37,11 @@ def one(old,new,label):
  if n!=1:raise SystemExit(f'ERROR: {label}: expected one anchor, found {n}')
  src=src.replace(old,new,1)
 
-# Use parallel-aware endpoint wrappers.
-one('"$HERE/run_server.sh" --run-dir "$srun" --rep "$rep"', '"$HERE/run_server_parallel_multicore.sh" --run-dir "$srun" --rep "$rep"', 'server wrapper')
-one("'$CLIENT_DIR/run_client.sh' --run-dir '$crun_remote' --rep '$rep' --gate '$gate'", "'$CLIENT_DIR/run_client_parallel_multicore.sh' --run-dir '$crun_remote' --rep '$rep' --gate '$gate'", 'client wrapper')
+# Use parallel-aware endpoint wrappers. These branch-only files may be 0644
+# when created through GitHub's contents API, so invoke them explicitly via
+# bash instead of relying on the executable bit.
+one('"$HERE/run_server.sh" --run-dir "$srun" --rep "$rep"', 'bash "$HERE/run_server_parallel_multicore.sh" --run-dir "$srun" --rep "$rep"', 'server wrapper')
+one("'$CLIENT_DIR/run_client.sh' --run-dir '$crun_remote' --rep '$rep' --gate '$gate'", "bash '$CLIENT_DIR/run_client_parallel_multicore.sh' --run-dir '$crun_remote' --rep '$rep' --gate '$gate'", 'client wrapper')
 
 # After channel tuning map each ice TxRx queue to one dataplane CPU.
 old=r'''env "${P7_ENV[@]}" bash -c 'source "$1/p7_common.sh"; iface="$(cat "$2/iface")"; p7_pin_irqs "$iface" "$P7_DATAPLANE_CPU"; p7_disable_rps "$iface"' _ "$HERE" "$LOCAL_STATE"
@@ -87,6 +89,13 @@ src=src.replace(old,new,1)
 Path(sys.argv[2]).write_text(src,encoding='utf-8')
 PY
 chmod 0700 "$TMP";bash -n "$TMP"
+
+grep -Fq 'bash "$HERE/run_server_parallel_multicore.sh" --run-dir "$srun" --rep "$rep"' "$TMP" || {
+ echo "ERROR: generated P7 controller does not invoke server multicore wrapper via bash" >&2; exit 2;
+}
+grep -Fq "bash '$CLIENT_DIR/run_client_parallel_multicore.sh' --run-dir '$crun_remote' --rep '$rep' --gate '$gate'" "$TMP" || {
+ echo "ERROR: generated P7 controller does not invoke client multicore wrapper via bash" >&2; exit 2;
+}
 
 FIXED=(
  --downloads "$CONNECTIONS" --gap-seconds 0 --runs "$RUNS"
