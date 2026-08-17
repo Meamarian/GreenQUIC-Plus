@@ -115,8 +115,21 @@ TINY_SHA="$(tiny 'cd /root/mohsen && git rev-parse HEAD')"
 }
 log "Mac + idex + tinyman synced to $BRANCH @ $LOCAL_SHA"
 
-# Static preflight before the detached experiment.
-retry ssh "${SSH[@]}" idex "cd '$ROOT' && bash -n ./run_p5_bottleneck_sweep.sh && bash -n ./run_p5_parallel_off_case.sh && python3 -m py_compile ./cpu_busy_sampler.py ./analyze_p5_bottleneck_case.py ./summarize_p5_bottleneck_sweep.py ./safe_cleanup_p5_bottleneck_processes.py && bash ./run_p5_parallel_off_case.sh --help >/dev/null"
+# Static preflight before the detached experiment. Build compatibility itself is
+# checked case-by-case by the sweep and a failed experimental build is recorded
+# without preventing the remaining cases from running.
+retry ssh "${SSH[@]}" idex "cd '$ROOT' && \
+    bash -n ./mac_run_p5_bottleneck_sweep.sh && \
+    bash -n ./run_p5_bottleneck_sweep.sh && \
+    bash -n ./run_p5_parallel_off_case.sh && \
+    bash -n ./build_p5_multicore_performance2.sh && \
+    python3 -m py_compile \
+      ./apply_p5_multicore_txq_v3.py \
+      ./cpu_busy_sampler.py \
+      ./analyze_p5_bottleneck_case.py \
+      ./summarize_p5_bottleneck_sweep.py \
+      ./safe_cleanup_p5_bottleneck_processes.py && \
+    bash ./run_p5_parallel_off_case.sh --help >/dev/null"
 log "P5 bottleneck sweep preflight PASS"
 
 # ---------------------------------------------------------------------------
