@@ -45,13 +45,13 @@ insert = '''        printf(" tx_hash_fallback=%" PRIuFAST64 "\\n",
          * Queue counters above prove traffic distribution, but a queue number is
          * not itself a CPU. Emit the role map and the queue counters together so
          * every run has direct lcore->RX/TX work evidence, including OFF mode. */
-        unsigned int Lcore;
-        RTE_LCORE_FOREACH(Lcore) {
-            if (Lcore >= RTE_MAX_LCORE) {
+        unsigned int GqMcStatsLcore;
+        RTE_LCORE_FOREACH(GqMcStatsLcore) {
+            if (GqMcStatsLcore >= RTE_MAX_LCORE) {
                 continue;
             }
-            const uint16_t RxQueueId = Dpdk->GreenQuicRxQueueByLcore[Lcore];
-            const uint16_t TxQueueId = Dpdk->GreenQuicTxQueueByLcore[Lcore];
+            const uint16_t RxQueueId = Dpdk->GreenQuicRxQueueByLcore[GqMcStatsLcore];
+            const uint16_t TxQueueId = Dpdk->GreenQuicTxQueueByLcore[GqMcStatsLcore];
             const BOOLEAN OwnsRx = RxQueueId != UINT16_MAX;
             const BOOLEAN OwnsTx = TxQueueId != UINT16_MAX;
             if (!OwnsRx && !OwnsTx) {
@@ -69,7 +69,7 @@ insert = '''        printf(" tx_hash_fallback=%" PRIuFAST64 "\\n",
                 "[GreenQUIC-MC] LCORE_STATS schema=greenquic-mc-lcore-v1 "
                 "lcore=%u rxq=%hu txq=%hu owns_rx=%u owns_tx=%u "
                 "rx_pkts=%" PRIu64 " tx_pkts=%" PRIu64 " total_pkts=%" PRIu64 "\\n",
-                Lcore,
+                GqMcStatsLcore,
                 OwnsRx ? RxQueueId : UINT16_MAX,
                 OwnsTx ? TxQueueId : UINT16_MAX,
                 OwnsRx ? 1U : 0U,
