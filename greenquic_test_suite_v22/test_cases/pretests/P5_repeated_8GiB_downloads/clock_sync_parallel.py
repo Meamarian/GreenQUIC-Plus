@@ -22,6 +22,11 @@ if spec is None or spec.loader is None:
 base = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(base)
 
+# Save the base function before monkey-patching the module below. The adapter
+# must call this original function directly; looking it up through
+# base.final_download_seen after patching would recurse back into the adapter.
+base_final_download_seen = base.final_download_seen
+
 PARALLEL_FINAL_RE = re.compile(
     r"\[GreenQUIC-PARALLEL\]\s+batch=1\s+complete_us=\d+\s+duration_us=\d+\s+"
     r"connections=(\d+)\s+connected=(\d+)\s+completed=(\d+)\s+success=1\b"
@@ -29,7 +34,7 @@ PARALLEL_FINAL_RE = re.compile(
 
 
 def final_download_seen(text: str) -> bool:
-    if base.final_download_seen(text):
+    if base_final_download_seen(text):
         return True
     for match in PARALLEL_FINAL_RE.finditer(text):
         connections, connected, completed = map(int, match.groups())
