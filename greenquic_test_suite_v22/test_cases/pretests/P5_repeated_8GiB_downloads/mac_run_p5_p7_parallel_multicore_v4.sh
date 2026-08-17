@@ -52,11 +52,11 @@ git -C "$LOCAL_REPO" bundle create "$BUNDLE" "$BRANCH"
 
 sync_idex(){
     retry scp "${SSH[@]}" "$BUNDLE" "idex:$REMOTE_BUNDLE"
-    retry ssh "${SSH[@]}" idex "cd /root/mohsen && git reset --hard && git fetch '$REMOTE_BUNDLE' '$BRANCH' && test \"\$(git rev-parse FETCH_HEAD)\" = '$LOCAL_SHA' && git checkout -B '$BRANCH' '$LOCAL_SHA' && git reset --hard '$LOCAL_SHA'"
+    retry ssh "${SSH[@]}" idex "cd /root/mohsen && git reset --hard && git fetch '$REMOTE_BUNDLE' '$BRANCH' && git checkout -B '$BRANCH' FETCH_HEAD && git reset --hard FETCH_HEAD"
 }
 sync_tinyman(){
     retry ssh "${SSH[@]}" idex "scp -o ConnectTimeout=15 '$REMOTE_BUNDLE' root@tinyman:'$REMOTE_BUNDLE'"
-    retry ssh "${SSH[@]}" idex "ssh -o ConnectTimeout=15 root@tinyman \"cd /root/mohsen && git reset --hard && git fetch '$REMOTE_BUNDLE' '$BRANCH' && test \\\"\\\$(git rev-parse FETCH_HEAD)\\\" = '$LOCAL_SHA' && git checkout -B '$BRANCH' '$LOCAL_SHA' && git reset --hard '$LOCAL_SHA'\""
+    retry ssh "${SSH[@]}" idex "ssh -o ConnectTimeout=15 root@tinyman \"cd /root/mohsen && git reset --hard && git fetch '$REMOTE_BUNDLE' '$BRANCH' && git checkout -B '$BRANCH' FETCH_HEAD && git reset --hard FETCH_HEAD\""
 }
 sync_idex
 sync_tinyman
