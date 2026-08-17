@@ -7,6 +7,7 @@ import tempfile
 
 AFF_MARKER = "GREENQUIC-P5-ARCH-AFFINITIZE-RUNTIME-V1"
 CPU_MARKER = "GREENQUIC-P5-ARCH-OFF-ALL-CPU-MAX-V1"
+POOL_MARKER = "GREENQUIC-P5-ARCH-MBUF-POOL-V1"
 
 
 def replace_function_by_next(text: str, function: str, next_function: str, replacement: str) -> str:
@@ -68,6 +69,26 @@ def patch(path: Path) -> None:
             )
         text = text.replace(old, new, 1)
 
+    if POOL_MARKER not in text:
+        # Four architecture DPDK RX owners use four 4096-descriptor RX queues.
+        # The old implicit pool (16383) is one mbuf smaller than the descriptor
+        # requirement alone and caused queue 3 startup to fail. Use one fixed
+        # pool size for every architecture case so 1D/2D/4D comparisons remain
+        # resource-comparable rather than special-casing G/H.
+        old = "DpdkInitArgs=secnetperf -l $lcores -a $device\nGreenQuicMode=$mode\n"
+        new = (
+            "DpdkInitArgs=secnetperf -l $lcores -a $device\n"
+            "# GREENQUIC-P5-ARCH-MBUF-POOL-V1\n"
+            "RxMbufPoolSize=32767\n"
+            "TxMbufPoolSize=32767\n"
+            "GreenQuicMode=$mode\n"
+        )
+        if text.count(old) != 1:
+            raise SystemExit(
+                f"ERROR: expected one DPDK init/mode anchor, found {text.count(old)}"
+            )
+        text = text.replace(old, new, 1)
+
     if CPU_MARKER not in text:
         new_function = '''# GREENQUIC-P5-ARCH-OFF-ALL-CPU-MAX-V1
 # Architecture tests compare DPDK and MsQuic worker counts. OFF must therefore
@@ -98,6 +119,8 @@ gq_dpdk_cpus_from_config() {
 
 def one_self_test_sample(helper_body: str) -> None:
     sample = f'''# prefix
+DpdkInitArgs=secnetperf -l $lcores -a $device
+GreenQuicMode=$mode
 GreenQuicQuicWorkerCpus=$cpus
 GreenQuicPartitionDpdkMap=$pmap
 
@@ -118,8 +141,11 @@ off_cpu_max_start() {{
         out = p.read_text(encoding="utf-8")
         assert out.count(AFF_MARKER) == 1
         assert out.count(CPU_MARKER) == 1
+        assert out.count(POOL_MARKER) == 1
         assert out.count("gq_dpdk_cpus_from_config() {") == 1
         assert "GreenQuicQuicAffinitize=${MSQUIC_QUIC_AFFINITIZE:-0}" in out
+        assert "RxMbufPoolSize=32767" in out
+        assert "TxMbufPoolSize=32767" in out
         assert 'GreenQuicQuicWorkerCpus' in out
         assert 'quic="$(sed -n' in out
         assert "off_cpu_max_start() {" in out
@@ -176,7 +202,8 @@ def self_test() -> None:
     py_compile.compile(str(verifier), doraise=True)
     print(
         "P5 ARCH runtime patch SELF-TEST PASS; structural helper replacement, "
-        "CSV CPU-list contract, bash syntax validation, and effective-config verifier compile"
+        "CSV CPU-list contract, fair 32767 mbuf pools, bash syntax validation, "
+        "and effective-config verifier compile"
     )
 
 
