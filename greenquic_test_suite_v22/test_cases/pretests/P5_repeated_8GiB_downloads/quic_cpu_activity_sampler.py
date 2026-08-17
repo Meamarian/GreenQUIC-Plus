@@ -23,7 +23,6 @@ import csv
 import json
 import os
 import signal
-import sys
 import time
 from pathlib import Path
 
@@ -174,7 +173,8 @@ def write_outputs(
 
 def self_test() -> int:
     assert parse_cpu_list("19,21-24") == {19, 21, 22, 23, 24}
-    raw = "123 (worker thread) R " + " ".join(str(i) for i in range(3, 53))
+    # field 3 is state=R; generated numeric fields start at field 4.
+    raw = "123 (worker thread) R " + " ".join(str(i) for i in range(4, 53))
     utime, stime, cpu = parse_stat(raw)
     assert utime == 14 and stime == 15 and cpu == 39, (utime, stime, cpu)
     print("quic_cpu_activity_sampler self-test PASS")
