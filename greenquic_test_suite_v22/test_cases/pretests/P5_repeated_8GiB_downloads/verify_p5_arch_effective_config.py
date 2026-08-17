@@ -8,6 +8,12 @@ import re
 from pathlib import Path
 
 
+FORBIDDEN_RUNTIME_KEYS = {
+    "RxMbufPoolSize",
+    "TxMbufPoolSize",
+}
+
+
 def parse_ini(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -46,8 +52,6 @@ def main() -> int:
 
     root = args.case_dir.resolve()
     expected = {
-        "RxMbufPoolSize": "32767",
-        "TxMbufPoolSize": "32767",
         "GreenQuicMode": "off",
         "GreenQuicDpdkLcores": norm_csv(args.dpdk_lcores),
         "GreenQuicEnableMultiCore": args.enable_multicore,
@@ -77,6 +81,11 @@ def main() -> int:
         role = role_from(path)
         roles_seen.add(role)
         errors: list[str] = []
+        forbidden_present = sorted(FORBIDDEN_RUNTIME_KEYS.intersection(values))
+        if forbidden_present:
+            errors.append(
+                "unsupported runtime key(s) present: " + ",".join(forbidden_present)
+            )
         for key, want in expected.items():
             got = values.get(key, "")
             if key in {"GreenQuicDpdkLcores", "GreenQuicQuicWorkerCpus", "GreenQuicPartitionDpdkMap"}:
@@ -94,6 +103,7 @@ def main() -> int:
             "status": "PASS" if not errors else "FAIL",
             "errors": " | ".join(errors),
             **{f"actual_{k}": values.get(k, "") for k in expected},
+            "forbidden_runtime_keys": ",".join(forbidden_present),
         })
 
     if not rows:
@@ -108,9 +118,10 @@ def main() -> int:
 
     status = "PASS" if not global_errors else "FAIL"
     out = {
-        "schema": "greenquic-p5-arch-effective-config-v2",
+        "schema": "greenquic-p5-arch-effective-config-v3",
         "status": status,
         "expected": expected,
+        "forbidden_runtime_keys": sorted(FORBIDDEN_RUNTIME_KEYS),
         "roles_seen": sorted(roles_seen),
         "artifacts_checked": len(rows),
         "errors": global_errors,
@@ -119,7 +130,7 @@ def main() -> int:
     json_path = root / "ARCH_EFFECTIVE_CONFIG.json"
     csv_path = root / "ARCH_EFFECTIVE_CONFIG.csv"
     json_path.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
-    fields = ["role", "path", "status", "errors"] + [f"actual_{k}" for k in expected]
+    fields = ["role", "path", "status", "errors", "forbidden_runtime_keys"] + [f"actual_{k}" for k in expected]
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
