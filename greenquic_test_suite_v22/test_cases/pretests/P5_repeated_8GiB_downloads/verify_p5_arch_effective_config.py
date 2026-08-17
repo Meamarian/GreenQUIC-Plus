@@ -46,6 +46,8 @@ def main() -> int:
 
     root = args.case_dir.resolve()
     expected = {
+        "RxMbufPoolSize": "32767",
+        "TxMbufPoolSize": "32767",
         "GreenQuicMode": "off",
         "GreenQuicDpdkLcores": norm_csv(args.dpdk_lcores),
         "GreenQuicEnableMultiCore": args.enable_multicore,
@@ -106,7 +108,7 @@ def main() -> int:
 
     status = "PASS" if not global_errors else "FAIL"
     out = {
-        "schema": "greenquic-p5-arch-effective-config-v1",
+        "schema": "greenquic-p5-arch-effective-config-v2",
         "status": status,
         "expected": expected,
         "roles_seen": sorted(roles_seen),
