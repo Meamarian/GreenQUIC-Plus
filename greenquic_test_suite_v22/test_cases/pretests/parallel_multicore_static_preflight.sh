@@ -13,6 +13,7 @@ BASH_FILES=(
  "$P7/run_server_parallel_multicore.sh"
  "$P7/run_client_parallel_multicore.sh"
  "$P7/run_parallel_multicore_matrix.sh"
+ "$HERE/mac_run_parallel_multicore_fair_2r_v1.sh"
 )
 PY_FILES=(
  "$P5/apply_p5_parallel_connections.py"
