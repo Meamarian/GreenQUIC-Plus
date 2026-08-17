@@ -97,8 +97,6 @@ GreenQuicP2V2TxMbufAlloc(
     GREENQUIC_P2_V2_TX_ALLOC_CACHE* Cache = &GreenQuicP2V2TxAllocCache;
 
     if (unlikely(Cache->Pool != Pool)) {{
-        // A P5 process has one datapath lifetime. Reset the TLS stash if a
-        // different pool is ever observed rather than reusing stale pointers.
         Cache->Pool = Pool;
         Cache->Next = 0U;
         Cache->Count = 0U;
@@ -120,7 +118,6 @@ GreenQuicP2V2TxMbufAlloc(
         return Cache->Mbufs[0];
     }}
 
-    // Preserve original behavior if a bulk refill cannot be satisfied.
     return rte_pktmbuf_alloc(Pool);
 }}
 
@@ -140,10 +137,6 @@ if args.tx_alloc_batch > 1:
     )
 
 if args.tx_meta_zero == "0":
-    # Keep all CXPLAT_SEND_DATA/CXPLAT_SEND_DATA_COMMON fields deterministic.
-    # Only skip clearing the trailing DPDK-only pointers because those are
-    # explicitly assigned immediately below. Completely removing initialization
-    # is unsafe: fields such as ECN/common send state are consumed later.
     replace_once(
         "        CxPlatZeroMemory(Packet, sizeof(*Packet));",
         "        CxPlatZeroMemory((CXPLAT_SEND_DATA*)Packet, sizeof(CXPLAT_SEND_DATA));\n"
@@ -252,8 +245,6 @@ if args.shard_active_mask == "1":
             if (rte_ring_empty(GreenQuicP2TxProducers[Index].Ring)) {
                 atomic_fetch_and_explicit(
                     &GreenQuicP2V2TxActiveMask, ~Bit, memory_order_acq_rel);
-                // Close the clear/enqueue race: a producer can enqueue between
-                // the empty observation and the mask clear. Re-check and restore.
                 if (!rte_ring_empty(GreenQuicP2TxProducers[Index].Ring)) {
                     atomic_fetch_or_explicit(
                         &GreenQuicP2V2TxActiveMask, Bit, memory_order_release);
@@ -264,7 +255,12 @@ if args.shard_active_mask == "1":
         }"""
     replace_once(loop_old, loop_new, "sharded active-ring consumer scan")
 
-for required in ("Dpdk->RxCounter += BuffersCount;", "Dpdk->TxCounter += TxCount;"):
+required_tx_counter = (
+    "Dpdk->TxCounter += GreenQuicP2LogicalTxCount;"
+    if v1.group("udpseg") == "1"
+    else "Dpdk->TxCounter += TxCount;"
+)
+for required in ("Dpdk->RxCounter += BuffersCount;", required_tx_counter):
     if text.count(required) != 1:
         raise SystemExit(f"ERROR: required P5 packet-total update missing: {required}")
 
