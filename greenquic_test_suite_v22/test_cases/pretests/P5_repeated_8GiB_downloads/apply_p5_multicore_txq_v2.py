@@ -6,6 +6,17 @@ import subprocess,sys,tempfile
 if len(sys.argv)!=2:raise SystemExit('usage: apply_p5_multicore_txq_v2.py PATH_TO_DATAPATH')
 here=Path(__file__).resolve().parent;base=here/'apply_p5_multicore_txq.py'
 src=base.read_text(encoding='utf-8')
+
+# V2 compatibility fixes for the current Performance2 source. Keep the original
+# V1 transform readable, but adapt two anchors that drifted in the live datapath.
+# The actual GreenQuicConfigureRoles loop uses uint32_t, not uint16_t.
+role_loop='for (uint16_t Index = 0; Index < RTE_MAX_LCORE; ++Index)'
+role_loop_fixed='for (uint32_t Index = 0; Index < RTE_MAX_LCORE; ++Index)'
+role_count=src.count(role_loop)
+if role_count!=2:
+    raise SystemExit(f'ERROR: V1 role-map loop anchor count={role_count}, expected 2')
+src=src.replace(role_loop,role_loop_fixed)
+
 old='''def function_slice(name: str, next_name: str) -> tuple[int, int, str]:
     start = text.find(name)
     if start < 0:
