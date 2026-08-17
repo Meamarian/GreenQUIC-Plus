@@ -13,6 +13,8 @@ ROOT="${P5_ARCH_OUTPUT_ROOT:-$HERE/matrix_results/P5_ARCH_BOTTLENECK_${CONNS}c_$
 for f in "$BUILD" "$CASE" "$SUM" "$CLEAN" "$PATCH" "$VERIFY" "$HERE/thread_topology_sampler.py" "$HERE/run_p5_arch_off_case.sh"; do [[ -f "$f" ]] || { echo "ERROR missing $f" >&2; exit 2; }; done
 for shf in "$BUILD" "$CASE" "$HERE/run_p5_arch_off_case.sh"; do bash -n "$shf"; done
 python3 -m py_compile "$SUM" "$PATCH" "$VERIFY" "$HERE/thread_topology_sampler.py" "$HERE/quic_cpu_activity_sampler.py" "$HERE/analyze_p5_bottleneck_case.py" "$HERE/cpu_busy_sampler.py"
+python3 "$HERE/test_p5_performance2_transform.py"
+python3 "$HERE/test_p5_performance2_v2_transform.py"
 mkdir -p "$ROOT/build_logs"
 STATUS="$ROOT/CASE_STATUS.tsv"
 printf 'case\tbuild_profile\tbuild_rc\ttraffic_rc\tcontroller_rc\tanalysis_rc\teffective_config_rc\n' >"$STATUS"
@@ -28,12 +30,25 @@ cleanup_between(){
   echo '--- safe cleanup Tinyman ---'; ssh -o BatchMode=yes -o ConnectTimeout=12 root@tinyman "cd '$HERE' && python3 '$CLEAN' || true" || true
 }
 build_profile(){
-  local name="$1"; shift; local r1=0 r2=0 q=''
+  local name="$1"; shift
+  local r1=0 r2=0 q='' remote_cmd=''
   echo "===== BUILD $name $* ====="
   set +e
-  env "$@" bash "$BUILD" 2>&1 | tee "$ROOT/build_logs/${name}_idex.log"; r1=${PIPESTATUS[0]}
-  printf -v q '%q ' "$@"
-  ssh -o BatchMode=yes -o ConnectTimeout=20 root@tinyman "cd '$HERE' && env $q bash ./build_p5_arch_profile.sh" 2>&1 | tee "$ROOT/build_logs/${name}_tinyman.log"; r2=${PIPESTATUS[0]}
+  if (($#)); then
+    env "$@" bash "$BUILD" 2>&1 | tee "$ROOT/build_logs/${name}_idex.log"
+  else
+    bash "$BUILD" 2>&1 | tee "$ROOT/build_logs/${name}_idex.log"
+  fi
+  r1=${PIPESTATUS[0]}
+
+  if (($#)); then
+    printf -v q '%q ' "$@"
+    remote_cmd="env $q bash ./build_p5_arch_profile.sh"
+  else
+    remote_cmd="bash ./build_p5_arch_profile.sh"
+  fi
+  ssh -o BatchMode=yes -o ConnectTimeout=20 root@tinyman "cd '$HERE' && $remote_cmd" 2>&1 | tee "$ROOT/build_logs/${name}_tinyman.log"
+  r2=${PIPESTATUS[0]}
   set -e
   ((r1==0 && r2==0))
 }
