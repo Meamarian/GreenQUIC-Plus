@@ -66,7 +66,10 @@ if ((SELF_TEST==1)); then
 fi
 IFS=',' read -r -a DPA <<< "$DPDK_LCORES"; IFS=',' read -r -a QPA <<< "$QUIC_CPUS"; ND=${#DPA[@]}; NQ=${#QPA[@]}
 ((ND>=1 && NQ>=1)) || exit 2
-MULTI=1; ((ND==1)) && MULTI=0
+# The architecture build supports one-or-more DPDK owners. Keep its multicore
+# queue/statistics path enabled even for F/N with one owner so the experiment
+# emits the same direct lcore RX/TX packet evidence as the 2D/4D cases.
+MULTI=1
 PARTITION_MAP="$PARTITION_OVERRIDE"
 if [[ -z "$PARTITION_MAP" ]]; then
  for ((p=0;p<NQ;p++)); do
