@@ -25,7 +25,14 @@ def main()->int:
     p5a=read(a.p5/'parallel_tables/parallel_active_summary.csv');p7a=read(a.p7/'parallel_tables/parallel_active_summary.csv')
     if len(p7a)!=1 or p7a[0].get('mode')!='linux':raise SystemExit('ERROR: P7 active summary must contain one linux row')
     la=p7a[0];active=[]
-    keys=('aggregate_goodput_gbps','combined_total_j','combined_avg_rapl_w','combined_j_per_useful_gbit','server_dataplane_mean_ghz','client_dataplane_mean_ghz')
+    keys=(
+        'aggregate_goodput_gbps',
+        'server_total_j','client_total_j','combined_total_j',
+        'server_avg_rapl_w','client_avg_rapl_w','combined_avg_rapl_w',
+        'server_j_per_useful_gbit','client_j_per_useful_gbit','combined_j_per_useful_gbit',
+        'server_cpu19_mean_ghz','server_cpu20_mean_ghz','server_dataplane_mean_ghz',
+        'client_cpu19_mean_ghz','client_cpu20_mean_ghz','client_dataplane_mean_ghz',
+    )
     for src in [la]+p5a:
         if int(src['connections'])!=connections:raise SystemExit(f"ERROR: active connection-count mismatch for {src.get('mode')}")
         r={'mode':src['mode'],'n':int(src['n']),'connections':connections}
@@ -34,7 +41,9 @@ def main()->int:
         active.append(r)
     active.sort(key=lambda r:order.get(r['mode'],99));active_out=a.out.with_name(a.out.stem+'_active'+a.out.suffix)
     with active_out.open('w',newline='',encoding='utf-8') as h:w=csv.DictWriter(h,fieldnames=list(active[0]));w.writeheader();w.writerows(active)
-    print('\nFAIR PARALLEL ACTIVE-WINDOW COMPARISON');print('mode      goodput    energy J   power W   J/Gbit   srv GHz  cli GHz')
-    for r in active:print(f"{r['mode']:<9} {r['aggregate_goodput_gbps_mean']:>8.3f}  {r['combined_total_j_mean']:>9.1f}  {r['combined_avg_rapl_w_mean']:>8.2f}  {r['combined_j_per_useful_gbit_mean']:>7.3f}  {r['server_dataplane_mean_ghz_mean']:>7.3f}  {r['client_dataplane_mean_ghz_mean']:>7.3f}")
+    print('\nFAIR PARALLEL ACTIVE-WINDOW COMPARISON')
+    print('mode      goodput   srv J    cli J    comb J   srv W   cli W   comb W   srv GHz  cli GHz')
+    for r in active:
+        print(f"{r['mode']:<9} {r['aggregate_goodput_gbps_mean']:>7.3f}  {r['server_total_j_mean']:>7.1f}  {r['client_total_j_mean']:>7.1f}  {r['combined_total_j_mean']:>8.1f}  {r['server_avg_rapl_w_mean']:>6.1f}  {r['client_avg_rapl_w_mean']:>6.1f}  {r['combined_avg_rapl_w_mean']:>7.1f}  {r['server_dataplane_mean_ghz_mean']:>7.3f}  {r['client_dataplane_mean_ghz_mean']:>7.3f}")
     print(f'Goodput CSV: {a.out}');print(f'Active metrics CSV: {active_out}');return 0
 if __name__=='__main__':raise SystemExit(main())
