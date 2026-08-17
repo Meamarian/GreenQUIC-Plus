@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import py_compile
+import subprocess
 import sys
 import tempfile
 
@@ -23,7 +24,6 @@ def replace_function_by_next(text: str, function: str, next_function: str, repla
         pos = text.find(start_token, pos)
         if pos < 0:
             break
-        # Require a top-level declaration at the start of a line.
         if pos == 0 or text[pos - 1] == "\n":
             starts.append(pos)
         pos += len(start_token)
@@ -39,9 +39,21 @@ def replace_function_by_next(text: str, function: str, next_function: str, repla
             f"ERROR: could not locate next top-level function {next_function} after {function}"
         )
 
-    # Keep the newline that begins the next function. The replacement itself
-    # ends with one newline, resulting in exactly one blank separator line.
     return text[:start] + replacement.rstrip("\n") + "\n" + text[next_start + 1 :]
+
+
+def shell_syntax_check(path: Path) -> None:
+    p = subprocess.run(
+        ["bash", "-n", str(path)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if p.returncode != 0:
+        detail = (p.stderr or p.stdout).strip()
+        raise SystemExit(
+            f"ERROR: patched runtime helper fails bash -n: {path}: {detail}"
+        )
 
 
 def patch(path: Path) -> None:
@@ -85,7 +97,8 @@ gq_dpdk_cpus_from_config() {
         )
 
     path.write_text(text, encoding="utf-8")
-    print(f"P5 ARCH runtime patch applied: {path}")
+    shell_syntax_check(path)
+    print(f"P5 ARCH runtime patch applied + bash -n PASS: {path}")
 
 
 def one_self_test_sample(helper_body: str) -> None:
@@ -114,13 +127,11 @@ suffix
         assert 'quic="$(sed -n' in out
         assert 'gq_expand_cpu_list "$cpus"' in out
         assert "off_cpu_max_start() {" in out
-        # Idempotence is mandatory; the sweep patches both endpoints repeatedly.
         patch(p)
         assert p.read_text(encoding="utf-8") == out
 
 
 def self_test() -> None:
-    # Historical body.
     one_self_test_sample('''gq_dpdk_cpus_from_config() {
     local cfg="$1" cpus
     cpus="$(sed -n 's/^[[:space:]]*GreenQuicDpdkLcores[[:space:]]*=[[:space:]]*//p' "$cfg" 2>/dev/null | tail -n 1 | tr -d '[:space:]')"
@@ -128,7 +139,6 @@ def self_test() -> None:
     printf '%s\\n' "$cpus"
 }''')
 
-    # Deliberately drifted body: structural patching must still succeed.
     one_self_test_sample('''gq_dpdk_cpus_from_config() {
     # harmless formatting/body drift must not break architecture preflight
     local cfg="$1"
@@ -145,8 +155,8 @@ def self_test() -> None:
         )
     py_compile.compile(str(verifier), doraise=True)
     print(
-        "P5 ARCH runtime patch SELF-TEST PASS; structural helper replacement and "
-        "effective-config verifier compile"
+        "P5 ARCH runtime patch SELF-TEST PASS; structural helper replacement, "
+        "bash syntax validation, and effective-config verifier compile"
     )
 
 
