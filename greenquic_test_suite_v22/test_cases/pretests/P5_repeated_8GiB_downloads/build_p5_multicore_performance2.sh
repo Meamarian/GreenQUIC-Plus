@@ -9,12 +9,13 @@ BUILD="$REPO_ROOT/msquic/build-greenquic-p5"
 DPDK="$REPO_ROOT/msquic/deps/dpdk-install"
 BASE="$HERE/build_p5_performance2.sh"
 PARALLEL_TRANSFORM="$HERE/apply_p5_parallel_connections.py"
-TXQ_TRANSFORM="$HERE/apply_p5_multicore_txq_v2.py"
+TXQ_TRANSFORM="$HERE/apply_p5_multicore_txq_v3.py"
+TXQ_TRANSFORM_V2="$HERE/apply_p5_multicore_txq_v2.py"
 TXQ_TRANSFORM_BASE="$HERE/apply_p5_multicore_txq.py"
 LCORE_STATS_TRANSFORM="$HERE/apply_p5_multicore_lcore_stats.py"
 VERIFY_BINARY="$HERE/verify_p5_parallel_multicore_binary.sh"
 
-for f in "$BASE" "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_BASE" "$LCORE_STATS_TRANSFORM" "$VERIFY_BINARY"; do
+for f in "$BASE" "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_V2" "$TXQ_TRANSFORM_BASE" "$LCORE_STATS_TRANSFORM" "$VERIFY_BINARY"; do
     [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2; exit 2; }
 done
 [[ -d "$DPDK" ]] || { echo "ERROR: DPDK install missing: $DPDK" >&2; exit 2; }
@@ -25,8 +26,8 @@ export P5_SUPER_MTU="${P5_SUPER_MTU:-1500}"
 
 echo "======================================================================"
 echo "P5 PERFORMANCE2 PARALLEL MULTICORE BUILD"
-echo "Topology target: DPDK=19,20  QUIC=21,22,23,24"
-echo "RX: RSS queues 0,1  TX: per-flow queues 0,1 with one owner per DPDK core"
+echo "Runtime topology: same binary supports DPDK=19 or DPDK=19,20; QUIC=21,22,23,24"
+echo "RX/TX: one queue per configured DPDK owner; stable per-flow TX queue mapping"
 echo "Runtime proof: per-lcore RX/TX packet counters are mandatory"
 echo "Workload: one MsQuic/DPDK process, multiple simultaneous QUIC connections"
 echo "Fair-comparison MTU: $P5_SUPER_MTU"
@@ -42,7 +43,7 @@ bash "$BASE"
 python3 "$PARALLEL_TRANSFORM" "$SOURCE"
 python3 "$TXQ_TRANSFORM" "$DATAPATH"
 python3 "$LCORE_STATS_TRANSFORM" "$DATAPATH"
-python3 -m py_compile "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_BASE" "$LCORE_STATS_TRANSFORM"
+python3 -m py_compile "$PARALLEL_TRANSFORM" "$TXQ_TRANSFORM" "$TXQ_TRANSFORM_V2" "$TXQ_TRANSFORM_BASE" "$LCORE_STATS_TRANSFORM"
 
 python3 - "$SOURCE" "$DATAPATH" <<'PY'
 from pathlib import Path
@@ -78,14 +79,18 @@ if 'Hash % Dpdk->GreenQuicTxOwnerCount' not in dp:
     raise SystemExit('ERROR: stable flow-to-TX-queue mapping missing')
 if 'RxPackets + TxPackets' not in dp:
     raise SystemExit('ERROR: per-lcore RX+TX runtime evidence missing')
+if 'NextTxQueue != NextRxQueue || NextTxQueue == 0' not in dp:
+    raise SystemExit('ERROR: V3 one-or-more TX-owner runtime condition missing')
+if 'Dpdk->GreenQuicTxOwnerCount != tx_rings || tx_rings == 0' not in dp:
+    raise SystemExit('ERROR: V3 one-or-more TX-ring runtime condition missing')
 role_start=dp.find('static void\nGreenQuicConfigureRoles(')
 role_end=dp.find('CxPlatDpdkReadConfig(', role_start)
 role=dp[role_start:role_end] if role_start >= 0 and role_end > role_start else ''
 if not role or 'Dpdk->GreenQuicTxOwnerCount = NextTxQueue;' not in role:
-    raise SystemExit('ERROR: cannot prove two-queue TX role assignment in GreenQuicConfigureRoles')
+    raise SystemExit('ERROR: cannot prove per-lcore TX role assignment in GreenQuicConfigureRoles')
 if 'PortConfig.rxmode.mtu = 1500;' not in dp:
     raise SystemExit('ERROR: P5 disposable datapath is not pinned to MTU 1500')
-print('P5 parallel multicore source audit PASS')
+print('P5 parallel multicore V3 source audit PASS: one-or-more runtime DPDK owners')
 PY
 
 export PKG_CONFIG_PATH="$DPDK/lib/pkgconfig:$DPDK/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
