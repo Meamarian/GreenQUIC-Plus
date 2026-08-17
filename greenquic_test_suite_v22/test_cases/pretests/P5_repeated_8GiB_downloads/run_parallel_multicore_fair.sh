@@ -6,18 +6,28 @@ BASE="$HERE/run_parallel_multicore_matrix.sh"
 BUILD="$HERE/build_p5_multicore_performance2.sh"
 ANALYZE="$HERE/analyze_p5_dpdk_lcore_activity.py"
 
-[[ -f "$BASE" && -x "$BUILD" && -f "$ANALYZE" ]] || {
-    echo "ERROR: P5 fair-run dependencies missing" >&2
+# These helpers are deliberately invoked through bash/python, so they only need
+# to exist as regular files. Requiring the executable bit here is incorrect for
+# files created/updated through GitHub's contents API and caused controller
+# preflight to fail before any traffic was launched.
+missing=()
+[[ -f "$BASE" ]] || missing+=("$BASE")
+[[ -f "$BUILD" ]] || missing+=("$BUILD")
+[[ -f "$ANALYZE" ]] || missing+=("$ANALYZE")
+if ((${#missing[@]})); then
+    printf 'ERROR: P5 fair-run dependency missing: %s\n' "${missing[@]}" >&2
     exit 2
-}
-python3 -m py_compile "$ANALYZE"
+fi
 
-# Controller preflight must remain traffic/NIC/build free.
+# Controller preflight must remain traffic/NIC/build free. Do this before any
+# analysis-only checks so preflight validates controller transformation only.
 for arg in "$@"; do
     if [[ "$arg" == "--controller-preflight" ]]; then
         exec bash "$BASE" "$@"
     fi
 done
+
+python3 -m py_compile "$ANALYZE"
 
 RUNS=2
 OUTPUT_DIR=""
