@@ -46,10 +46,24 @@ BUNDLE="$(mktemp "${TMPDIR:-/tmp}/gq_arch.XXXXXX.bundle")"; RB="/tmp/gq_arch_${T
 git -C "$REPO" bundle create "$BUNDLE" "$BRANCH"; retry scp "${SSH[@]}" "$BUNDLE" "idex:$RB"; retry ssh "${SSH[@]}" idex "cd /root/mohsen && git reset --hard && git fetch '$RB' '$BRANCH' && git checkout -B '$BRANCH' FETCH_HEAD && git reset --hard FETCH_HEAD"; retry ssh "${SSH[@]}" idex "scp -q '$RB' root@tinyman:'$RB'"; tiny "cd /root/mohsen && git reset --hard && git fetch '$RB' '$BRANCH' && git checkout -B '$BRANCH' FETCH_HEAD && git reset --hard FETCH_HEAD"
 ISHA="$(retry ssh "${SSH[@]}" idex 'cd /root/mohsen && git rev-parse HEAD')"; TSHA="$(tiny 'cd /root/mohsen && git rev-parse HEAD')"; [[ "$ISHA" == "$SHA" && "$TSHA" == "$SHA" ]] || { echo "ERROR SHA local=$SHA idex=$ISHA tiny=$TSHA" >&2; exit 2; }; log "synced both endpoints @ $SHA"
 
-# Traffic-free preflight. Validate shell/Python syntax, the exact P5-local
-# runtime helper, and transform regression tests before launching remote traffic.
-retry ssh "${SSH[@]}" idex "cd '$P5' && for f in ./run_p5_arch_bottleneck_sweep.sh ./run_p5_arch_case_diag.sh ./run_p5_arch_off_case.sh ./build_p5_arch_profile.sh; do bash -n \$f || exit \$?; done && python3 -m py_compile ./enable_p5_arch_runtime_config.py ./thread_topology_sampler.py ./summarize_p5_arch_sweep.py ./cpu_busy_sampler.py ./analyze_p5_bottleneck_case.py ./quic_cpu_activity_sampler.py ./apply_p5_performance2.py ./apply_p5_performance2_v2.py ./apply_p5_multicore_txq_v2.py ./apply_p5_multicore_txq_v3.py ./test_p5_performance2_transform.py ./test_p5_performance2_v2_transform.py && python3 ./test_p5_performance2_transform.py && python3 ./test_p5_performance2_v2_transform.py && python3 ./enable_p5_arch_runtime_config.py --self-test && t=\$(mktemp) && cp ./gq_common_p5.sh \$t && python3 ./enable_p5_arch_runtime_config.py \$t && grep -Fq GREENQUIC-P5-ARCH-AFFINITIZE-RUNTIME-V1 \$t && grep -Fq GREENQUIC-P5-ARCH-OFF-ALL-CPU-MAX-V1 \$t && rm -f \$t && bash ./run_p5_arch_off_case.sh --self-test && command -v perf >/dev/null && perf --version"
-COUNT="$(retry ssh "${SSH[@]}" idex "cd '$P5' && grep -Ec '^run_case [A-P]_' ./run_p5_arch_bottleneck_sweep.sh")"; [[ "$COUNT" == 16 ]] || { echo "ERROR expected 16 A-P cases, got $COUNT" >&2; exit 2; }; log 'architecture sweep static preflight PASS: 16 cases + runtime overlay + transform regressions + perf'
+# Traffic-free static preflight. Validate shell/Python syntax, the exact P5-local
+# runtime helper, transform regression tests, fair mbuf-pool injection and perf.
+STATIC_PREFLIGHT="cd '$P5' && for f in ./run_p5_arch_bottleneck_sweep.sh ./run_p5_arch_case_diag.sh ./run_p5_arch_off_case.sh ./build_p5_arch_profile.sh; do bash -n \$f || exit \$?; done && python3 -m py_compile ./enable_p5_arch_runtime_config.py ./thread_topology_sampler.py ./summarize_p5_arch_sweep.py ./cpu_busy_sampler.py ./analyze_p5_bottleneck_case.py ./quic_cpu_activity_sampler.py ./apply_p5_performance2.py ./apply_p5_performance2_v2.py ./apply_p5_multicore_txq_v2.py ./apply_p5_multicore_txq_v3.py ./test_p5_performance2_transform.py ./test_p5_performance2_v2_transform.py && python3 ./test_p5_performance2_transform.py && python3 ./test_p5_performance2_v2_transform.py && python3 ./enable_p5_arch_runtime_config.py --self-test && t=\$(mktemp) && cp ./gq_common_p5.sh \$t && python3 ./enable_p5_arch_runtime_config.py \$t && grep -Fq GREENQUIC-P5-ARCH-AFFINITIZE-RUNTIME-V1 \$t && grep -Fq GREENQUIC-P5-ARCH-OFF-ALL-CPU-MAX-V1 \$t && grep -Fq GREENQUIC-P5-ARCH-MBUF-POOL-V1 \$t && grep -Fq 'RxMbufPoolSize=32767' \$t && grep -Fq 'TxMbufPoolSize=32767' \$t && rm -f \$t && bash ./run_p5_arch_off_case.sh --self-test && command -v perf >/dev/null && perf --version"
+retry ssh "${SSH[@]}" idex "$STATIC_PREFLIGHT"
+tiny "$STATIC_PREFLIGHT"
+COUNT="$(retry ssh "${SSH[@]}" idex "cd '$P5' && grep -Ec '^run_case [A-P]_' ./run_p5_arch_bottleneck_sweep.sh")"; [[ "$COUNT" == 16 ]] || { echo "ERROR expected 16 A-P cases, got $COUNT" >&2; exit 2; }
+log 'architecture static preflight PASS on IDEX + Tinyman: 16 cases + runtime overlay + transforms + fair mbuf pools + perf'
+
+# Traffic-free COMPOSITION preflight. The earlier unit tests exercised the P2
+# and multicore transforms separately and therefore missed failures that existed
+# only after composing them. Build every binary profile used by A-P on BOTH
+# endpoints before the remote sweep is allowed to start.
+BUILD_PREFLIGHT="set -Eeuo pipefail; cd '$P5'; echo '[P5-ARCH-BUILD-PREFLIGHT] host='\$(hostname -s)' profile=baseline'; bash ./build_p5_arch_profile.sh; echo '[P5-ARCH-BUILD-PREFLIGHT] host='\$(hostname -s)' profile=ring_mp'; P5_SUPER_RING_SYNC=mp bash ./build_p5_arch_profile.sh; echo '[P5-ARCH-BUILD-PREFLIGHT] host='\$(hostname -s)' profile=ring_rts'; P5_SUPER_RING_SYNC=rts bash ./build_p5_arch_profile.sh; echo '[P5-ARCH-BUILD-PREFLIGHT] host='\$(hostname -s)' profile=sharded'; P5_P2_TX_HANDOFF=sharded P5_P2_SHARD_ACTIVE_MASK=1 bash ./build_p5_arch_profile.sh; echo '[P5-ARCH-BUILD-PREFLIGHT] host='\$(hostname -s)' profile=udpseg'; P5_P2_UDP_SEG=1 P5_P2_UDP_SEG_MAX=4 bash ./build_p5_arch_profile.sh; echo '[P5-ARCH-BUILD-PREFLIGHT] host='\$(hostname -s)' PASS all profiles'"
+log 'building all A-P binary profiles on IDEX before traffic'
+retry ssh "${SSH[@]}" idex "$BUILD_PREFLIGHT"
+log 'building all A-P binary profiles on Tinyman before traffic'
+tiny "$BUILD_PREFLIGHT"
+log 'architecture composition preflight PASS on IDEX + Tinyman: baseline + MP + RTS + sharded + UDPseg'
 
 TMP="$(mktemp "${TMPDIR:-/tmp}/gq_arch_remote.XXXXXX.sh")"
 cat >"$TMP" <<'REMOTE'
