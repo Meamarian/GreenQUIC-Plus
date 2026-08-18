@@ -14,6 +14,8 @@ SCREEN_DLS="${P5_11G_SCREEN_DOWNLOADS:-3}"
 VALID_RUNS="${P5_11G_VALIDATE_RUNS:-6}"
 VALID_DLS="${P5_11G_VALIDATE_DOWNLOADS:-6}"
 TARGET="${P5_11G_TARGET_GBPS:-11.0}"
+ACTIVE_RECORDERS="${P5_11G_ACTIVE_RECORDERS:-1}"
+RECORDER_CPU="${P5_11G_RECORDER_CPU:-auto}"
 TAG="${P5_11G_TAG:-$(date +%Y%m%d_%H%M%S)}"
 ROOT="${P5_11G_OUTPUT_ROOT:-$HERE/matrix_results/P5_11G_TARGET_1D_${TAG}}"
 CACHE="/tmp/P5_11G_CACHE_${TAG}"
@@ -25,6 +27,17 @@ TRAFFIC_STARTED=0
     echo 'ERROR: invalid run/download counts' >&2
     exit 2
 }
+[[ "$ACTIVE_RECORDERS" == 0 || "$ACTIVE_RECORDERS" == 1 ]] || {
+    echo 'ERROR: P5_11G_ACTIVE_RECORDERS must be 0 or 1' >&2
+    exit 2
+}
+if [[ "$ACTIVE_RECORDERS" == 1 ]]; then
+    DISABLE_ACTIVE_RECORDERS=0
+    ACTIVE_RECORDERS_LABEL=enabled_pinned
+else
+    DISABLE_ACTIVE_RECORDERS=1
+    ACTIVE_RECORDERS_LABEL=disabled_via_claim_gate
+fi
 for f in "$BUILD" "$CASE" "$ANALYZE" "$CLEAN" "$GATE"; do
     [[ -f "$f" ]] || { echo "ERROR: missing $f" >&2; exit 2; }
 done
@@ -124,6 +137,9 @@ build_cache p2_d5 p2 5
 TRAFFIC_STARTED=1
 echo 'P5 11G: TRAFFIC PHASE STARTED; compilation is now forbidden.'
 
+# Match the current optimized P5 measurement environment. 11G cases still
+# change their documented candidate knobs (binary profile, empty-poll thresholds,
+# active sleep level), but observer placement/timing/CPU mapping stays identical.
 COMMON=(
     --env ENABLE_MULTICORE=0
     --env SERVER_DPDK_LCORES=19
@@ -134,19 +150,24 @@ COMMON=(
     --env CLIENT_QUIC_CPUS=21,22,23,24
     --env MSQUIC_EXECUTION_PROFILE=max_throughput
     --env ENABLE_RECORD=1
-    --env GQ_CLAIM_DISABLE_ACTIVE_RECORDERS=1
+    --env GQ_CLAIM_DISABLE_ACTIVE_RECORDERS="$DISABLE_ACTIVE_RECORDERS"
+    --env GQ_CLAIM_RECORDER_CPU="$RECORDER_CPU"
     --env GQ_LOG_LEVEL=0
     --env ENABLE_FREQ=1
     --env ENABLE_SLEEP=1
+    --env ENABLE_PAUSE=1
+    --env KEEP_PAUSE_ITERATIONS=1
+    --env SHORT_PAUSE_ITERATIONS=1
     --env GQ_IDLE_MODE_OVERRIDE=monitor
     --env GQ_IDLE_FALLBACK_OVERRIDE=short
+    --env GQ_POST_TRANSFER_WAIT_S=0
 )
 
 run_plus() {
     local name="$1" profile="$2" runs="$3" downloads="$4" rx="$5" tx="$6" active_min="$7"
     activate "$profile"
     mkdir -p "$ROOT/$name"
-    echo "===== 11G CASE $name profile=$profile rxempty=$rx txempty=$tx active_min=$active_min ====="
+    echo "===== 11G CASE $name profile=$profile rxempty=$rx txempty=$tx active_min=$active_min recorders=$ACTIVE_RECORDERS_LABEL recorder_cpu=$RECORDER_CPU ====="
     bash "$CASE" \
         --mode plus \
         --runs "$runs" \
@@ -204,6 +225,14 @@ python3 "$ANALYZE" \
     --root "$ROOT" --phase validation --downloads "$VALID_DLS" \
     --target-gbps "$TARGET" --robust-min-runs 6
 
+if [[ "$ACTIVE_RECORDERS" == 1 ]]; then
+    find "$ROOT" -type f -name '*_affinity.txt' -print >"$ROOT/RECORDER_AFFINITY_FILES.txt"
+    test -s "$ROOT/RECORDER_AFFINITY_FILES.txt" || {
+        echo 'ERROR: active recorders requested but no recorder-affinity evidence was produced' >&2
+        exit 3
+    }
+fi
+
 cat >"$ROOT/11G_CONFIG.env" <<EOF2
 target_gbps=$TARGET
 screen_runs=$SCREEN_RUNS
@@ -214,13 +243,21 @@ dpdk_lcore=19
 quic_cpus=21,22,23,24
 connections=1
 gap_seconds=5
+server_cooldown_seconds=5
+between_tests_seconds=5
 mode=plus
-active_recorders=disabled_via_claim_gate
+active_recorders=$ACTIVE_RECORDERS_LABEL
+recorder_cpu=$RECORDER_CPU
+idle_mode=monitor
+idle_fallback=short
+pause_enabled=1
+post_transfer_wait_s=0
 historical_plus_steady_d2plus_gbps=10.486178
 screen_is_directional_only=1
 validation_order=alternating_paired_reference_winner
 validation_mean_required_for_11g_pass=1
 validation_90pct_ci_lower_bound_required_for_robust_pass=1
+robust_min_runs=6
 compile_after_traffic_start=forbidden
 EOF2
 
