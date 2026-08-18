@@ -382,6 +382,14 @@ ssh idex 'if test -f /root/GQ_FAIR_REPRO_<TAG>/DONE; then echo DONE; cat /root/G
 
 > **Reproducibility note:** the launch command intentionally synchronizes to the current remote head of `performance2/p5-multicore` and then prints the exact SHA used. The reference experiment above used `53e5eac0fd13519d53c17f6d2f1fde5d23fcf45b`. A documentation-only README update will therefore produce a newer branch SHA even though the experiment implementation itself is unchanged.
 
+### Reusable Mac cleanup and P5 launch examples
+
+For the reusable two-host GreenQUIC cleanup command and a complete detached **P5 PLUS-only strong-DVFS** Mac launcher example, see:
+
+[`greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/MAC_RUN_AND_CLEANUP_EXAMPLES.md`](greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/MAC_RUN_AND_CLEANUP_EXAMPLES.md)
+
+The cleanup example is intended for known GreenQUIC P5/P7 processes and samplers; it is not a general-purpose Linux process killer. The launch example bundles the selected branch head on the Mac, copies it to IDEX/Tinyman, validates the synchronized SHA, starts the P5 run detached on IDEX, and prints the exact log/PID/result paths before the Mac is disconnected.
+
 ---
 
 ## Testbed setup
