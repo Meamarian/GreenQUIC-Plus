@@ -80,9 +80,12 @@ export ENABLE_CSTATE_RECORD="${ENABLE_CSTATE_RECORD:-1}"
 
 latest_file() {
     local pattern="$1"
+    # Do not use "sort | head" here. This script runs with pipefail and, once
+    # enough historical files exist, head can close the pipe early and make
+    # sort exit with SIGPIPE (141), aborting the client before bundling.
     find "$2" -maxdepth 1 -type f -name "$pattern" -printf '%T@ %p\n' 2>/dev/null |
         sort -nr |
-        head -n1 |
+        sed -n '1p' |
         cut -d' ' -f2-
 }
 
@@ -161,7 +164,7 @@ if [[ "${ENABLE_RECORD:-1}" != 0 ]]; then
             -name "${stamp}__$(basename "$HERE")__client__${MODE}*" \
             -printf '%T@ %p\n' |
         sort -nr |
-        head -n1 |
+        sed -n '1p' |
         cut -d' ' -f2-
     )"
     if [[ -n "$run_dir" && -d "$run_dir/details" ]]; then
