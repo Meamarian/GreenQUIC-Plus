@@ -53,10 +53,12 @@ P5 TOP3 -> P5 T29 -> P7 FAIR SEQUENCE
 branch=$BRANCH
 sha=$SHA
 runs=$RUNS downloads=$DOWNLOADS
+P5 modes: OFF + BASIC + PLUS (normal 3-mode chart/sheet pipeline)
 P5 TOP3: PRESSURE_UP=450 RX_QUEUE_HIGH=48 ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16
 P5 T29:  RX_QUEUE_HIGH=48
 P7: paper Linux profile
 recording: power/RAPL + frequency 1ms + C-state
+P5/P7 chart generation: enabled (chart-style=both)
 local destination: $LOCAL_DEST
 ======================================================================
 HDR
@@ -73,11 +75,9 @@ P5="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_download
 P7="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline"
 P5BIN="$ROOT/msquic/build-greenquic-p5/bin/Release/quicinterop"
 ART="/root/$TAG"
-P5_TOP3_OUT="$P5/matrix_results/P5_TOP3_FAIR_PLUS_${RUNS}r_${DOWNLOADS}d_${TAG}"
-P5_T29_OUT="$P5/matrix_results/P5_T29_FAIR_PLUS_${RUNS}r_${DOWNLOADS}d_${TAG}"
+P5_TOP3_OUT="$P5/matrix_results/P5_TOP3_FAIR_3MODES_${RUNS}r_${DOWNLOADS}d_${TAG}"
+P5_T29_OUT="$P5/matrix_results/P5_T29_FAIR_3MODES_${RUNS}r_${DOWNLOADS}d_${TAG}"
 P7_OUT="$P7/matrix_results/P7_FAIR_PAPER_${RUNS}r_${DOWNLOADS}d_${TAG}"
-TEMP_CORE="$P5/.${TAG}_plus_core.sh"
-TEMP_BASE="$P5/.${TAG}_plus_from_idex.sh"
 mkdir -p "$ART"
 rm -f "$ART/DONE" "$ART/FAILED" "$ART/RESULT_ZIPS.txt"
 
@@ -89,12 +89,9 @@ restore_repo_file(){
     ssh -n -o BatchMode=yes root@tinyman "git -C '$ROOT' checkout '$SHA' -- '$rel'" >/dev/null 2>&1 || true
 }
 
-cleanup_temp(){ rm -f "$TEMP_CORE" "$TEMP_BASE"; }
-
 on_exit(){
     rc=$?
     trap - EXIT INT TERM
-    cleanup_temp
     restore_repo_file greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/gq_common_p5.sh
     rm -f "$BUNDLE" >/dev/null 2>&1 || true
     ssh -n root@tinyman "rm -f '$BUNDLE'" >/dev/null 2>&1 || true
@@ -146,38 +143,8 @@ ssh -n root@tinyman "cd '$P5' && python3 ./enable_p5_claim_recording_gate.py ./g
 grep -Fq 'GREENQUIC-P5-CLAIM-RECORDER-AFFINITY-V1' ./gq_common_p5.sh
 ssh -n root@tinyman "grep -Fq 'GREENQUIC-P5-CLAIM-RECORDER-AFFINITY-V1' '$P5/gq_common_p5.sh'"
 
-log "create PLUS-only P5 controller; keep normal recorder bundling, skip 3-mode finalizers"
-python3 - "$P5" "$TAG" <<'PY'
-from pathlib import Path
-import sys
-p5=Path(sys.argv[1]); tag=sys.argv[2]
-core=(p5/'run_matrix_from_idex_core.sh').read_text(encoding='utf-8')
-anchors=[
- ('modes = ("off", "basic", "plus")','modes = ("plus",)'),
- ('TOTAL_TESTS=$((RUNS * 3))','TOTAL_TESTS=$RUNS'),
-]
-for old,new in anchors:
-    if core.count(old)!=1: raise SystemExit(f'ERROR: anchor count for {old!r} = {core.count(old)}')
-    core=core.replace(old,new,1)
-core=core.replace('position=$position/3','position=$position/1')
-core=core.replace('POSITION $position/3','POSITION $position/1')
-# The matrix aggregate/finalizer assumes three modes. Raw logs, aligned RAPL,
-# and the normal per-run bundles are retained; only cross-mode postprocessing is skipped.
-core=core.replace('        python3 "$HERE/aggregate_p5_matrix.py" --input "$OUTPUT_DIR" --runs "$RUNS" || true\n','')
-core=core.replace('    python3 "$HERE/aggregate_p5_matrix.py" --input "$OUTPUT_DIR" --runs "$RUNS" || true\n','')
-core=core.replace('python3 "$HERE/aggregate_p5_matrix.py" --input "$OUTPUT_DIR" --runs "$RUNS"\n','')
-core=core.replace('python3 "$HERE/p5_finalize_matrix.py" --matrix "$OUTPUT_DIR"\n','')
-if 'aggregate_p5_matrix.py' in core or 'p5_finalize_matrix.py' in core:
-    raise SystemExit('ERROR: P5 three-mode postprocessor remains')
-core_path=p5/f'.{tag}_plus_core.sh'; core_path.write_text(core,encoding='utf-8'); core_path.chmod(0o700)
-base=(p5/'run_matrix_from_idex.sh').read_text(encoding='utf-8')
-old='CORE="$HERE/run_matrix_from_idex_core.sh"'; new=f'CORE="$HERE/.{tag}_plus_core.sh"'
-if base.count(old)!=1: raise SystemExit('ERROR: base CORE anchor changed')
-base=base.replace(old,new,1)
-base_path=p5/f'.{tag}_plus_from_idex.sh'; base_path.write_text(base,encoding='utf-8'); base_path.chmod(0o700)
-PY
-
 P5_COMMON_ARGS=(
+    --chart-style both
     --client-host tinyman
     --client-dir "$P5"
     --client-bin "$P5BIN"
@@ -220,9 +187,9 @@ P5_COMMON_ARGS=(
 )
 
 cleanup_both
-log "TEST 1/3 P5 PLUS TOP3"
+log "TEST 1/3 P5 TOP3 — OFF + BASIC + PLUS"
 cd "$P5"
-bash "$TEMP_BASE" "${P5_COMMON_ARGS[@]}" \
+bash ./run_matrix_with_sheet.sh "${P5_COMMON_ARGS[@]}" \
     --output-dir "$P5_TOP3_OUT" \
     --env PRESSURE_UP=450 \
     --env RX_QUEUE_HIGH=48 \
@@ -230,19 +197,31 @@ bash "$TEMP_BASE" "${P5_COMMON_ARGS[@]}" \
     2>&1 | tee "$ART/p5_top3.log"
 
 grep -RFl 'GreenQUIC Run Summary' "$P5_TOP3_OUT/runs" >/dev/null
+for mode in off basic plus; do
+    find "$P5_TOP3_OUT/runs" -type d -name "*_${mode}" -print -quit | grep -q . || {
+        echo "ERROR: TOP3 missing mode=$mode run bundles" >&2
+        exit 1
+    }
+done
 find "$P5_TOP3_OUT/runs" -type f -name '*_affinity.txt' -print > "$ART/p5_top3_affinity.txt"
 test -s "$ART/p5_top3_affinity.txt"
 
 cleanup_both
 sleep "$BETWEEN"
-log "TEST 2/3 P5 PLUS T29 RX_QUEUE_HIGH=48"
+log "TEST 2/3 P5 T29 RX_QUEUE_HIGH=48 — OFF + BASIC + PLUS"
 cd "$P5"
-bash "$TEMP_BASE" "${P5_COMMON_ARGS[@]}" \
+bash ./run_matrix_with_sheet.sh "${P5_COMMON_ARGS[@]}" \
     --output-dir "$P5_T29_OUT" \
     --env RX_QUEUE_HIGH=48 \
     2>&1 | tee "$ART/p5_t29.log"
 
 grep -RFl 'GreenQUIC Run Summary' "$P5_T29_OUT/runs" >/dev/null
+for mode in off basic plus; do
+    find "$P5_T29_OUT/runs" -type d -name "*_${mode}" -print -quit | grep -q . || {
+        echo "ERROR: T29 missing mode=$mode run bundles" >&2
+        exit 1
+    }
+done
 find "$P5_T29_OUT/runs" -type f -name '*_affinity.txt' -print > "$ART/p5_t29_affinity.txt"
 test -s "$ART/p5_t29_affinity.txt"
 
@@ -294,7 +273,8 @@ gap_seconds=$GAP
 edge_cooldown_seconds=$EDGE
 between_seconds=$BETWEEN
 seed=$SEED
-P5_mode=plus_only
+P5_modes=off,basic,plus
+P5_chart_pipeline=normal_3mode_run_matrix_with_sheet_chart_style_both
 P5_profile=Performance2_V2_monitor_short
 P5_top3=PRESSURE_UP_450,RX_QUEUE_HIGH_48,ACTIVE_TRANSFER_SLEEP_MIN_LEVEL_16
 P5_t29=RX_QUEUE_HIGH_48
@@ -313,8 +293,8 @@ P7_combined_channels=1
 CFG
 
 log "zip all three result directories"
-TOP3_ZIP="/root/P5_TOP3_FAIR_PLUS_${RUNS}r_${DOWNLOADS}d_${TAG}.zip"
-T29_ZIP="/root/P5_T29_FAIR_PLUS_${RUNS}r_${DOWNLOADS}d_${TAG}.zip"
+TOP3_ZIP="/root/P5_TOP3_FAIR_3MODES_${RUNS}r_${DOWNLOADS}d_${TAG}.zip"
+T29_ZIP="/root/P5_T29_FAIR_3MODES_${RUNS}r_${DOWNLOADS}d_${TAG}.zip"
 P7_ZIP="/root/P7_FAIR_PAPER_${RUNS}r_${DOWNLOADS}d_${TAG}.zip"
 (cd "$(dirname "$P5_TOP3_OUT")" && zip -qr "$TOP3_ZIP" "$(basename "$P5_TOP3_OUT")")
 (cd "$(dirname "$P5_T29_OUT")" && zip -qr "$T29_ZIP" "$(basename "$P5_T29_OUT")")
@@ -325,8 +305,6 @@ log "DONE"
 cat "$ART/RESULT_ZIPS.txt"
 REMOTE
 
-# The bundle ref must remain available inside the bundle even though the local
-# temporary ref has been deleted after creation.
 BUNDLE_REF="$TMPREF"
 
 ssh idex "rm -rf '$ART'; nohup setsid bash '$REMOTE_SCRIPT' '$TAG' '$SHA' '$BRANCH' '$RUNS' '$DOWNLOADS' '$GAP' '$EDGE' '$BETWEEN' '$SEED' '$REMOTE_BUNDLE' '$BUNDLE_REF' >'$REMOTE_LOG' 2>&1 </dev/null & echo \$! >'$REMOTE_PID'"
