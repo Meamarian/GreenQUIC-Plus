@@ -335,6 +335,53 @@ The repository also contains an experimental framework for repeatable client/ser
 
 Experimental results are intentionally **not** included in this README; the purpose of this page is to explain the implementation and research contribution.
 
+### Current P5/P7 fair reproduction
+
+The reference run documented here used branch `performance2/p5-multicore` at:
+
+```text
+53e5eac0fd13519d53c17f6d2f1fde5d23fcf45b
+```
+
+Reference commit subject:
+
+```text
+P5 11G: add current-config 2x5 launcher
+```
+
+From the Mac, start the 6-run × 5-download P5/P7 fair reproduction with:
+
+```bash
+cd ~/Downloads/GreenQUIC && \
+git fetch origin performance2/p5-multicore && \
+git checkout performance2/p5-multicore && \
+git reset --hard origin/performance2/p5-multicore && \
+cd greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads && \
+bash ./mac_run_p5_p7_fair_repro_6x5_v3.sh
+```
+
+The launcher prints the exact `SHA`, `TAG`, `REMOTE_LOG`, live-monitor command, and status command for every run. Always use the newly printed `REMOTE_LOG`; do not reuse the log path from an older run.
+
+For the reference run with `TAG=20260818_152451`, the live monitor was:
+
+```bash
+ssh idex 'tail -n +1 -F /root/GQ_FAIR_REPRO_20260818_152451.log'
+```
+
+For any new run, use the tag printed by the launcher:
+
+```bash
+ssh idex 'tail -n +1 -F /root/GQ_FAIR_REPRO_<TAG>.log'
+```
+
+To check whether that run is still running, finished, or failed without continuously following the log:
+
+```bash
+ssh idex 'if test -f /root/GQ_FAIR_REPRO_<TAG>/DONE; then echo DONE; cat /root/GQ_FAIR_REPRO_<TAG>/RESULT_ZIPS.txt; elif test -f /root/GQ_FAIR_REPRO_<TAG>/FAILED; then echo FAILED; cat /root/GQ_FAIR_REPRO_<TAG>/FAILED; tail -120 /root/GQ_FAIR_REPRO_<TAG>.log; else echo RUNNING; tail -60 /root/GQ_FAIR_REPRO_<TAG>.log; fi'
+```
+
+> **Reproducibility note:** the launch command intentionally synchronizes to the current remote head of `performance2/p5-multicore` and then prints the exact SHA used. The reference experiment above used `53e5eac0fd13519d53c17f6d2f1fde5d23fcf45b`. A documentation-only README update will therefore produce a newer branch SHA even though the experiment implementation itself is unchanged.
+
 ---
 
 ## Testbed setup
