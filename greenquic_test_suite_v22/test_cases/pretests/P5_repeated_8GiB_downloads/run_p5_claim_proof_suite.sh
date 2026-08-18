@@ -17,6 +17,7 @@ BETWEEN="${P5_CLAIM_BETWEEN_TESTS_SECONDS:-5}"
 EQ_PCT="${P5_CLAIM_RECORDING_EQ_PCT:-2.0}"
 MECH_PCT="${P5_CLAIM_MECHANISM_PCT:-2.0}"
 PUB_MIN_RUNS="${P5_CLAIM_PUBLICATION_MIN_RUNS:-6}"
+RECORDER_CPU="${P5_CLAIM_RECORDER_CPU:-auto}"
 TAG="${P5_CLAIM_TAG:-$(date +%Y%m%d_%H%M%S)}"
 ROOT="${P5_CLAIM_OUTPUT_ROOT:-$HERE/matrix_results/P5_ONECORE_CLAIM_${RUNS}r_${DOWNLOADS}d_${TAG}}"
 
@@ -119,7 +120,7 @@ run_matrix() {
     local out="$ROOT/$label"
     echo
     echo "======================================================================"
-    echo "ONE-CORE CLAIM CASE=$label recorders_disabled=$disable_recorders freq=$enable_freq sleep=$enable_sleep idle=$idle_mode"
+    echo "ONE-CORE CLAIM CASE=$label recorders_disabled=$disable_recorders freq=$enable_freq sleep=$enable_sleep idle=$idle_mode recorder_cpu=$RECORDER_CPU"
     echo "======================================================================"
     cleanup_both
     snapshot_hashes "before_${label}"
@@ -135,6 +136,7 @@ run_matrix() {
         --output-dir "$out" \
         --env ENABLE_RECORD=1 \
         --env GQ_CLAIM_DISABLE_ACTIVE_RECORDERS="$disable_recorders" \
+        --env GQ_CLAIM_RECORDER_CPU="$RECORDER_CPU" \
         --env GQ_LOG_LEVEL=0 \
         --env ENABLE_FREQ="$enable_freq" \
         --env ENABLE_SLEEP="$enable_sleep" \
@@ -162,6 +164,7 @@ run_matrix freq_only_recorders_on  0 1 0 off
 run_matrix sleep_only_recorders_on 0 0 1 monitor
 
 cleanup_both
+ANALYZE_RC=0
 python3 "$ANALYZE" \
     --root "$ROOT" \
     --downloads "$DOWNLOADS" \
@@ -169,7 +172,11 @@ python3 "$ANALYZE" \
     --mechanism-pct "$MECH_PCT" \
     --publication-min-runs "$PUB_MIN_RUNS" \
     --dpdk-lcore 19 \
-    --quic-cpus 21,22,23,24
+    --quic-cpus 21,22,23,24 || ANALYZE_RC=$?
+case "$ANALYZE_RC" in
+    0|2) ;;
+    *) echo "ERROR: claim analyzer failed rc=$ANALYZE_RC" >&2; exit "$ANALYZE_RC" ;;
+esac
 
 cat >"$ROOT/CLAIM_SUITE_CONFIG.env" <<EOF2
 runs=$RUNS
@@ -192,6 +199,9 @@ historical_off_steady_d2plus_gbps=9.423551
 same_binary_required=1
 same_mode_schedule_seed=20260818
 active_recorder_gate=GQ_CLAIM_DISABLE_ACTIVE_RECORDERS
+recorder_cpu=$RECORDER_CPU
+active_recorder_affinity_isolated=1
+analysis_rc=$ANALYZE_RC
 boundary_rapl_kept_constant=1
 super_cache=128
 super_rx_burst=32
@@ -203,4 +213,5 @@ super_rx_meta=mbuf
 super_tx_lock_mode=single_owner
 EOF2
 
-echo "P5 ONE-CORE CLAIM-PROOF SUITE COMPLETE: $ROOT"
+echo "P5 ONE-CORE CLAIM-PROOF SUITE COMPLETE: $ROOT analysis_rc=$ANALYZE_RC"
+exit "$ANALYZE_RC"

@@ -2,8 +2,15 @@
 set -Eeuo pipefail
 
 HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
+P7_COMMON_PATCHER="$HERE/enable_p7_recorder_affinity.py"
+P7_COMMON_PATCHED="$(mktemp "$HERE/.p7_common_affinity.XXXXXX.sh")"
+if ! python3 "$P7_COMMON_PATCHER" "$HERE/p7_common.sh" "$P7_COMMON_PATCHED"; then
+    rm -f "$P7_COMMON_PATCHED"
+    exit 2
+fi
 # shellcheck source=/dev/null
-source "$HERE/p7_common.sh"
+source "$P7_COMMON_PATCHED"
+rm -f "$P7_COMMON_PATCHED"
 
 RUN_DIR=""
 REP="1"
