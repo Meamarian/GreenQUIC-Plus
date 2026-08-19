@@ -1,0 +1,1 @@
+The workbook in this folder was reviewed sheet by sheet for content clarity and formula errors. See the main README.md for the sweep/focused-test tables and the text file for exact commands/configuration.
