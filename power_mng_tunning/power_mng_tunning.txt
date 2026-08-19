@@ -1,0 +1,264 @@
+POWER MANAGEMENT TUNING
+=======================
+
+Branch
+------
+performance2/p5-multicore
+
+Purpose
+-------
+This file records the exact final focused tests and the full GreenQUIC power-management configuration.
+The four fresh full-run tests are:
+
+1. T29
+2. T41
+3. TOP3
+4. P7 Linux baseline
+
+P5 T29/T41/TOP3 each run OFF + BASIC + PLUS, 6 repetitions, 5 downloads per repetition.
+P7 runs the Linux paper baseline for 6 repetitions, 5 downloads per repetition.
+
+FOCUSED TEST CONFIGURATION
+--------------------------
++------+----------------+-----------------------------------------------------------------------+------------------+
+| Test | Modes          | Overrides / profile                                                   | Output folder    |
++------+----------------+-----------------------------------------------------------------------+------------------+
+| T29  | OFF+BASIC+PLUS | RX_QUEUE_HIGH=48                                                      | T29_<timestamp>  |
+| T41  | OFF+BASIC+PLUS | ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16                                   | T41_<timestamp>  |
+| TOP3 | OFF+BASIC+PLUS | PRESSURE_UP=450; RX_QUEUE_HIGH=48; ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16 | TOP3_<timestamp> |
+| P7   | Linux          | paper Linux P7 profile                                                | P7_<timestamp>   |
++------+----------------+-----------------------------------------------------------------------+------------------+
+
+REMOTE COMMON P5 ARGUMENTS
+--------------------------
+The four commands below are the core remote test invocations. The Mac launcher additionally performs exact Git synchronization, builds, cleanup, recorder-affinity patching, validation, ZIP creation, and SCP.
+
+```bash
+P5=/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
+P7=/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline
+P5BIN=/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop
+STAMP=$(date +%Y%m%d_%H%M%S)
+
+P5_COMMON_ARGS=(
+    --chart-style both
+    --client-host tinyman
+    --client-dir "$P5"
+    --client-bin "$P5BIN"
+    --downloads 5
+    --gap-seconds 5
+    --server-cooldown-seconds 5
+    --between-tests-seconds 5
+    --cstate-cpu 19
+    --runs 6
+    --mode-order balanced
+    --seed 20260806
+    --env ENABLE_RECORD=1
+    --env GQ_CLAIM_DISABLE_ACTIVE_RECORDERS=0
+    --env GQ_CLAIM_RECORDER_CPU=auto
+    --env GQ_LOG_LEVEL=0
+    --env ENABLE_FREQ=1
+    --env ENABLE_SLEEP=1
+    --env ENABLE_PAUSE=1
+    --env KEEP_PAUSE_ITERATIONS=1
+    --env SHORT_PAUSE_ITERATIONS=1
+    --env GQ_IDLE_MODE_OVERRIDE=monitor
+    --env GQ_IDLE_FALLBACK_OVERRIDE=short
+    --env GQ_ENABLE_ACPI_POWER_TRACE=1
+    --env GQ_POWER_SAMPLE_INTERVAL_MS=1000
+    --env GQ_ENABLE_MSR_TRACE=1
+    --env GQ_MSR_SAMPLE_INTERVAL_MS=6
+    --env GQ_MSR_SMOOTH_SAMPLES=3
+    --env ENABLE_CSTATE_RECORD=1
+    --env GQ_ENABLE_FREQ_TRACE=1
+    --env GQ_FREQ_SAMPLE_INTERVAL_MS=1
+    --env GQ_POST_TRANSFER_WAIT_S=0
+    --env ENABLE_MULTICORE=0
+    --env SERVER_DPDK_LCORES=19
+    --env CLIENT_DPDK_LCORES=19
+    --env SERVER_TX_OWNER_LCORE=19
+    --env CLIENT_TX_OWNER_LCORE=19
+    --env SERVER_QUIC_CPUS=21,22,23,24
+    --env CLIENT_QUIC_CPUS=21,22,23,24
+    --env MSQUIC_EXECUTION_PROFILE=max_throughput
+)
+```
+
+TEST 1 — T29
+--------------
+```bash
+cd "$P5"
+bash ./run_matrix_with_sheet.sh "${P5_COMMON_ARGS[@]}" \
+    --output-dir "$P5/matrix_results/T29_$STAMP" \
+    --env RX_QUEUE_HIGH=48
+```
+
+TEST 2 — T41
+--------------
+```bash
+cd "$P5"
+bash ./run_matrix_with_sheet.sh "${P5_COMMON_ARGS[@]}" \
+    --output-dir "$P5/matrix_results/T41_$STAMP" \
+    --env ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16
+```
+
+TEST 3 — TOP3
+---------------
+```bash
+cd "$P5"
+bash ./run_matrix_with_sheet.sh "${P5_COMMON_ARGS[@]}" \
+    --output-dir "$P5/matrix_results/TOP3_$STAMP" \
+    --env PRESSURE_UP=450 \
+    --env RX_QUEUE_HIGH=48 \
+    --env ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16
+```
+
+TEST 4 — P7 LINUX PAPER BASELINE
+---------------------------------
+```bash
+cd "$P7"
+P7_RECORDER_CPU=auto bash ./run_matrix_with_report.sh \
+    --chart-style both \
+    --log-level 0 \
+    --client-host tinyman \
+    --client-dir "$P7" \
+    --downloads 5 \
+    --gap-seconds 5 \
+    --runs 6 \
+    --pre-cooldown-seconds 5 \
+    --post-cooldown-seconds 5 \
+    --between-runs-seconds 5 \
+    --dataplane-cpu 19 \
+    --quic-cpus 21,22,23,24 \
+    --pin-irq 1 \
+    --pin-quic 1 \
+    --disable-rps 1 \
+    --disable-rdma 1 \
+    --nic-offloads paper \
+    --udp-rmem 6815744 \
+    --udp-wmem 6815744 \
+    --combined-channels 1 \
+    --network-diagnostics 0 \
+    --record-quic-cpus 0 \
+    --enable-record 1 \
+    --rapl-interval-ms 6 \
+    --freq-interval-ms 1 \
+    --require-rapl 1 \
+    --stop-irqbalance 1 \
+    --mtu 1500 \
+    --output-dir "$P7/matrix_results/P7_$STAMP"
+```
+
+MAC COMMAND — RUN ALL FOUR AGAIN
+--------------------------------
+```bash
+cd ~/Downloads/GreenQUIC && \
+git fetch origin performance2/p5-multicore && \
+git checkout performance2/p5-multicore && \
+git merge --ff-only origin/performance2/p5-multicore && \
+bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_t29_t41_top3_p7_auto.sh
+```
+
+LIVE MONITOR — MAC
+------------------
+```bash
+ssh idex '
+log=$(find /root -maxdepth 1 -type f -name "T29_T41_TOP3_P7_*.log" -printf "%T@ %p\n" 2>/dev/null |
+    sort -nr | sed -n "1p" | cut -d" " -f2-)
+echo "FOLLOWING: $log"
+echo
+[ -n "$log" ] || { echo "No T29/T41/TOP3/P7 log found"; exit 1; }
+tail -n +1 -F "$log"
+'
+```
+
+FULL GREENQUIC POWER-MANAGEMENT CONFIGURATION
+---------------------------------------------
+"Default" is the P5 config.env default.
+"Fair" is the common focused-run value. IDLE_MODE is overridden to monitor and fallback remains short.
+T29/T41/TOP3 columns show the actual focused values; unchanged cells inherit Fair.
+
++-------------------------------------+---------+---------+---------+---------+---------+--------------+
+| Parameter                           | Default | Fair    | T29     | T41     | TOP3    | Applies to   |
++-------------------------------------+---------+---------+---------+---------+---------+--------------+
+| RX_EMPTY_POLLS                      | 50000   | 50000   | 50000   | 50000   | 50000   | BASIC + PLUS |
+| TX_EMPTY_POLLS                      | 50000   | 50000   | 50000   | 50000   | 50000   | BASIC + PLUS |
+| RX_QUEUE_HIGH                       | 64      | 64      | 48      | 64      | 48      | BASIC + PLUS |
+| RX_QUEUE_SAMPLE_PERIOD              | 64      | 64      | 64      | 64      | 64      | BASIC + PLUS |
+| TX_RING_HIGH                        | 64      | 64      | 64      | 64      | 64      | BASIC + PLUS |
+| PRESSURE_MAX                        | 900     | 900     | 900     | 900     | 900     | BASIC + PLUS |
+| PRESSURE_UP                         | 600     | 600     | 600     | 600     | 450     | BASIC + PLUS |
+| PRESSURE_KEEP                       | 250     | 250     | 250     | 250     | 250     | BASIC + PLUS |
+| FULL_BURST_COUNT                    | 8       | 8       | 8       | 8       | 8       | BASIC + PLUS |
+| FREQ_UP_PERIOD_US                   | 500     | 500     | 500     | 500     | 500     | BASIC + PLUS |
+| FREQ_DOWN_PERIOD_US                 | 5000    | 5000    | 5000    | 5000    | 5000    | BASIC + PLUS |
+| FREQ_MIN_IDLE_US                    | 20000   | 20000   | 20000   | 20000   | 20000   | BASIC + PLUS |
+| ENABLE_FREQ                         | 1       | 1       | 1       | 1       | 1       | BASIC + PLUS |
+| ENABLE_SLEEP                        | 1       | 1       | 1       | 1       | 1       | BASIC + PLUS |
+| ENABLE_PAUSE                        | 1       | 1       | 1       | 1       | 1       | BASIC + PLUS |
+| KEEP_PAUSE_ITERATIONS               | 1       | 1       | 1       | 1       | 1       | BASIC + PLUS |
+| SHORT_PAUSE_ITERATIONS              | 1       | 1       | 1       | 1       | 1       | BASIC + PLUS |
+| IDLE_MODE                           | epoll   | monitor | monitor | monitor | monitor | BASIC + PLUS |
+| IDLE_FALLBACK                       | short   | short   | short   | short   | short   | BASIC + PLUS |
+| PRESSURE_SCALE                      | 1000    | 1000    | 1000    | 1000    | 1000    | BASIC + PLUS |
+| RX_BURST_RISE_ALPHA_PERMILLE        | 500     | 500     | 500     | 500     | 500     | BASIC + PLUS |
+| RX_BURST_FALL_ALPHA_PERMILLE        | 500     | 500     | 500     | 500     | 500     | BASIC + PLUS |
+| RX_QUEUE_RISE_ALPHA_PERMILLE        | 1000    | 1000    | 1000    | 1000    | 1000    | BASIC + PLUS |
+| RX_QUEUE_FALL_ALPHA_PERMILLE        | 250     | 250     | 250     | 250     | 250     | BASIC + PLUS |
+| TX_BURST_RISE_ALPHA_PERMILLE        | 500     | 500     | 500     | 500     | 500     | BASIC + PLUS |
+| TX_BURST_FALL_ALPHA_PERMILLE        | 500     | 500     | 500     | 500     | 500     | BASIC + PLUS |
+| TX_RING_RISE_ALPHA_PERMILLE         | 1000    | 1000    | 1000    | 1000    | 1000    | BASIC + PLUS |
+| TX_RING_FALL_ALPHA_PERMILLE         | 250     | 250     | 250     | 250     | 250     | BASIC + PLUS |
+| FULL_BURST_FLOOR                    | 0       | 0       | 0       | 0       | 0       | BASIC + PLUS |
+| ACK_CLIENT_FLOOR                    | 600     | 600     | 600     | 600     | 600     | PLUS only    |
+| ACK_OTHER_FLOOR                     | 550     | 550     | 550     | 550     | 550     | PLUS only    |
+| ACK_RX_HARDMAX_THRESHOLD            | 900     | 900     | 900     | 900     | 900     | PLUS only    |
+| ENABLE_ACK_RX_HARDMAX               | 1       | 1       | 1       | 1       | 1       | PLUS only    |
+| ACK_BLOCKS_SLEEP                    | 1       | 1       | 1       | 1       | 1       | PLUS only    |
+| CWND_GROWTH_NO_WORK_FLOOR           | 550     | 550     | 550     | 550     | 550     | PLUS only    |
+| CWND_GROWTH_WORK_FLOOR              | 600     | 600     | 600     | 600     | 600     | PLUS only    |
+| CWND_GROWTH_PHYSICAL_THRESHOLD      | 250     | 250     | 250     | 250     | 250     | PLUS only    |
+| CWND_GROWTH_BLOCKS_SLEEP            | 1       | 1       | 1       | 1       | 1       | PLUS only    |
+| RECOVERY_FLOOR                      | 750     | 750     | 750     | 750     | 750     | PLUS only    |
+| RECOVERY_HARDMAX_PHYSICAL_THRESHOLD | 600     | 600     | 600     | 600     | 600     | PLUS only    |
+| ENABLE_RECOVERY_HARDMAX             | 1       | 1       | 1       | 1       | 1       | PLUS only    |
+| RECOVERY_BLOCKS_SLEEP               | 1       | 1       | 1       | 1       | 1       | PLUS only    |
+| BLOCKED_RX_FLOOR                    | 0       | 0       | 0       | 0       | 0       | PLUS only    |
+| BLOCKED_SLEEP_GUARD_LEVEL           | 0       | 0       | 0       | 0       | 0       | PLUS only    |
+| ACTIVE_TRANSFER_SLEEP_MIN_LEVEL     | 4       | 4       | 4       | 16      | 16      | PLUS only    |
+| ENABLE_PHYSICAL_HARDMAX             | 1       | 1       | 1       | 1       | 1       | BASIC + PLUS |
+| FREQ_PERIOD_US                      | 100000  | 100000  | 100000  | 100000  | 100000  | BASIC + PLUS |
+| NO_SLEEP_IF_TX_RING_NOT_EMPTY       | 1       | 1       | 1       | 1       | 1       | BASIC + PLUS |
+| TX_RING_PROTECT_UP                  | 1       | 1       | 1       | 1       | 1       | BASIC + PLUS |
+| SLEEP_SHORT_MIN_LEVEL               | 2       | 2       | 2       | 2       | 2       | BASIC + PLUS |
+| SLEEP_DATA_MIN_LEVEL                | 4       | 4       | 4       | 4       | 4       | BASIC + PLUS |
+| SLEEP_DEEP_MIN_LEVEL                | 8       | 8       | 8       | 8       | 8       | BASIC + PLUS |
+| ACK_SLEEP_US                        | 1       | 1       | 1       | 1       | 1       | BASIC + PLUS |
+| DATA_SLEEP_US                       | 2       | 2       | 2       | 2       | 2       | BASIC + PLUS |
+| MAX_SLEEP_US                        | 2       | 2       | 2       | 2       | 2       | BASIC + PLUS |
++-------------------------------------+---------+---------+---------+---------+---------+--------------+
+
+MODE NOTES
+----------
+OFF:
+  - Same DPDK datapath/test pipeline.
+  - GreenQUIC policy bypassed.
+  - Tuning variables do not drive the GreenQUIC policy.
+
+BASIC:
+  - Uses physical DPDK policy signals.
+  - Physical knobs such as RX_QUEUE_HIGH and PRESSURE_UP apply.
+
+PLUS:
+  - Uses the same physical policy plus QUIC semantic hints.
+  - ACTIVE_TRANSFER_SLEEP_MIN_LEVEL is PLUS-only.
+
+SWEEP RESULT REFERENCE
+----------------------
+Baseline T01: 9.9981 Gbit/s, SD 0.1448, CV 1.45%.
+
+Top valid single/focused knobs from the 50-case PLUS sweep:
+  T29 RX_QUEUE_HIGH=48                    10.2730 Gbit/s  (+2.75%)
+  T41 ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16  10.2720 Gbit/s  (+2.74%)
+  T07 PRESSURE_UP=450                     10.2546 Gbit/s  (+2.57%)
+
+The full 50-case table and parameter-by-parameter explanation are in README.md and the Excel workbook.
