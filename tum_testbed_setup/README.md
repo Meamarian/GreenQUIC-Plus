@@ -2,45 +2,100 @@
 
 This folder contains Mac-side setup/recovery tooling for the TUM/LRZ IDEX + Tinyman GreenQUIC testbed.
 
+## Final paper branch and fresh-Debian recovery
+
+The final paper/reproduction branch is:
+
+```text
+performance2/p5-multicore
+```
+
+The final fair paper launcher on that branch is:
+
+```text
+greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v3.sh
+```
+
+Despite the branch name, that final fair P5 experiment runs the single-DPDK-owner Performance2 V2 datapath (`ENABLE_MULTICORE=0`) with DPDK CPU 19 and QUIC CPUs 21-24. The verified Performance2 V2 binary marker is:
+
+```text
+GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
+```
+
+If IDEX and Tinyman have been reimaged/reinstalled with fresh Debian Trixie and all previous live-boot state is gone, the Debian image/reset step is done first through POS/Coinbase. **After both fresh nodes are reachable by SSH, the complete GreenQUIC/DPDK recovery is launched from the Mac with one branch-aware setup command.** The setup script does not itself select/reset the POS Debian image.
+
+On the Mac:
+
+```bash
+cd ~/Downloads/GreenQUIC && \
+git fetch origin performance2/p5-multicore && \
+git checkout performance2/p5-multicore && \
+git reset --hard origin/performance2/p5-multicore && \
+bash tum_testbed_setup/greenquic_fresh_setup_branch.sh paper
+```
+
+The setup runs in the foreground and prints each phase. It first executes the preserved full TUM bootstrap, then transfers the exact `performance2/p5-multicore` SHA from the Mac to both nodes, rebuilds/verifies the final paper P5 Performance2 V2 binary on both endpoints, builds/verifies the isolated normal-Linux P7 binary, verifies IDEX -> Tinyman SSH, verifies the E810 test NIC is DPDK-bound, verifies `lm-sensors`/`sensors`, and installs `/root/run_p5.sh` and `/root/run_p7.sh`. It prints `BRANCH READY` only after those checks pass.
+
+A second Mac terminal can be used to watch the node state while setup is running:
+
+```bash
+while true; do
+  date
+  ssh -J mohsen@coinbase root@idex 'printf "IDEX: "; hostname; git -C /root/mohsen branch --show-current 2>/dev/null || true; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || true'
+  ssh -J mohsen@coinbase root@tinyman 'printf "TINYMAN: "; hostname; git -C /root/mohsen branch --show-current 2>/dev/null || true; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || true'
+  sleep 10
+done
+```
+
+After the setup prints `BRANCH READY`, launch the final fair P5/P7 reproduction from the Mac:
+
+```bash
+cd ~/Downloads/GreenQUIC && \
+git fetch origin performance2/p5-multicore && \
+git checkout performance2/p5-multicore && \
+git reset --hard origin/performance2/p5-multicore && \
+bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v3.sh
+```
+
+Immediately monitor the detached experiment from another Mac terminal:
+
+```bash
+ssh idex '
+log=$(find /root -maxdepth 1 -type f \
+    -name "GQ_FAIR_REPRO_*.log" \
+    -printf "%T@ %p\n" 2>/dev/null | \
+    sort -nr | sed -n "1p" | cut -d" " -f2-)
+echo "FOLLOWING: $log"; echo
+[ -n "$log" ] || { echo "No GQ_FAIR_REPRO log found yet"; return 0 2>/dev/null || true; }
+tail -n +1 -F "$log"
+'
+```
+
+The fair launcher itself re-fetches the exact paper-branch SHA on the Mac and transfers that exact commit to the two remote nodes using a Git bundle, so the remote nodes do not need GitHub credentials for the final run.
+
 ## Recommended branch-aware setup
 
 Use `greenquic_fresh_setup_branch.sh` when you want the fresh TUM setup to end on a specific GreenQUIC branch.
 
-Run it on the Mac from the GreenQUIC repository:
+Run it on the Mac from the GreenQUIC repository. The supported aliases are:
 
 ```bash
+bash tum_testbed_setup/greenquic_fresh_setup_branch.sh paper
 bash tum_testbed_setup/greenquic_fresh_setup_branch.sh main
-```
-
-or:
-
-```bash
 bash tum_testbed_setup/greenquic_fresh_setup_branch.sh performance
-```
-
-or:
-
-```bash
 bash tum_testbed_setup/greenquic_fresh_setup_branch.sh performance2
 ```
 
 The aliases resolve to:
 
+- `paper` or `multicore` -> `performance2/p5-multicore` (final paper branch)
 - `main` -> `main`
 - `performance` -> `performance/p5-max-goodput`
 - `performance2` -> `performance2/p5-max-goodput`
 
 The selector first runs the preserved complete TUM setup, then bundles the exact selected branch SHA from the Mac, installs that exact SHA on both IDEX and Tinyman, rebuilds/verifies the selected P5 binary on both hosts, builds/verifies the isolated normal-Linux P7 binary, confirms IDEX -> Tinyman SSH, confirms the E810 test NIC is DPDK-bound, installs `/root/run_p5.sh` and `/root/run_p7.sh`, and only then prints `BRANCH READY`.
 
-For `performance2`, readiness requires all three binary markers:
-
-```text
-GREENQUIC-P5-SUPER-PERF-V2
-GREENQUIC-P5-PERFORMANCE2-V1
-GREENQUIC-P5-PERFORMANCE2-V2
-```
-
-After readiness, the selector prints a copy/paste Mac command for the final selected-branch 4-test suite. When `performance2` is selected it also prints the V4 Performance2 V2 goodput-screen command.
+For the `paper` target, readiness additionally verifies the exact final Performance2 V2 marker shown above. For the older `performance2` target, readiness requires the SUPER-PERF, Performance2 V1 and Performance2 V2 markers but intentionally uses that older branch's baseline V2 build settings.
 
 ## Base fresh setup
 
@@ -54,7 +109,7 @@ Because IDEX and Tinyman are live-boot/non-persistent machines, rerun the setup 
 
 ## Dependencies installed by the bootstrap
 
-The bootstrap automatically checks/installs its Debian test/report dependencies. In addition to the Python plotting dependencies, it now requires Debian package `lm-sensors` because the repository root `acpi.sh` calls the `sensors` command to sample the `power1` reading.
+The bootstrap automatically checks/installs its Debian test/report dependencies. In addition to the Python plotting dependencies, it requires Debian package `lm-sensors` because the repository root `acpi.sh` calls the `sensors` command to sample the `power1` reading.
 
 Manual equivalent if needed:
 
@@ -168,44 +223,18 @@ Use `Ctrl+C` only to stop this `watch` command in the second shell. Leave the fi
 
 ## P7 Linux UDP baseline
 
-The complete setup builds an isolated non-DPDK MsQuic binary on both IDEX and Tinyman and installs `/root/run_p7.sh` on IDEX. P7 uses the normal Linux `datapath_linux.c` + `datapath_epoll.c` path while reusing the exact P5 sequential-download application timing logic.
+The complete setup builds an isolated non-DPDK MsQuic binary on both IDEX and Tinyman and installs `/root/run_p7.sh` on IDEX. P7 uses the normal Linux `datapath_linux.c` + `datapath_epoll.c` path while reusing the P5 sequential-download application timing logic.
 
-The primary controlled Linux mapping is CPU19 for E810 IRQ/NAPI work and CPUs21–24 for the MsQuic worker processor list/process affinity, corresponding as closely as Linux permits to the P5 single-core DPDK mapping CPU19 + QUIC workers21–24. P7 temporarily switches the test NIC from `vfio-pci` to `ice` and restores DPDK after the matrix by default.
+The controlled paper mapping is CPU19 for E810 IRQ/NAPI work and CPUs21-24 for the MsQuic worker processor list/process affinity, corresponding as closely as Linux permits to the final P5 single-core DPDK mapping CPU19 + QUIC workers21-24. P7 temporarily switches the test NIC from the DPDK driver to `ice` and restores DPDK after the matrix.
 
-Primary 6-repetition run on IDEX:
-
-```bash
-/root/run_p7.sh \
-  --downloads 5 \
-  --gap-seconds 5 \
-  --runs 6 \
-  --pre-cooldown-seconds 5 \
-  --post-cooldown-seconds 5 \
-  --between-runs-seconds 5 \
-  --dataplane-cpu 19 \
-  --quic-cpus 21,22,23,24 \
-  --pin-irq 1 \
-  --pin-quic 1 \
-  --disable-rps 1 \
-  --nic-offloads native \
-  --record-quic-cpus 0 \
-  --enable-record 1 \
-  --rapl-interval-ms 6 \
-  --freq-interval-ms 1 \
-  --require-rapl 1 \
-  --stop-irqbalance 1 \
-  --mtu 1500 \
-  --restore-dpdk 1
-```
-
-Use `--nic-offloads on` or `--nic-offloads off` only as sensitivity experiments; `--nic-offloads native` is the normal Linux baseline, while MsQuic keeps its stock UDP segmentation/coalescing capability probe and P7 records the detected features.
+The final fair reproduction does not use the older generic `/root/run_p7.sh` example as its authoritative configuration; it invokes `run_matrix_with_report.sh` with the paper Linux settings from `mac_run_p5_p7_fair_repro_6x5_v3.sh`, including `--nic-offloads paper`, `--disable-rdma 1`, UDP buffers `6815744`, combined channels `1`, MTU `1500`, RAPL sampling at `6 ms`, frequency sampling at `1 ms`, and the same 5-second gap/edge/between timing used for the P5 fair run.
 
 ## Performance2 V2 monitoring
 
-For the Performance2 V2 goodput screen, see:
+For the older Performance2 V2 goodput screen, see:
 
 ```text
 greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/P5_PERFORMANCE2.md
 ```
 
-That document contains the recommended V4 detached Mac command, the live-check command, the results-so-far command, and the `SCP_DONE` completion check.
+That document contains the V4 detached Mac command, live-check command, results-so-far command, and `SCP_DONE` completion check. For the final paper reproduction, use the `paper` instructions at the top of this README instead.
