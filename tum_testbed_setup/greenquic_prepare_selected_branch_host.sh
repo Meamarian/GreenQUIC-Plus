@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-[[ $# -eq 2 ]] || { echo "Usage: $0 <main|performance|performance2> <expected-sha>" >&2; exit 2; }
+[[ $# -eq 2 ]] || { echo "Usage: $0 <main|performance|performance2|paper> <expected-sha>" >&2; exit 2; }
 KIND="$1"
 EXPECTED="$2"
 ROOT=/root/mohsen
@@ -48,6 +48,19 @@ case "$KIND" in
     grep -aFq -- 'GREENQUIC-P5-SUPER-PERF-V2' "$P5_CLIENT"
     grep -aFq -- 'GREENQUIC-P5-PERFORMANCE2-V1' "$P5_CLIENT"
     grep -aFq -- 'GREENQUIC-P5-PERFORMANCE2-V2' "$P5_CLIENT"
+    ;;
+  paper)
+    # Final paper P5 configuration on performance2/p5-multicore.
+    # Despite the branch name, the final fair paper run is the single-DPDK-owner
+    # Performance2 V2 path. The fair launcher explicitly sets ENABLE_MULTICORE=0,
+    # DPDK CPU 19 and QUIC CPUs 21-24.
+    P5_BUILD_REUSE=1 bash "$P5/build_p5_performance2.sh"
+    grep -aFq -- 'GREENQUIC-P5-SUPER-PERF-V2' "$P5_CLIENT"
+    grep -aFq -- 'GREENQUIC-P5-PERFORMANCE2-V1' "$P5_CLIENT"
+    grep -aFq -- 'GREENQUIC-P5-PERFORMANCE2-V2' "$P5_CLIENT"
+    PAPER_MARKER='GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0'
+    grep -aFq -- "$PAPER_MARKER" "$P5_CLIENT"
+    grep -aFq -- "$PAPER_MARKER" "$P5_SERVER"
     ;;
   *) echo "ERROR: unknown branch kind: $KIND" >&2; exit 2 ;;
 esac
