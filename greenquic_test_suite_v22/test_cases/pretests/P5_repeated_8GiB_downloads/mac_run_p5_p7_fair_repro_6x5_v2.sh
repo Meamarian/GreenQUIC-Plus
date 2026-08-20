@@ -23,6 +23,15 @@ def replace_once(old: str, new: str, label: str) -> None:
         raise SystemExit(f"ERROR: expected exactly one {label} anchor, found {count}")
     src = src.replace(old, new, 1)
 
+# GreenQUIC-Plus uses main as the authoritative final paper/development branch.
+# Preserve the historical base launcher but rewrite its old source-branch name
+# in the generated temporary runner.
+replace_once(
+    'BRANCH="performance2/p5-multicore"',
+    'BRANCH="${GQ_FAIR_BRANCH:-main}"',
+    "GreenQUIC+ fair branch",
+)
+
 # Mac creates the exact-SHA bundle. Remote nodes never contact GitHub.
 replace_once(
     'LOCAL_SCRIPT="${TMPDIR:-/tmp}/GQ_FAIR_REPRO_${TAG}_$$.sh"\n',
@@ -120,13 +129,14 @@ remote_body = src[remote_start:remote_end]
 if "git fetch origin" in remote_body:
     raise SystemExit("ERROR: patched detached runner still contacts GitHub")
 for required in (
+    'BRANCH="${GQ_FAIR_BRANCH:-main}"',
     'git fetch "$BUNDLE" "$BUNDLE_REF"',
     'scp -o BatchMode=yes -o ConnectTimeout=20 "$BUNDLE" root@tinyman:"$BUNDLE"',
     'git bundle create "$LOCAL_BUNDLE" "$BUNDLE_REF"',
     'idex:$REMOTE_BUNDLE',
 ):
     if required not in src:
-        raise SystemExit(f"ERROR: missing bundle-sync guard: {required}")
+        raise SystemExit(f"ERROR: missing GreenQUIC+ fair-repro guard: {required}")
 
 Path(sys.argv[2]).write_text(src, encoding="utf-8")
 PY
