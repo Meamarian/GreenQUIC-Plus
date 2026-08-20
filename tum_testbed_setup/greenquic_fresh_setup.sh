@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Public TUM/LRZ Mac-side setup entrypoint.
+# Public TUM/LRZ Mac-side setup entrypoint for GreenQUIC+.
 #
-# First invocation: dispatch to the complete normal + P4 + P5 + P6 + P7 wrapper.
-# The complete wrapper deliberately calls the preserved P4/P5/P6 setup, which in
-# turn executes the preserved base implementation for SSH/link/DPDK/P0/P4.
+# This is the authoritative fresh-node setup entrypoint. It dispatches to the
+# complete P4 + P5 + P6 + P7 wrapper through a temporary copy of the preserved
+# base setup and applies three safety/portability fixes before execution:
+#   1) use the private Meamarian/GreenQUIC-Plus repository on branch main;
+#   2) harden the MSR readiness check under `set -o pipefail`;
+#   3) bring both direct-cable E810 peers up before checking carrier.
 #
-# The preserved base script contains two fresh-boot hazards:
-#   1) an MSR readiness pipeline that can fail under `set -o pipefail`;
-#   2) a physical-link check that tests IDEX before Tinyman's peer port is up.
-# Run from a temporary copy and harden those exact blocks before dispatch.
+# Run this script on the Mac. The Mac private key is never copied to a node.
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BASE="$HERE/greenquic_fresh_setup_base.sh"
@@ -33,7 +33,7 @@ fi
     exit 1
 }
 
-TMP_SETUP="$(mktemp -d "${TMPDIR:-/tmp}/greenquic-tum-setup.XXXXXX")"
+TMP_SETUP="$(mktemp -d "${TMPDIR:-/tmp}/greenquic-plus-tum-setup.XXXXXX")"
 cleanup() {
     rm -rf "$TMP_SETUP"
 }
@@ -47,6 +47,18 @@ import sys
 
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
+
+# The preserved base came from the original GreenQUIC repository. GreenQUIC+
+# is private and independent, so every operational clone/fetch must use the new
+# repository and its main branch.
+old_repo = "git@github.com:Meamarian/GreenQUIC.git"
+new_repo = "git@github.com:Meamarian/GreenQUIC-Plus.git"
+repo_count = text.count(old_repo)
+if repo_count != 2:
+    raise SystemExit(
+        f"ERROR: expected exactly two preserved GreenQUIC repo URLs, found {repo_count}"
+    )
+text = text.replace(old_repo, new_repo)
 
 # Harden the MSR check without using an lsmod|grep -q pipeline under pipefail.
 old_msr = "\n".join([
@@ -82,8 +94,8 @@ if text.count(old_msr) != 1:
 text = text.replace(old_msr, new_msr, 1)
 
 # On the direct cable, both E810 ports must be admin-UP before either side can
-# report carrier. The old setup called restore_and_check_link(idex) first while
-# Tinyman could still be DOWN, causing the proven carrier=0/ethtool=no failure.
+# report carrier. The preserved setup checked IDEX first while Tinyman could
+# still be DOWN, which can produce carrier=0 / ethtool=no.
 old_link_order = "\n".join([
     '# Both sides remain kernel/ICE-managed until both checks have passed.',
     'restore_and_check_link idex',
@@ -133,11 +145,13 @@ path.write_text(text, encoding="utf-8")
 PY
 
 bash -n "$TMP_SETUP/greenquic_fresh_setup_base.sh"
+grep -Fq 'git@github.com:Meamarian/GreenQUIC-Plus.git' "$TMP_SETUP/greenquic_fresh_setup_base.sh"
+! grep -Fq 'git@github.com:Meamarian/GreenQUIC.git' "$TMP_SETUP/greenquic_fresh_setup_base.sh"
 grep -Fq 'Checking MSR readiness on CPU19...' "$TMP_SETUP/greenquic_fresh_setup_base.sh"
 grep -Fq 'prepare_link_peer idex' "$TMP_SETUP/greenquic_fresh_setup_base.sh"
 grep -Fq 'prepare_link_peer tinyman' "$TMP_SETUP/greenquic_fresh_setup_base.sh"
 
-echo "TUM setup MSR + direct-link ordering hardening: PASS"
+echo "GreenQUIC+ TUM setup repo/MSR/direct-link hardening: PASS"
 
 export GREENQUIC_TUM_FULL_SETUP_ACTIVE=1
 bash "$TMP_SETUP/greenquic_fresh_setup_p4_p5_p6_p7.sh" "$@"
