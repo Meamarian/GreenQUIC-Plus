@@ -1,421 +1,267 @@
-# GreenQUIC
+# GreenQUIC+
 
-**GreenQUIC is a research prototype for energy-aware CPU power management in DPDK-accelerated MsQuic.**
+**GreenQUIC+ is a research prototype for energy-aware CPU power management in DPDK-accelerated MsQuic.**
 
-The repository explores a simple question:
+This repository is the independent continuation of the GreenQUIC paper code. Its `main` branch starts from the final paper/reproduction line that previously lived on `performance2/p5-multicore` in the original `Meamarian/GreenQUIC` repository.
 
-> **How can a high-speed QUIC datapath reduce CPU energy use during low-demand periods without reacting too slowly when transport work becomes urgent again?**
+The original repository is preserved separately. New GreenQUIC+ development should happen here.
 
-GreenQUIC addresses this at two levels:
-
-- **GreenQUIC (BASIC)** observes only physical DPDK datapath demand and adapts CPU frequency / idle behavior accordingly.
-- **GreenQUIC+ (PLUS)** keeps the same physical policy, but adds short-lived QUIC semantic information so that the power manager can distinguish *truly idle* periods from moments where the datapath looks quiet but the transport still needs a responsive CPU.
-
-`OFF`, `BASIC`, and `PLUS` are **three runtime behaviors of the same DPDK datapath**, not three separate protocol implementations.
-
----
-
-## High-level overview
-
-| Capability | OFF | BASIC / GreenQUIC | PLUS / GreenQUIC+ |
-|---|:---:|:---:|:---:|
-| Original DPDK RX/TX datapath | ✅ | ✅ | ✅ |
-| GreenQUIC RX/TX tracking | ❌ | ✅ | ✅ |
-| RX burst awareness | ❌ | ✅ | ✅ |
-| RX NIC queue backlog awareness | ❌ | ✅ | ✅ |
-| TX burst awareness | ❌ | ✅ | ✅ |
-| TX software-ring backlog awareness | ❌ | ✅ | ✅ |
-| Empty-poll / recent-activity tracking | ❌ | ✅ | ✅ |
-| Separate smoothed physical signals | ❌ | ✅ | ✅ |
-| Adaptive CPU-frequency control | ❌ | ✅ | ✅ |
-| Adaptive idle / sleep policy | ❌ | ✅ | ✅ |
-| ACK readiness awareness | ❌ | ❌ | ✅ |
-| CUBIC recovery awareness | ❌ | ❌ | ✅ |
-| CUBIC ramping awareness | ❌ | ❌ | ✅ |
-| CWND-blocked awareness | ❌ | ❌ | ✅ |
-| QUIC partition → DPDK-lcore locality | ❌ | ❌ | ✅ |
-| QUIC hints can protect against premature sleep/downclock | ❌ | ❌ | ✅ |
-| Main role | Baseline | Datapath-aware PM | Cross-layer QUIC-aware PM |
-
-The central distinction is:
+## Repository status
 
 ```text
-OFF   = no GreenQUIC power decision
-
-BASIC = when is the datapath physically busy or idle?
-
-PLUS  = when is the datapath physically busy or idle?
-        +
-        when does QUIC need the CPU to remain responsive?
+Repository: Meamarian/GreenQUIC-Plus
+Visibility: private
+Default branch: main
 ```
 
----
-
-## Architecture
-
-```mermaid
-flowchart TD
-    MODE[GreenQuicMode] --> OFF[OFF]
-    MODE --> BASIC[BASIC / GreenQUIC]
-    MODE --> PLUS[PLUS / GreenQUIC+]
-
-    OFF --> OFFPATH[Original DPDK RX/TX hot path\nNo GreenQUIC tracking or PM policy]
-
-    BASIC --> PHY[DPDK physical signals]
-    PLUS --> PHY
-
-    PHY --> RXB[RX burst occupancy]
-    PHY --> RXQ[RX queue backlog]
-    PHY --> TXB[TX burst occupancy]
-    PHY --> TXR[TX software-ring backlog]
-    PHY --> IDLE[Empty polls + recent activity]
-
-    RXB --> SMOOTH[Independent smoothing / EWMAs]
-    RXQ --> SMOOTH
-    TXB --> SMOOTH
-    TXR --> SMOOTH
-
-    SMOOTH --> PHYP[Directional physical pressure]
-
-    PLUS --> QUIC[QUIC semantic hints]
-    QUIC --> ACK[ACK ready]
-    QUIC --> REC[CUBIC recovery]
-    QUIC --> RAMP[CUBIC ramping]
-    QUIC --> BLOCK[CWND blocked]
-    QUIC --> XFER[Transfer context]
-
-    ACK --> SEM[Semantic pressure floors\nand sleep-safety constraints]
-    REC --> SEM
-    RAMP --> SEM
-    BLOCK --> SEM
-    XFER --> SEM
-
-    PHYP --> FINAL[Final per-lcore control pressure]
-    SEM --> FINAL
-
-    FINAL --> ACTION[Power-management action]
-    ACTION --> DVFS[Frequency max / up / keep / down / min]
-    ACTION --> WAIT[Poll / pause / bounded idle / epoll-style wait]
-```
-
-### The important design choice
-
-**PLUS does not replace BASIC.** Physical DPDK measurements remain the foundation of the policy.
-
-QUIC hints are applied *after* physical smoothing as short-lived semantic floors or safety constraints. This keeps the physical workload estimate independent from protocol hints and allows semantic protection to disappear quickly when the corresponding QUIC event is no longer relevant.
-
----
-
-## What BASIC contributes
-
-BASIC is the transport-independent GreenQUIC policy.
-
-It asks:
-
-> **How much CPU performance is justified by the work physically visible at the DPDK datapath right now and recently?**
-
-BASIC observes both RX and TX independently. The physical workload signals include:
-
-- current RX burst occupancy,
-- RX NIC queue backlog,
-- current TX burst occupancy,
-- TX software-ring backlog,
-- consecutive empty polls,
-- recent RX/TX activity.
-
-Instantaneous burst activity and persistent queue/ring backlog are intentionally kept as **separate signals with separate smoothing state**. A one-poll burst and a sustained backlog represent different kinds of demand and should not have identical persistence in the controller.
-
-Conceptually:
+Historical import point from the old GreenQUIC paper branch:
 
 ```text
-RX burst -----------┐
-                    ├─> RX physical pressure ──┐
-RX queue backlog ---┘                          │
-                                               ├─> final physical pressure
-TX burst -----------┐                          │
-                    ├─> TX physical pressure ──┘
-TX ring backlog ----┘
+58d00a39270f512b6e9586704797dff6285e73b2
 ```
 
-When pressure is high, GreenQUIC keeps or raises CPU performance. When pressure is low, it first confirms that the apparent idle period is persistent enough before reducing frequency or entering an idle mechanism.
-
-The scientific role of BASIC is therefore:
-
-> **Datapath-driven adaptive CPU power management using only observable packet-processing demand, without requiring transport-protocol knowledge.**
+That SHA is provenance only. The authoritative current code is always the current `main` of this repository.
 
 ---
 
-## What PLUS contributes
+## What GreenQUIC+ contains
 
-GreenQUIC+ extends BASIC with **cross-layer transport semantics**.
+The implementation exposes three runtime behaviors of the same DPDK/MsQuic datapath:
 
-A DPDK queue can be empty even when QUIC is about to need CPU service. PLUS introduces lightweight hints from MsQuic so the power manager can protect these protocol-sensitive moments.
+| Mode | Role |
+|---|---|
+| `OFF` | DPDK baseline without GreenQUIC power-management decisions |
+| `BASIC` / GreenQUIC | datapath-aware CPU frequency and idle control using physical DPDK signals |
+| `PLUS` / GreenQUIC+ | BASIC plus short-lived QUIC transport hints and locality information |
 
-The current hint API includes:
+The physical GreenQUIC policy observes signals such as RX/TX burst occupancy, RX NIC queue backlog, TX software-ring backlog, recent activity and persistent empty polling. GreenQUIC+ keeps that physical policy and adds semantic transport information such as ACK readiness and CUBIC state so that a temporarily quiet datapath is not automatically treated as unimportant work.
 
-- `ACK_PENDING` — an ACK is actually ready to be transmitted,
-- `CUBIC_RECOVERY` — congestion recovery is active,
-- `CUBIC_RAMPING` — the congestion window has grown,
-- `CUBIC_CWND_BLOCKED` — the sender is congestion-window limited,
-- transfer-context hints for server TX / client RX activity.
+The main implementation locations are:
 
-These hints are not treated as a replacement for real datapath demand. Instead they can:
-
-- impose a temporary minimum control pressure,
-- block or restrict aggressive sleeping,
-- keep a relevant lcore responsive during transport-sensitive work,
-- combine semantic urgency with physical evidence before selecting the most expensive CPU state.
-
-This gives PLUS a different question to answer:
-
-> **Is the datapath quiet because there is truly no useful work, or is it temporarily quiet while QUIC still needs fast CPU response?**
-
----
-
-## Cross-layer locality
-
-GreenQUIC+ associates transport information with the datapath through a configurable mapping:
-
-```mermaid
-flowchart LR
-    CONN[QUIC connection] --> PART[MsQuic partition]
-    PART --> MAP[Partition → DPDK-lcore map]
-    MAP --> LCORE[Relevant DPDK lcore]
-    LCORE --> HINTS[Local QUIC hints]
-    HINTS --> PM[Per-lcore power decision]
-```
-
-This matters when multiple datapath lcores are used: a QUIC event associated with one partition should not unnecessarily increase the power state of unrelated datapath cores.
-
----
-
-## Control loop
-
-At a high level, the runtime policy is:
-
-```mermaid
-flowchart TD
-    START[RX/TX worker iteration] --> MODE{Mode?}
-
-    MODE -->|OFF| DIRECT[Use original DPDK path]
-    DIRECT --> START
-
-    MODE -->|BASIC / PLUS| OBSERVE[Observe RX/TX physical state]
-    OBSERVE --> CALC[Update independent physical pressure signals]
-
-    CALC --> ISP{PLUS?}
-    ISP -->|No| MERGE[Use physical pressure only]
-    ISP -->|Yes| HINT[Read relevant QUIC hints]
-    HINT --> MERGE2[Combine physical pressure\nwith semantic floors / guards]
-
-    MERGE --> DECIDE[Power decision]
-    MERGE2 --> DECIDE
-
-    DECIDE --> HIGH{High pressure?}
-    HIGH -->|Yes| PERF[Raise / preserve CPU performance]
-    HIGH -->|No| EMPTY{Enough evidence of idle?}
-
-    EMPTY -->|No| SHALLOW[Keep polling / shallow pause]
-    EMPTY -->|Yes| SAFE{Safe to reduce power?}
-
-    SAFE -->|No| PROTECT[PLUS semantic protection / physical work guard]
-    SAFE -->|Yes| SAVE[Frequency down/min + selected idle mechanism]
-
-    PERF --> START
-    SHALLOW --> START
-    PROTECT --> START
-    SAVE --> START
-```
-
-A simplified pseudocode view is:
-
-```text
-if mode == OFF:
-    run original DPDK RX/TX path
-else:
-    observe RX/TX bursts, queue/ring backlog and idle history
-    update independent physical pressure estimates
-
-    if mode == PLUS:
-        read local QUIC semantic hints
-        apply temporary semantic pressure floors / sleep guards
-
-    final_pressure = max(relevant RX and TX control pressure)
-
-    if demand is high:
-        raise or preserve CPU frequency
-    elif demand is moderate:
-        keep the CPU responsive
-    else:
-        confirm persistent idle
-        reduce frequency when appropriate
-        enter the configured bounded idle mechanism only when safe
-```
-
----
-
-## Three modes, three research roles
-
-### OFF — baseline
-
-OFF is the control condition. It keeps the original DPDK RX/TX hot path and disables GreenQUIC datapath tracking, DVFS decisions, idle policy, and runtime GreenQUIC+ hint processing.
-
-Its purpose is to provide a clean reference against which the GreenQUIC policies can be evaluated.
-
-### BASIC — GreenQUIC
-
-BASIC introduces **datapath-aware power management** without QUIC semantics.
-
-Its contribution is the separation of physical RX/TX demand into meaningful short-lived and persistent workload signals, followed by adaptive frequency and idle decisions based only on datapath evidence.
-
-### PLUS — GreenQUIC+
-
-PLUS introduces **cross-layer QUIC-aware power management**.
-
-It preserves the BASIC datapath policy but adds transport urgency and locality. This allows the controller to be more conservative at protocol-sensitive moments while still exploiting genuine idle periods.
-
-In short:
-
-> **BASIC is reactive to physical packet-processing demand. PLUS is reactive to physical demand and additionally predictive/protective using QUIC transport state.**
-
----
-
-## Key implementation locations
-
-| Area | Main location |
+| Area | Location |
 |---|---|
 | GreenQUIC datapath tracking, pressure calculation, DVFS and idle policy | `msquic/src/platform/datapath_raw_dpdk.c` |
 | GreenQUIC+ hint API | `msquic/src/inc/greenquic_plus.h` |
 | GreenQUIC+ hint storage/runtime mapping | `msquic/src/platform/greenquic_plus.c` |
 | ACK-ready hook | `msquic/src/core/ack_tracker.c` |
-| CUBIC recovery / ramping / blocked-state hooks | `msquic/src/core/cubic.c` |
-| Current experiment suite | `greenquic_test_suite_v22/` |
-| Main fresh-node bootstrap | `bootstrap_greenquic.sh` |
-| TUM/LRZ testbed setup and recovery | `tum_testbed_setup/` |
-| Historical one-off patches and debug artifacts | `patches/` |
+| CUBIC recovery/ramping/blocked hooks | `msquic/src/core/cubic.c` |
+| Experiment suite | `greenquic_test_suite_v22/` |
+| TUM/LRZ fresh-node recovery | `tum_testbed_setup/` |
 
-The design intentionally keeps GreenQUIC logic concentrated in GreenQUIC/datapath code. QUIC core changes are kept to small semantic hooks that report transport state to the GreenQUIC+ layer.
+---
+
+## Final paper datapath now used by `main`
+
+Although the historical branch name contained `multicore`, the final fair paper configuration uses one DPDK owner core and the optimized Performance2 V2 datapath.
+
+The build is verified with this exact marker:
+
+```text
+GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
+```
+
+The fair P5 launcher uses:
+
+```text
+ENABLE_MULTICORE=0
+DPDK CPU: 19
+QUIC CPUs: 21,22,23,24
+```
+
+The corresponding Linux comparison is the isolated P7 normal-Linux MsQuic path.
+
+---
+
+## Mac checkout
+
+The preserved old repository and the new repository should remain separate local directories:
+
+```text
+~/Downloads/GreenQUIC       # old repository, preserved
+~/Downloads/GreenQUIC-Plus  # new development repository
+```
+
+For GreenQUIC+ work:
+
+```bash
+cd ~/Downloads/GreenQUIC-Plus && \
+git fetch origin main && \
+git checkout main && \
+git reset --hard origin/main
+```
+
+Verify before making changes:
+
+```bash
+git remote -v
+git branch --show-current
+git rev-parse HEAD
+```
+
+Expected remote:
+
+```text
+git@github.com:Meamarian/GreenQUIC-Plus.git
+```
+
+Expected branch:
+
+```text
+main
+```
+
+---
+
+## Fresh TUM Debian setup
+
+The authoritative setup guide is:
+
+```text
+tum_testbed_setup/README.md
+```
+
+If IDEX and Tinyman have been reimaged with fresh Debian Trixie, first complete the POS/Coinbase image/reset step and wait until both nodes are reachable by SSH. Then run this from the Mac:
+
+```bash
+cd ~/Downloads/GreenQUIC-Plus && \
+git fetch origin main && \
+git checkout main && \
+git reset --hard origin/main && \
+bash tum_testbed_setup/greenquic_fresh_setup_branch.sh main
+```
+
+`paper` is an alias for the same GreenQUIC+ `main` setup:
+
+```bash
+bash tum_testbed_setup/greenquic_fresh_setup_branch.sh paper
+```
+
+The supported setup path intentionally goes through the hardened public setup entrypoint. It prepares the private repository checkout, SSH path, ICE/E810 firmware, hugepages, MSR/P-state support, direct-link verification, DPDK binding, P0/P4/P5/P7 environment, and finally installs the exact current `main` SHA on both endpoints using a Git bundle.
+
+Do **not** run `tum_testbed_setup/greenquic_fresh_setup_base.sh` directly. It is preserved internal setup code; the public wrapper applies the current GreenQUIC+ repository URL and fresh-boot safety fixes before executing it.
+
+### Setup monitor from another Mac terminal
+
+```bash
+while true; do
+  clear
+  date
+  echo
+  ssh -J mohsen@coinbase root@idex \
+    'echo "===== IDEX ====="; hostname; git -C /root/mohsen branch --show-current 2>/dev/null || true; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || true'
+  echo
+  ssh -J mohsen@coinbase root@tinyman \
+    'echo "===== TINYMAN ====="; hostname; git -C /root/mohsen branch --show-current 2>/dev/null || true; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || true'
+  sleep 10
+done
+```
+
+Successful setup ends with:
+
+```text
+GREENQUIC+ MAIN READY ON BOTH TUM NODES
+```
+
+---
+
+## Final fair P5/P7 reproduction
+
+After the TUM setup is ready, run the paper/fair reproduction from the Mac:
+
+```bash
+cd ~/Downloads/GreenQUIC-Plus && \
+git fetch origin main && \
+git checkout main && \
+git reset --hard origin/main && \
+bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v3.sh
+```
+
+The default experiment is 6 runs x 5 downloads. The launcher:
+
+1. resolves the exact current `origin/main` SHA on the Mac,
+2. creates a Git bundle for that exact commit,
+3. sends the bundle to IDEX,
+4. synchronizes Tinyman from the same bundle,
+5. rebuilds and checks the final P5 Performance2 V2 marker,
+6. runs the fair P5 experiment and isolated P7 Linux baseline,
+7. records the exact run tag, commit and output paths.
+
+The remote nodes do not need their own GitHub credentials for the detached final run.
+
+Immediately monitor from another Mac terminal:
+
+```bash
+ssh idex '
+log=$(find /root -maxdepth 1 -type f \
+    -name "GQ_FAIR_REPRO_*.log" \
+    -printf "%T@ %p\n" 2>/dev/null | \
+    sort -nr | sed -n "1p" | cut -d" " -f2-)
+
+echo "FOLLOWING: $log"
+echo
+
+if [ -z "$log" ]; then
+    echo "No GQ_FAIR_REPRO log found yet"
+else
+    tail -n +1 -F "$log"
+fi
+'
+```
+
+Always prefer the exact `REMOTE_LOG` path printed by the launcher for the current run.
 
 ---
 
 ## Runtime modes
 
-The mode is selected at runtime through the GreenQUIC configuration:
+The runtime GreenQUIC mode is selected through configuration:
 
 ```ini
 GreenQuicMode=off
 ```
 
-or
-
 ```ini
 GreenQuicMode=basic
 ```
-
-or
 
 ```ini
 GreenQuicMode=plus
 ```
 
-This makes it possible to evaluate the baseline, datapath-only policy, and cross-layer policy using the same underlying MsQuic/DPDK implementation.
+`BASIC` and `PLUS` share the physical datapath policy. `PLUS` additionally consumes QUIC semantic information and PLUS-only protection logic.
 
 ---
 
-## Test and measurement infrastructure
+## Measurement infrastructure
 
-The repository also contains an experimental framework for repeatable client/server QUIC workloads and power/performance instrumentation. The current suite can collect and organize data such as:
+The experiment framework can collect and organize:
 
 - transfer timing and goodput,
-- RAPL package / DRAM energy,
+- RAPL package/DRAM energy,
 - CPU-frequency traces,
-- Linux CPU-idle residency,
+- CPU-idle residency,
 - GreenQUIC policy telemetry,
-- client/server run metadata and validation artifacts.
+- client/server run metadata,
+- validation artifacts and generated charts.
 
-Experimental results are intentionally **not** included in this README; the purpose of this page is to explain the implementation and research contribution.
-
-### Current P5/P7 fair reproduction
-
-The reference run documented here used branch `performance2/p5-multicore` at:
-
-```text
-53e5eac0fd13519d53c17f6d2f1fde5d23fcf45b
-```
-
-Reference commit subject:
-
-```text
-P5 11G: add current-config 2x5 launcher
-```
-
-From the Mac, start the 6-run × 5-download P5/P7 fair reproduction with:
-
-```bash
-cd ~/Downloads/GreenQUIC && \
-git fetch origin performance2/p5-multicore && \
-git checkout performance2/p5-multicore && \
-git reset --hard origin/performance2/p5-multicore && \
-cd greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads && \
-bash ./mac_run_p5_p7_fair_repro_6x5_v3.sh
-```
-
-The launcher prints the exact `SHA`, `TAG`, `REMOTE_LOG`, live-monitor command, and status command for every run. Always use the newly printed `REMOTE_LOG`; do not reuse the log path from an older run.
-
-For the reference run with `TAG=20260818_152451`, the live monitor was:
-
-```bash
-ssh idex 'tail -n +1 -F /root/GQ_FAIR_REPRO_20260818_152451.log'
-```
-
-For any new run, use the tag printed by the launcher:
-
-```bash
-ssh idex 'tail -n +1 -F /root/GQ_FAIR_REPRO_<TAG>.log'
-```
-
-To check whether that run is still running, finished, or failed without continuously following the log:
-
-```bash
-ssh idex 'if test -f /root/GQ_FAIR_REPRO_<TAG>/DONE; then echo DONE; cat /root/GQ_FAIR_REPRO_<TAG>/RESULT_ZIPS.txt; elif test -f /root/GQ_FAIR_REPRO_<TAG>/FAILED; then echo FAILED; cat /root/GQ_FAIR_REPRO_<TAG>/FAILED; tail -120 /root/GQ_FAIR_REPRO_<TAG>.log; else echo RUNNING; tail -60 /root/GQ_FAIR_REPRO_<TAG>.log; fi'
-```
-
-> **Reproducibility note:** the launch command intentionally synchronizes to the current remote head of `performance2/p5-multicore` and then prints the exact SHA used. The reference experiment above used `53e5eac0fd13519d53c17f6d2f1fde5d23fcf45b`. A documentation-only README update will therefore produce a newer branch SHA even though the experiment implementation itself is unchanged.
-
-### Reusable Mac cleanup and P5 launch examples
-
-For the reusable two-host GreenQUIC cleanup command and a complete detached **P5 PLUS-only strong-DVFS** Mac launcher example, see:
-
-[`greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/MAC_RUN_AND_CLEANUP_EXAMPLES.md`](greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/MAC_RUN_AND_CLEANUP_EXAMPLES.md)
-
-The cleanup example is intended for known GreenQUIC P5/P7 processes and samplers; it is not a general-purpose Linux process killer. The launch example bundles the selected branch head on the Mac, copies it to IDEX/Tinyman, validates the synchronized SHA, starts the P5 run detached on IDEX, and prints the exact log/PID/result paths before the Mac is disconnected.
+Generated experiment results, runtime logs, archives and payloads should not be committed for new work. `.gitignore` excludes new `matrix_results`, logs, runtime output, build trees and generated payloads. Older large artifacts remain in inherited Git history for provenance; this repository intentionally does not rewrite that history.
 
 ---
 
-## Testbed setup
+## Collaboration
 
-For the TUM/LRZ IDEX + Tinyman environment, see:
+The repository is private and can be shared with collaborators through GitHub repository access. For normal development, keep `main` as the stable paper/development baseline and create short-lived branches such as:
 
 ```text
-tum_testbed_setup/
+feature/<name>
+experiment/<name>
+fix/<name>
 ```
 
-That folder documents node allocation/reset through Coinbase and contains the Mac-side fresh-node setup script used to restore SSH, bootstrap dependencies, configure the E810/DPDK environment, prepare test assets, and validate the client/server path.
+Merge reviewed changes back into `main` rather than changing the preserved old `Meamarian/GreenQUIC` repository.
 
 ---
 
-## Project scope
+## Scope
 
-GreenQUIC is a **research prototype**, not a production power-management framework.
-
-The controller decides when to request lower/higher CPU performance and when to attempt bounded idle mechanisms. It does **not** directly select a specific hardware C-state; Linux and the processor ultimately determine the concrete idle state reached.
-
-The project is intended to study the tradeoff between:
-
-```text
-packet-processing responsiveness
-            ↕
-CPU power / energy efficiency
-```
-
-and, specifically, whether transport-aware information can make aggressive datapath power management safer for QUIC workloads.
+GreenQUIC+ is a research prototype, not a production power-management framework. It is intended to study the performance/power tradeoff of QUIC over DPDK and how transport-aware information can improve CPU frequency and idle decisions without unnecessarily reducing responsiveness.
