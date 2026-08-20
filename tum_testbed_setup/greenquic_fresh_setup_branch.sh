@@ -130,8 +130,11 @@ if [[ "$TAG" == paper ]]; then
 ssh idex '
 log=$(find /root -maxdepth 1 -type f -name "GQ_FAIR_REPRO_*.log" -printf "%T@ %p\n" 2>/dev/null | sort -nr | sed -n "1p" | cut -d" " -f2-)
 echo "FOLLOWING: $log"; echo
-[ -n "$log" ] || { echo "No GQ_FAIR_REPRO log found yet"; return 0 2>/dev/null || true; }
-tail -n +1 -F "$log"
+if [ -z "$log" ]; then
+    echo "No GQ_FAIR_REPRO log found yet"
+else
+    tail -n +1 -F "$log"
+fi
 '
 MONITOR
 else
