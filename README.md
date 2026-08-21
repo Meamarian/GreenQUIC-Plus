@@ -49,7 +49,7 @@ The exact imported state is preserved as `paper/original-p5-multicore`. Current 
 |---|---|
 | `msquic/` | MsQuic + DPDK source used by GreenQUIC+ |
 | `greenquic_test_suite_v22/` | authoritative P5/P7 build, execution, recording, report and validation suite |
-| `results_analysis/` | exact paper configuration, original tuning XLSX files, chart code/SVGs, high-level reproduction helpers and final audit |
+| `results_analysis/` | exact paper configuration, dependency records, original tuning XLSX files, chart code/SVGs, high-level reproduction helpers and final audit |
 | `tum_testbed_setup/` | single supported TUM/LRZ provisioning/build implementation and guide |
 | `acpi.sh` | ACPI/platform power helper |
 | `msr.py` | MSR helper |
@@ -78,7 +78,7 @@ results_analysis/paper_testbed_defaults.sh
 Default values:
 
 ```text
-CONTROL checkout:       current GreenQUIC-Plus clone
+CONTROL checkout:       $HOME/Downloads/GreenQUIC-Plus on our Mac
 SERVER:                 idex
 CLIENT from CONTROL:    tinyman
 CLIENT from SERVER:     tinyman
@@ -185,21 +185,66 @@ P7 is built with `QUIC_LINUX_DPDK_ENABLED=OFF` and `QUIC_LINUX_XDP_ENABLED=OFF`,
 
 ---
 
+# Dependencies
+
+The current reproduction path has two kinds of dependencies: repository-pinned source versions and Debian packages resolved from the Debian Trixie repositories at setup time.
+
+| Component | Version / requirement | Reproducibility rule |
+|---|---|---|
+| Modified MsQuic source | `2.4.8` source version | use the exact GreenQUIC+ Git SHA; stock upstream 2.4.8 is not equivalent |
+| DPDK | `21.11.9` | vendored under `msquic/deps/dpdk/` |
+| CMake | `>= 3.20` for the static build used here | enforced by the MsQuic CMake configuration |
+| TLS backend | OpenSSL | P5/P7 configure `QUIC_TLS=openssl` |
+| Build type | Release | used by both paper builds |
+| Endpoint OS | Debian Trixie | setup rejects a different distribution/codename |
+| Python | Python 3 + NumPy + Matplotlib | report/analysis dependency |
+| NIC tools | `ethtool`, `iproute2`, PCI/kernel modules | setup/network transition dependency |
+| Power tools | RAPL access, `msr-tools`, `lm-sensors`, `acpi.sh`, `msr.py` | measurement dependency |
+
+The exact Debian package revisions and kernel patch version are **not individually pinned** by the setup script. They are installed from the configured Debian Trixie repositories. The full package list and pinning policy are machine-readable in:
+
+```text
+results_analysis/configuration/dependencies.json
+```
+
+After provisioning, **RUN ON: CONTROL HOST** to record/inspect the actual versions on CONTROL, SERVER and CLIENT:
+
+```bash
+bash results_analysis/print_dependency_versions.sh
+```
+
+This is an inspection command and starts no traffic; no live experiment monitor applies.
+
+Paper hardware assumptions remain: Intel E810 test NIC at PCI `0000:18:00.0`, Linux `ice` for link/P7 operation, `igb_uio` or `vfio-pci` for DPDK, `16384 × 2 MiB` hugepages on the test-NIC NUMA node, CPU19 for dataplane work and CPUs21-24 for MsQuic.
+
+---
+
 # Reproduction quick start
+
+The blocks below are intended to be pasteable on the CONTROL HOST. For our paper testbed they default to the Mac checkout `$HOME/Downloads/GreenQUIC-Plus`, SERVER `idex`, CLIENT `tinyman`, BASTION `mohsen@coinbase`, and SSH key `$HOME/.ssh/id_ed25519`.
+
+The clone logic is included: if the private repository is not already present on the CONTROL HOST, it is cloned first. SERVER and CLIENT are **not** cloned from GitHub directly; the setup transfers the exact `main` SHA by Git bundle.
 
 For POS allocation/reimage/reset, use `tum_testbed_setup/README.md`; every long-running operation there states where it must run and is followed by its live monitor/readiness loop.
 
 ## 1. Debian Trixie exists; deploy current `main`, prepare hosts and build everything
 
-**RUN ON: CONTROL HOST** from the GreenQUIC+ checkout:
+**RUN ON: CONTROL HOST:**
 
 ```bash
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
 bash results_analysis/setup_paper_testbed.sh
 ```
 
 Immediately in **a second CONTROL-HOST terminal**, use the live setup/build monitor:
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_setup.sh
 ```
 
@@ -210,12 +255,19 @@ This is also the supported path when Debian is already installed but `/root/mohs
 **RUN ON: CONTROL HOST:**
 
 ```bash
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
 bash results_analysis/rebuild_paper_binaries.sh
 ```
 
 Immediately in **a second CONTROL-HOST terminal:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_setup.sh
 ```
 
@@ -226,12 +278,19 @@ If source code also changed or the remote checkout may be stale, use the full se
 **RUN ON: CONTROL HOST:**
 
 ```bash
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
 bash results_analysis/run_paper_evaluation.sh
 ```
 
 Immediately in **a second CONTROL-HOST terminal:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh
 ```
 
@@ -242,6 +301,7 @@ The final launcher deliberately rebuilds/verifies P5 and P7 before measured traf
 **RUN ON: CONTROL HOST:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/download_paper_results.sh
 ```
 
@@ -252,10 +312,11 @@ This operates only after a run is marked `DONE`; there is no live experiment log
 **RUN ON: CONTROL HOST:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/final_repository_check.sh
 ```
 
-This is a local static audit; it launches no remote workload, so there is no live experiment log. It checks current shell syntax, JSON/configuration consistency, TUM layout, host-role switches, README/monitor pairing, imported artifacts, and the exact P5/P7 paper anchors.
+This is a local static audit; it launches no remote workload, so there is no live experiment log. It checks current shell syntax, dependency/configuration JSON consistency, TUM layout, host-role switches, README/monitor pairing, imported artifacts, and the exact P5/P7 paper anchors.
 
 ---
 
@@ -269,6 +330,29 @@ The high-level wrappers support explicit management routing. For setup, the rele
 --server-to-client-host HOST
 --bastion USER@HOST|none
 --ssh-key PATH
+```
+
+Example:
+
+```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
+bash results_analysis/setup_paper_testbed.sh \
+  --server-host server01 \
+  --client-host client-via-gateway \
+  --server-to-client-host 10.0.0.22 \
+  --bastion user@gateway \
+  --ssh-key "$HOME/.ssh/lab_key"
+```
+
+Immediately monitor from **a second CONTROL-HOST terminal**:
+
+```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
+bash results_analysis/live_monitor_setup.sh \
+  --server-host server01 \
+  --client-host client-via-gateway \
+  --bastion user@gateway \
+  --ssh-key "$HOME/.ssh/lab_key"
 ```
 
 For the final run, `--client-host` means the CLIENT endpoint **as seen from SERVER**. Setup separates the CONTROL view and SERVER view of CLIENT so a different lab topology does not require aliases matching our paper testbed.
@@ -310,6 +394,6 @@ Additional historical branches are retained for provenance. Use feature/fix bran
 
 ## Detailed guides
 
-- `results_analysis/README.md` — full start-state decision tree, exact configurations, result locations and analysis artifacts.
+- `results_analysis/README.md` — full start-state decision tree, dependency/version policy, exact configurations, result locations and analysis artifacts.
 - `tum_testbed_setup/README.md` — POS/Debian provisioning and the single TUM setup implementation.
 - `results_analysis/HOST_ROLE_AUDIT.md` — host-name/SSH dependency audit.
