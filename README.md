@@ -327,6 +327,16 @@ For the final run, `--client-host` means the CLIENT endpoint **as seen from SERV
 Changing these management names does not change the recorded paper hardware assumptions: root remote operation, `/root/mohsen`, E810 PCI `0000:18:00.0`, the paper data-plane IP/MAC pair, CPU19/21-24 placement, and the hugepage configuration remain part of the paper testbed and must be intentionally revalidated on different hardware.
 
 ---
+## Results Recording
+
+The results by default go to the matrix_results subfolder, saved with a timestamp, for example:
+
+```
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/matrix_results/*_20260821_143431
+
+```
+You can explore the subfolders; main charts will be saved into the the_sheet_rules_all folder.
+
 
 ## Analysis artifacts
 
