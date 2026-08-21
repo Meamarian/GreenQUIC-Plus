@@ -10,6 +10,7 @@ This directory is the GreenQUIC+ paper-evaluation reference. It is deliberately 
 | `tuning/` | Power-management and DPDK-path tuning summaries reconstructed from the reviewed tuning workbooks. |
 | `charts/` | Chart/source-provenance material corresponding to the attached chart bundle. |
 | `verify_paper_configuration.py` | Static preflight that checks the JSON configuration against the supported paper launcher and critical P7 network settings. |
+| `download_latest_reproduction.sh` | Downloads the latest completed P5/P7 reproduction package from IDEX and verifies its saved `config.env`. |
 
 ## Final paper comparison
 
@@ -176,40 +177,52 @@ fi
 
 A successful run must have `DONE`, `config.env`, and `RESULT_ZIPS.txt`. The generated `config.env` must identify `P5_power_profile=TOP3` and record the critical TOP3/DVFS/recorder settings.
 
-### 6. Download the completed result package
+### 6. Download and verify the completed result package
 
-From the Mac:
+Use the repository helper instead of manually reconstructing remote paths:
 
 ```bash
 cd ~/Downloads/GreenQUIC-Plus && \
-mkdir -p reproduced_results && \
-ART=$(ssh idex '
-find /root -maxdepth 1 -type d \
-  -name "GQ_FAIR_REPRO_*" \
-  -printf "%T@ %p\n" 2>/dev/null | \
-  sort -nr | sed -n "1p" | cut -d" " -f2-
-') && \
-echo "REMOTE_ARTIFACT_DIR=$ART" && \
-ssh idex "cat '$ART/RESULT_ZIPS.txt'" | while IFS= read -r z; do
-  [ -n "$z" ] && scp "idex:$z" reproduced_results/
-done && \
-scp "idex:$ART/config.env" reproduced_results/ && \
-scp "idex:${ART/GQ_FAIR_REPRO_/GQ_FAIR_REPRO_}.log" reproduced_results/ 2>/dev/null || true
+bash results_analysis/download_latest_reproduction.sh
 ```
 
-The last log-copy expression is best-effort because the artifact directory and log are siblings with the same tag rather than the same path. The two result ZIPs and `config.env` are the required reproducibility outputs; the launcher itself prints the exact remote log path if the log is also needed.
+It downloads the latest completed reproduction into:
 
-For a guaranteed log download, use the exact `REMOTE_LOG=...` value printed when the run was launched:
-
-```bash
-scp idex:/root/GQ_FAIR_REPRO_<TAG>.log reproduced_results/
+```text
+reproduced_results/<TAG>/
 ```
 
-### 7. Verify the downloaded run configuration
+including:
+
+```text
+config.env
+RESULT_ZIPS.txt
+DONE
+P5_FAIR_OPT_PINNED_<...>.zip
+P7_FAIR_PAPER_PINNED_<...>.zip
+GQ_FAIR_REPRO_<TAG>.log    # when present at the expected sibling path
+```
+
+The helper refuses an unfinished latest run and checks the downloaded `config.env` for the final paper values. A successful download ends with:
+
+```text
+DOWNLOAD + PAPER CONFIG VERIFICATION: PASS
+```
+
+To choose another local destination root:
 
 ```bash
-cd ~/Downloads/GreenQUIC-Plus/reproduced_results && \
-grep -E '^(branch|commit|runs|downloads|P5_profile|P5_power_profile|P5_pressure_up|P5_rx_queue_high|P5_active_transfer_sleep_min_level|P5_freq_period_us|P7_profile|P7_nic_offloads|P7_udp_rmem|P7_udp_wmem|P7_combined_channels)=' config.env
+cd ~/Downloads/GreenQUIC-Plus && \
+bash results_analysis/download_latest_reproduction.sh /path/to/output
+```
+
+### 7. Inspect the saved run identity
+
+```bash
+cd ~/Downloads/GreenQUIC-Plus && \
+latest=$(find reproduced_results -mindepth 1 -maxdepth 1 -type d -print | sort | tail -1) && \
+echo "RESULT_DIR=$latest" && \
+grep -E '^(branch|commit|runs|downloads|P5_profile|P5_power_profile|P5_pressure_up|P5_rx_queue_high|P5_active_transfer_sleep_min_level|P5_freq_period_us|P7_profile|P7_nic_offloads|P7_udp_rmem|P7_udp_wmem|P7_combined_channels)=' "$latest/config.env"
 ```
 
 For the default final paper run, the important values are:
