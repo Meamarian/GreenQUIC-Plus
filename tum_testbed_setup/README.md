@@ -247,14 +247,22 @@ git checkout main && \
 bash results_analysis/run_paper_evaluation.sh
 ```
 
-**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after launch:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh
 ```
 
-For exact P5/P7 configuration, result paths, download behavior, and final audit, see `results_analysis/README.md`.
+The first CONTROL-HOST terminal now remains attached by default until the remote run is complete. On success it prints the final P5/P7 matrix paths, final remote ZIP paths, and final local destination **before SCP**, then performs **automatic SCP** of both result ZIPs plus metadata/logs into:
+
+```text
+$HOME/Downloads/GreenQUIC-Plus/reproduced_results/<TAG>/
+```
+
+Downloaded ZIP SHA-256 values are checked against hashes generated on SERVER. The final P5 recorder check uses durable per-run log evidence plus `matrix_integrity.json`; missing disposable `*_affinity.txt` sidecars do not falsely fail an otherwise complete run.
+
+For exact P5/P7 configuration, result paths, manual re-download behavior, and final audit, see `results_analysis/README.md`.
 
 # 9. Safety notes
 
