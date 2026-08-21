@@ -71,7 +71,7 @@ def determine_stamp(result_root: Path, role: str, mode: str, supplied: str | Non
     candidates.extend(result_root.glob(f"{role}_msr_{mode}_*.csv"))
     candidates.extend(result_root.glob(f"{role}_transfer_{mode}_*.json"))
     if role == "client":
-        candidates.extend(result_root.glob(f"client_download_manifest_{args.mode}_*.json"))
+        candidates.extend(result_root.glob(f"client_download_manifest_{mode}_*.json"))
     source = latest(candidates)
     if source is None:
         raise SystemExit("ERROR: cannot determine the run timestamp")
