@@ -1,15 +1,17 @@
 {
-  "schema": "greenquic.paper-evaluation.paths.v2",
+  "schema": "greenquic.paper-evaluation.paths.v3",
   "roles": {
-    "control_host": "Machine from which setup and the final paper launcher are started. This was a Mac in the paper testbed, but it may be another Unix host.",
+    "control_host": "Machine from which setup, rebuild, final paper launch, live monitoring, and result download are started. This was a Mac in the paper testbed, but it may be another Unix host.",
     "server": "QUIC server endpoint and experiment controller. It launches/controls the client through SSH.",
-    "client": "QUIC client endpoint. It does not need to SSH back to the server for the supported workflow."
+    "client": "QUIC client endpoint. It does not need to SSH back to the server for the supported workflow.",
+    "bastion": "Optional management-plane SSH jump/bootstrap host. It is not part of the QUIC data plane."
   },
   "paper_testbed_default_hostnames": {
     "server": "idex",
     "client": "tinyman",
     "bastion": "mohsen@coinbase",
-    "note": "These are paper-testbed host names only. The supported setup and launcher accept host switches; the names do not define the roles."
+    "control_ssh_key": "$HOME/.ssh/id_ed25519",
+    "note": "These are paper-testbed management defaults only. Roles are selected by the supported wrappers/switches; the physical machines do not have to be named idex/tinyman."
   },
   "ssh_topology": {
     "fresh_setup": {
@@ -27,33 +29,60 @@
       "control_to_client": "not required by the launcher, but useful for troubleshooting",
       "client_to_server": "not required"
     },
-    "github_access": "Only the control host needs credentials for the private repository. Exact commits are transferred to experiment nodes by Git bundle."
+    "github_access": "Only the control host needs credentials for the private repository. Exact commits are transferred to experiment nodes by Git bundle.",
+    "private_key_policy": "The control-host private key is never copied to the experiment nodes. Setup installs only its public half and creates a separate server key for server-to-client SSH."
+  },
+  "high_level_entrypoints_on_control_host": {
+    "setup_or_fresh_deploy_and_build": "results_analysis/setup_paper_testbed.sh",
+    "setup_live_monitor": "results_analysis/live_monitor_setup.sh",
+    "rebuild_only": "results_analysis/rebuild_paper_binaries.sh",
+    "final_paper_run": "results_analysis/run_paper_evaluation.sh",
+    "final_run_live_monitor": "results_analysis/live_monitor_run.sh",
+    "download_latest_completed_run": "results_analysis/download_paper_results.sh",
+    "paper_preflight": "results_analysis/verify_paper_configuration.py",
+    "final_repository_audit": "results_analysis/final_repository_check.sh"
   },
   "host_switches": {
-    "setup": [
+    "setup_wrapper": [
       "--server-host HOST",
       "--client-host HOST",
       "--server-to-client-host HOST",
       "--bastion USER@HOST|none",
       "--ssh-key PATH"
     ],
-    "paper_launcher": [
+    "rebuild_wrapper": [
       "--server-host HOST",
       "--client-host HOST",
       "--bastion USER@HOST|none",
       "--ssh-key PATH"
     ],
-    "important": "For the paper launcher, --client-host is the client address/name that the server role can SSH to. During setup, --server-to-client-host can be used when that name differs from the control-host view of the client."
+    "paper_run_wrapper": [
+      "--server-host HOST",
+      "--client-host HOST",
+      "--bastion USER@HOST|none",
+      "--ssh-key PATH"
+    ],
+    "setup_monitor": [
+      "--server-host HOST",
+      "--client-host HOST",
+      "--bastion USER@HOST|none",
+      "--ssh-key PATH"
+    ],
+    "run_monitor": [
+      "--server-host HOST",
+      "--bastion USER@HOST|none",
+      "--ssh-key PATH"
+    ],
+    "important": "During setup, --client-host is the client as seen from CONTROL/BASTION while --server-to-client-host is the client as seen from SERVER. During the final paper run, --client-host is the client as seen from SERVER."
   },
   "control_host": {
-    "recommended_clone": "~/Downloads/GreenQUIC-Plus",
-    "paper_launcher": "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh",
+    "recommended_paper_clone": "~/Downloads/GreenQUIC-Plus",
+    "authoritative_low_level_paper_launcher": "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh",
     "compatibility_launchers": [
       "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v2.sh",
       "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v3.sh"
     ],
-    "paper_preflight": "results_analysis/verify_paper_configuration.py",
-    "fresh_node_setup": "tum_testbed_setup/greenquic_fresh_setup.sh"
+    "single_low_level_fresh_node_setup": "tum_testbed_setup/greenquic_fresh_setup.sh"
   },
   "remote": {
     "repo_root": "/root/mohsen",
