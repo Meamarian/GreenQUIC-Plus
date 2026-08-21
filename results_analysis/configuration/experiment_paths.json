@@ -1,5 +1,5 @@
 {
-  "schema": "greenquic.paper-evaluation.paths.v3",
+  "schema": "greenquic.paper-evaluation.paths.v4",
   "roles": {
     "control_host": "Machine from which setup, rebuild, final paper launch, live monitoring, and result download are started. This was a Mac in the paper testbed, but it may be another Unix host.",
     "server": "QUIC server endpoint and experiment controller. It launches/controls the client through SSH.",
@@ -38,7 +38,8 @@
     "rebuild_only": "results_analysis/rebuild_paper_binaries.sh",
     "final_paper_run": "results_analysis/run_paper_evaluation.sh",
     "final_run_live_monitor": "results_analysis/live_monitor_run.sh",
-    "download_latest_completed_run": "results_analysis/download_paper_results.sh",
+    "manual_redownload_last_completed_run": "results_analysis/download_paper_results.sh",
+    "low_level_download_verifier": "results_analysis/download_latest_reproduction.sh",
     "paper_preflight": "results_analysis/verify_paper_configuration.py",
     "final_repository_audit": "results_analysis/final_repository_check.sh"
   },
@@ -60,7 +61,9 @@
       "--server-host HOST",
       "--client-host HOST",
       "--bastion USER@HOST|none",
-      "--ssh-key PATH"
+      "--ssh-key PATH",
+      "--download-dest DIR",
+      "--no-auto-download"
     ],
     "setup_monitor": [
       "--server-host HOST",
@@ -71,18 +74,21 @@
     "run_monitor": [
       "--server-host HOST",
       "--bastion USER@HOST|none",
-      "--ssh-key PATH"
+      "--ssh-key PATH",
+      "--tag TAG"
     ],
     "important": "During setup, --client-host is the client as seen from CONTROL/BASTION while --server-to-client-host is the client as seen from SERVER. During the final paper run, --client-host is the client as seen from SERVER."
   },
   "control_host": {
-    "recommended_paper_clone": "~/Downloads/GreenQUIC-Plus",
+    "recommended_paper_clone": "$HOME/Downloads/GreenQUIC-Plus",
+    "default_download_root": "$HOME/Downloads/GreenQUIC-Plus/reproduced_results",
     "authoritative_low_level_paper_launcher": "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh",
     "compatibility_launchers": [
       "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v2.sh",
       "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v3.sh"
     ],
-    "single_low_level_fresh_node_setup": "tum_testbed_setup/greenquic_fresh_setup.sh"
+    "single_low_level_fresh_node_setup": "tum_testbed_setup/greenquic_fresh_setup.sh",
+    "final_run_behavior": "By default the CONTROL-HOST launcher waits for remote DONE, prints final remote matrix/archive paths and final local destination before SCP, automatically downloads both ZIPs and metadata, and verifies ZIP SHA-256. --no-auto-download is an explicit opt-out."
   },
   "remote": {
     "repo_root": "/root/mohsen",
@@ -98,7 +104,9 @@
       "client_binary": "/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop",
       "server_binary": "/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinteropserver",
       "binary_marker": "GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0",
-      "matrix_runner": "/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/run_matrix_with_sheet.sh"
+      "matrix_runner": "/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/run_matrix_with_sheet.sh",
+      "recorder_evidence_validator": "/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/validate_p5_recorder_evidence.py",
+      "recorder_validation": "matrix_integrity.json plus durable canonical per-run recorder_cpu/reader_cpu log evidence; *_affinity.txt sidecars are optional"
     },
     "p7": {
       "meaning": "isolated normal-Linux MsQuic UDP baseline for the same repeated-8-GiB comparison; DPDK and XDP are disabled",
@@ -119,9 +127,32 @@
     "controller_log": "/root/GQ_FAIR_REPRO_<TAG>.log",
     "controller_artifact_dir": "/root/GQ_FAIR_REPRO_<TAG>",
     "saved_effective_config": "/root/GQ_FAIR_REPRO_<TAG>/config.env",
+    "saved_result_paths": "/root/GQ_FAIR_REPRO_<TAG>/RESULT_DIRS.env",
+    "saved_zip_list": "/root/GQ_FAIR_REPRO_<TAG>/RESULT_ZIPS.txt",
+    "saved_zip_sha256": "/root/GQ_FAIR_REPRO_<TAG>/RESULT_ZIPS.sha256",
+    "p5_recorder_evidence": "/root/GQ_FAIR_REPRO_<TAG>/p5_recorder_evidence.json",
     "p5_matrix": "/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/matrix_results/P5_FAIR_OPT_PINNED_<RUNS>r_<DOWNLOADS>d_<TAG>",
     "p7_matrix": "/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline/matrix_results/P7_FAIR_PAPER_PINNED_<RUNS>r_<DOWNLOADS>d_<TAG>",
     "p5_zip": "/root/P5_FAIR_OPT_PINNED_<RUNS>r_<DOWNLOADS>d_<TAG>.zip",
-    "p7_zip": "/root/P7_FAIR_PAPER_PINNED_<RUNS>r_<DOWNLOADS>d_<TAG>.zip"
+    "p7_zip": "/root/P7_FAIR_PAPER_PINNED_<RUNS>r_<DOWNLOADS>d_<TAG>.zip",
+    "completion_marker": "/root/GQ_FAIR_REPRO_<TAG>/DONE",
+    "failure_marker": "/root/GQ_FAIR_REPRO_<TAG>/FAILED"
+  },
+  "paper_run_outputs_on_control_host": {
+    "default_directory": "$HOME/Downloads/GreenQUIC-Plus/reproduced_results/<TAG>",
+    "automatic_copy_default": true,
+    "copied_files": [
+      "config.env",
+      "RESULT_DIRS.env",
+      "RESULT_ZIPS.txt",
+      "RESULT_ZIPS.sha256",
+      "DONE",
+      "p5_recorder_evidence.json",
+      "p7_affinity_files.txt when present",
+      "P5 result ZIP",
+      "P7 result ZIP",
+      "controller log"
+    ],
+    "verification": "Downloaded ZIP SHA-256 values and critical final paper configuration are verified before success is reported."
   }
 }
