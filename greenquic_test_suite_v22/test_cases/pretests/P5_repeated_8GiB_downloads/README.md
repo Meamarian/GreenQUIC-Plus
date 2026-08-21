@@ -8,9 +8,11 @@
 - **SERVER**: runs `quicinteropserver` and the matrix controller.
 - **CLIENT**: runs `quicinterop`, started by SERVER over SSH.
 
-Our paper defaults are SERVER=`idex`, CLIENT=`tinyman`, BASTION=`mohsen@coinbase`, and CONTROL SSH key=`$HOME/.ssh/id_ed25519`. They are centralized in `results_analysis/paper_testbed_defaults.sh`; they are not role semantics.
+Our paper defaults are SERVER=`idex`, CLIENT=`tinyman`, BASTION=`mohsen@coinbase`, CONTROL checkout=`$HOME/Downloads/GreenQUIC-Plus`, and CONTROL SSH key=`$HOME/.ssh/id_ed25519`. They are centralized in `results_analysis/paper_testbed_defaults.sh`; they are not role semantics.
 
 SERVER -> CLIENT root SSH is required. CLIENT -> SERVER SSH is not required. The high-level setup/run/monitor wrappers accept explicit host/bastion/key switches for another deployment.
+
+Dependencies and exact source versions are documented in the repository root README, `results_analysis/README.md`, and `results_analysis/configuration/dependencies.json`.
 
 ---
 
@@ -91,15 +93,22 @@ SERVER executable:
 
 Do not manually start the P5 server/client for the paper comparison. Use the high-level combined P5/P7 runner.
 
-**RUN ON: CONTROL HOST:**
+**RUN ON: CONTROL HOST.** This block also clones the private repository if the normal Mac checkout does not yet exist:
 
 ```bash
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
 bash results_analysis/run_paper_evaluation.sh
 ```
 
 Immediately in **a second CONTROL-HOST terminal:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh
 ```
 
@@ -124,12 +133,19 @@ Use this only when `/root/mohsen`, dependencies, hugepages and DPDK are already 
 **RUN ON: CONTROL HOST:**
 
 ```bash
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
 bash results_analysis/rebuild_paper_binaries.sh
 ```
 
 Immediately in **a second CONTROL-HOST terminal:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_setup.sh
 ```
 
