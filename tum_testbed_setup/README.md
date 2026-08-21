@@ -1,14 +1,25 @@
-# GreenQUIC+ TUM/LRZ setup
+# GreenQUIC+ TUM/LRZ paper-testbed setup
 
-This directory contains the **single supported provisioning/build entrypoint**:
+This directory intentionally contains only:
 
 ```text
-tum_testbed_setup/greenquic_fresh_setup.sh
+README.md
+greenquic_fresh_setup.sh
 ```
 
-It prepares the P5/P7 paper testbed from a CONTROL HOST. Physical host names are configurable.
+`greenquic_fresh_setup.sh` is the **single supported provisioning/build implementation**. There is no longer a chain of `base`, `p4_p5`, `p6`, `p7`, or branch-specific setup scripts.
 
-## Roles, not host names
+For our paper testbed, use the higher-level zero-argument wrapper:
+
+```text
+results_analysis/setup_paper_testbed.sh
+```
+
+It supplies the paper host/bastion/key defaults and calls this setup implementation.
+
+---
+
+# Roles and paper defaults
 
 ```text
 CONTROL HOST  machine with the private GreenQUIC+ checkout; starts setup
@@ -17,101 +28,86 @@ CLIENT        QUIC client
 BASTION       optional SSH jump/bootstrap host
 ```
 
-For our paper testbed only:
+Paper-testbed defaults are centralized in `results_analysis/paper_testbed_defaults.sh`:
 
 ```text
-SERVER=idex
-CLIENT=tinyman
-BASTION=mohsen@coinbase
+SERVER as seen from CONTROL: idex
+CLIENT as seen from CONTROL: tinyman
+CLIENT as seen from SERVER:  tinyman
+BASTION:                     mohsen@coinbase
+CONTROL SSH key:             $HOME/.ssh/id_ed25519
+remote user:                 root
+remote repository root:      /root/mohsen
+branch:                      main
+paper test NIC PCI:          0000:18:00.0
 ```
 
-Those strings are defaults, not code semantics. Another deployment may use different host names or IP addresses. The setup requires root SSH on SERVER and CLIENT because it installs packages, configures hugepages/MSR/PCI drivers, and writes under `/root`.
-
-## SSH topology
-
-Before/during fresh setup:
-
-```text
-CONTROL HOST -> BASTION       required if --bastion is used
-BASTION -> SERVER             required for fresh-node public-key bootstrap
-BASTION -> CLIENT             required for fresh-node public-key bootstrap
-CONTROL HOST -> SERVER        required
-CONTROL HOST -> CLIENT        required
-SERVER -> CLIENT              required; setup creates/tests this SSH path
-CLIENT -> SERVER              not required
-```
-
-Only the CONTROL HOST needs private-GitHub credentials. The exact `origin/main` commit is transferred to both experiment nodes using a Git bundle.
-
-A different Mac/control machine works as long as it can fetch this private repository and reach the configured SSH path. Pass its node key with `--ssh-key`. With `--bastion none`, that key must already be authorized on both nodes.
-
-If the CLIENT is reached under a different address from SERVER than from CONTROL HOST, use:
-
-```text
---client-host <control/bastion view>
---server-to-client-host <server view>
-```
-
-## Setup switches
-
-**RUN ON: CONTROL HOST** to see the exact interface:
-
-```bash
-bash tum_testbed_setup/greenquic_fresh_setup.sh --help
-```
-
-Supported switches:
-
-```text
---server-host HOST
---client-host HOST
---server-to-client-host HOST
---bastion USER@HOST|none
---ssh-key PATH
-```
-
-Paper-testbed defaults are `idex`, `tinyman`, `tinyman`, `mohsen@coinbase`, and `~/.ssh/id_ed25519` respectively.
+`idex` and `tinyman` are defaults from our measurements; they are not semantic role names. A different deployment may use other host names or addresses.
 
 ---
 
-## Case 1 — nodes need a fresh Debian installation
+# SSH requirements
 
-### 1A. Allocate/image/reset
+Fresh setup requires:
 
-**RUN ON: Coinbase/POS shell.** Do not run these POS commands on SERVER, CLIENT, or the CONTROL HOST.
+```text
+CONTROL -> BASTION        only when a bastion is used
+BASTION -> SERVER         fresh-node public-key bootstrap
+BASTION -> CLIENT         fresh-node public-key bootstrap
+CONTROL -> SERVER         required
+CONTROL -> CLIENT         required
+SERVER  -> CLIENT         required
+CLIENT  -> SERVER         not required
+```
 
-For our paper node names:
+The setup installs the CONTROL public key on both nodes when needed and creates a dedicated SERVER key for SERVER -> CLIENT. It never copies the CONTROL private key to either endpoint.
+
+Only the CONTROL HOST needs private-GitHub credentials. The exact `origin/main` commit is sent to SERVER and CLIENT by Git bundle.
+
+If CONTROL and SERVER use different names/addresses for the CLIENT, use separate values for `GQ_CLIENT_HOST` and `GQ_SERVER_TO_CLIENT_HOST`.
+
+---
+
+# Case A — allocate/reimage fresh Debian nodes
+
+## A1. POS allocation/image/reset
+
+**RUN ON: Coinbase/POS shell.** Do not run these commands on CONTROL, SERVER, or CLIENT.
+
+For our paper nodes:
 
 ```bash
 SERVER_NODE=idex
 CLIENT_NODE=tinyman
-
 pos nodes list | grep -E "$SERVER_NODE|$CLIENT_NODE"
 ```
 
-Allocate only nodes that are actually unallocated and according to the local POS policy:
+Allocate only a node that is actually unallocated and only according to the local POS policy. Do not free or replace another user's allocation.
 
-```bash
-pos allocations allocate "$SERVER_NODE"
-pos allocations allocate "$CLIENT_NODE"
-```
-
-Then:
+After allocation, **RUN ON: Coinbase/POS shell**:
 
 ```bash
 pos nodes image "$SERVER_NODE" debian-trixie
 pos nodes image "$CLIENT_NODE" debian-trixie
-
 pos nodes reset "$SERVER_NODE" &
 pos nodes reset "$CLIENT_NODE" &
 wait
-
-pos nodes list | grep -E "$SERVER_NODE|$CLIENT_NODE"
 ```
 
-A reset destroys the live node filesystem. Treat `/root/mohsen`, previous builds, generated payloads, and local results as gone.
+Immediately monitor node state from **another Coinbase/POS shell**:
 
-Still **RUN ON: Coinbase/POS shell**, wait for SSH:
+```bash
+while true; do
+  clear
+  date
+  pos nodes list | grep -E 'idex|tinyman'
+  sleep 5
+done
+```
+
+A POS reset destroys the live node filesystem. `/root/mohsen`, build trees, generated payloads and local experiment outputs should be treated as gone.
+
+Still **RUN ON: Coinbase/POS shell**, wait for Debian/SSH readiness:
 
 ```bash
 for h in "$SERVER_NODE" "$CLIENT_NODE"; do
@@ -122,138 +118,149 @@ for h in "$SERVER_NODE" "$CLIENT_NODE"; do
 done
 ```
 
-### 1B. Provision and build
+This loop is itself the live readiness monitor.
 
-**RUN ON: CONTROL HOST.** Paper-testbed example:
+## A2. Provision/build GreenQUIC+
 
-```bash
-cd ~/Downloads/GreenQUIC-Plus && \
-git fetch origin '+refs/heads/main:refs/remotes/origin/main' && \
-git checkout main && \
-git reset --hard refs/remotes/origin/main && \
-python3 results_analysis/verify_paper_configuration.py && \
-bash tum_testbed_setup/greenquic_fresh_setup.sh \
-  --server-host idex \
-  --client-host tinyman \
-  --server-to-client-host tinyman \
-  --bastion mohsen@coinbase \
-  --ssh-key "$HOME/.ssh/id_ed25519"
-```
+After both nodes answer SSH as Debian Trixie:
 
-The explicit Git refspec also works when the local clone was originally created with `--single-branch` and lacks a normal `origin/main` tracking ref.
-
-Immediately use **a second CONTROL-HOST terminal** to monitor:
+**RUN ON: CONTROL HOST**, from the GreenQUIC+ checkout:
 
 ```bash
-SERVER_HOST=idex
-CLIENT_HOST=tinyman
-BASTION=mohsen@coinbase
-KEY="$HOME/.ssh/id_ed25519"
-while true; do
-  clear; date
-  for h in "$SERVER_HOST" "$CLIENT_HOST"; do
-    echo "===== $h ====="
-    ssh -i "$KEY" -J "$BASTION" root@"$h" \
-      'hostname; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || echo repo-not-ready; pgrep -af "meson|ninja|cmake|build_p5|build_p7" || true'
-  done
-  sleep 10
-done
+bash results_analysis/setup_paper_testbed.sh
 ```
+
+Immediately in **a second CONTROL-HOST terminal**:
+
+```bash
+bash results_analysis/live_monitor_setup.sh
+```
+
+Successful completion prints `GREENQUIC+ MAIN READY` and the selected SERVER, CLIENT and SERVER->CLIENT endpoints.
 
 ---
 
-## Case 2 — Debian Trixie already exists; deploy current code and rebuild everything
+# Case B — Debian is already installed; deploy fresh current code and build
 
-Do not reimage. **RUN ON: CONTROL HOST** and use exactly the provisioning/build command from Case 1B.
+Use this when the OS is already correct and reachable but `/root/mohsen` is absent/stale, or when you want the newest exact `main` source and rebuilt P5/P7 applications.
 
-This is the recommended equivalent of “fresh clone + build” on the remote nodes. Do not manually clone the private repository on SERVER/CLIENT: the setup bundles the exact CONTROL-HOST `origin/main` SHA and installs it under `/root/mohsen`, so the nodes do not need GitHub credentials.
+Do **not** manually clone the private repository on SERVER or CLIENT. The supported setup deploys exact `origin/main` by Git bundle so private GitHub credentials remain only on CONTROL.
 
-Use the same second-terminal monitor from Case 1B.
+**RUN ON: CONTROL HOST:**
+
+```bash
+bash results_analysis/setup_paper_testbed.sh
+```
+
+Immediately in **a second CONTROL-HOST terminal**:
+
+```bash
+bash results_analysis/live_monitor_setup.sh
+```
+
+This is the recommended “fresh clone/deploy + build” workflow for already-installed Debian nodes.
 
 ---
 
-## What the single setup script does
+# What the single setup script does
 
-From the CONTROL HOST it:
+From CONTROL, `greenquic_fresh_setup.sh`:
 
-1. resolves exact `origin/main` using an explicit fetch refspec;
-2. validates/bootstraps CONTROL-HOST SSH to SERVER and CLIENT;
+1. resolves exact `origin/main` with an explicit refspec;
+2. validates/bootstrap CONTROL SSH to SERVER and CLIENT;
 3. creates and verifies SERVER -> CLIENT SSH;
-4. transfers the exact Git SHA to both nodes by bundle;
+4. installs the exact SHA on both nodes using a Git bundle;
 5. verifies Debian Trixie;
-6. installs build/measurement dependencies;
+6. installs build and measurement dependencies;
 7. prepares Intel E810/ICE firmware;
-8. verifies MSR and Intel P-state access on CPU19;
+8. loads/checks MSR and Intel P-state access on CPU19;
 9. creates `16384 × 2 MiB` hugepages on the test-NIC NUMA node;
-10. builds DPDK under `/root/mohsen/msquic/deps/dpdk-install`;
+10. builds/install DPDK under `/root/mohsen/msquic/deps/dpdk-install`;
 11. creates the 8-GiB payload;
 12. builds/verifies P5 Performance2 V2 on both endpoints;
-13. builds/verifies isolated P7 Linux binaries on both endpoints and checks that P7 does not link DPDK;
-14. brings both direct E810 peers onto `ice` and UP before carrier validation;
-15. binds the test NIC to `igb_uio` or `vfio-pci`;
-16. installs `/root/run_p5.sh` and `/root/run_p7.sh` on the SERVER role, configured for the selected CLIENT address;
-17. performs final SHA/binary/hugepage/driver/helper verification.
+13. builds/verifies isolated P7 normal-Linux binaries on both endpoints;
+14. checks that P7 does not link DPDK;
+15. puts both E810 peers on ICE and UP before checking physical carrier;
+16. binds both test NICs back to an approved DPDK driver (`igb_uio` or `vfio-pci`);
+17. installs `/root/run_p5.sh` and `/root/run_p7.sh` on the SERVER role;
+18. verifies exact Git SHA, binaries, P5 marker, hugepages, helpers and final NIC driver.
 
-Successful completion prints `GREENQUIC+ MAIN READY` and the chosen SERVER, CLIENT, and SERVER->CLIENT host names.
+The setup itself does **not** allocate POS nodes, reimage them, or reboot them.
 
-## Final binaries
+---
+
+# Final build outputs
 
 On both SERVER and CLIENT:
 
 ```text
-P5 client:  /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop
-P5 server:  /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinteropserver
-P7 client:  /root/mohsen/msquic/build-linux-p7/bin/Release/quicinterop
-P7 server:  /root/mohsen/msquic/build-linux-p7/bin/Release/quicinteropserver
+P5 client: /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop
+P5 server: /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinteropserver
+
+P7 client: /root/mohsen/msquic/build-linux-p7/bin/Release/quicinterop
+P7 server: /root/mohsen/msquic/build-linux-p7/bin/Release/quicinteropserver
 ```
 
-P5 must contain:
+Required P5 marker:
 
 ```text
 GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
 ```
 
-The setup builds binaries and prepares machines. The final TOP3 experiment settings are defined by `results_analysis/configuration/` and explicitly injected by the paper launcher.
+P5 build/profile:
+
+```text
+Performance2 V2
+ENABLE_MULTICORE=0
+DPDK CPU=19
+MsQuic CPUs=21,22,23,24
+```
+
+P7 is an isolated normal-Linux MsQuic build with DPDK and XDP disabled.
+
+The setup prepares the binaries and host state. The final TOP3 policy values are injected by the final paper runner, not by TUM provisioning defaults.
 
 ---
 
-## Case 3 — machines are already prepared; run the final paper evaluation
+# After setup — final paper evaluation
 
-**RUN ON: CONTROL HOST**, not directly on SERVER/CLIENT:
-
-```bash
-cd ~/Downloads/GreenQUIC-Plus && \
-python3 results_analysis/verify_paper_configuration.py && \
-bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh \
-  --server-host idex \
-  --client-host tinyman \
-  --bastion mohsen@coinbase \
-  --ssh-key "$HOME/.ssh/id_ed25519"
-```
-
-`--client-host` here is the CLIENT name/address reachable **from SERVER**. The final launcher requires CONTROL HOST -> SERVER and SERVER -> CLIENT; it does not require CLIENT -> SERVER.
-
-Immediately monitor from **another CONTROL-HOST terminal**:
+**RUN ON: CONTROL HOST:**
 
 ```bash
-SERVER_HOST=idex
-BASTION=mohsen@coinbase
-KEY="$HOME/.ssh/id_ed25519"
-ssh -i "$KEY" -J "$BASTION" root@"$SERVER_HOST" '
-log=$(find /root -maxdepth 1 -type f -name "GQ_FAIR_REPRO_*.log" -printf "%T@ %p\n" 2>/dev/null | sort -nr | sed -n "1p" | cut -d" " -f2-)
-echo "FOLLOWING: $log"; echo
-if [ -z "$log" ]; then echo "No GQ_FAIR_REPRO log found yet"; else tail -n +1 -F "$log"; fi
-'
+bash results_analysis/run_paper_evaluation.sh
 ```
 
-For full paper configuration, build-only workflow, result paths, and downloading, see `results_analysis/README.md`.
+Immediately in **a second CONTROL-HOST terminal:**
 
-## Safety notes
+```bash
+bash results_analysis/live_monitor_run.sh
+```
 
-- The setup itself does not perform POS allocation or reimage/reset nodes.
-- The setup does not reboot the nodes.
-- The control-host private key is never copied to SERVER or CLIENT; only its public key is installed.
-- SERVER gets its own SSH key for SERVER -> CLIENT.
-- Private GitHub credentials are never copied to SERVER/CLIENT.
-- `uio_pci_generic` is not accepted as the final DPDK driver.
-- The original `Meamarian/GreenQUIC` repository is not modified.
+For the exact P5/P7 configuration, analysis artifacts, result paths, download helper, and all other start states, see `results_analysis/README.md`.
+
+---
+
+# Lower-level setup switches for another deployment
+
+The high-level wrapper is zero-argument for our paper testbed. The underlying setup still supports explicit overrides:
+
+```text
+--server-host HOST
+--client-host HOST
+--server-to-client-host HOST
+--bastion USER@HOST|none
+--ssh-key PATH
+```
+
+Use these only when deploying to a different management topology. Changing host names does not change the paper's hardware/data-plane assumptions such as CPU placement, E810 PCI address, data-plane IP/MAC values or hugepage count.
+
+---
+
+# Safety notes
+
+- root SSH is required because setup installs packages, changes hugepages/MSR/PCI drivers and writes under `/root`;
+- `uio_pci_generic` is not accepted as the final P5 DPDK driver;
+- the CONTROL private key is never copied to SERVER/CLIENT;
+- private GitHub credentials remain on CONTROL;
+- CLIENT -> SERVER SSH is not required;
+- the original `Meamarian/GreenQUIC` repository is never modified by this setup.
