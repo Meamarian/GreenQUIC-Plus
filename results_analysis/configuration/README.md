@@ -122,27 +122,4 @@ See `p7_paper_evaluation.json` for the full machine-readable record.
 
 ---
 
-## Final result handling
 
-The default final run is launched from the CONTROL HOST with `results_analysis/run_paper_evaluation.sh`. The first CONTROL-HOST terminal waits for remote `DONE`; a second CONTROL-HOST terminal follows the exact run log with `results_analysis/live_monitor_run.sh`.
-
-Before any result SCP begins, the final workflow prints:
-
-```text
-remote controller artifact directory
-remote P5 matrix directory
-remote P7 matrix directory
-remote P5 ZIP
-remote P7 ZIP
-final CONTROL-HOST destination
-```
-
-It then performs automatic SCP by default into:
-
-```text
-$HOME/Downloads/GreenQUIC-Plus/reproduced_results/<TAG>/
-```
-
-SERVER creates `RESULT_DIRS.env`, `RESULT_ZIPS.txt`, and `RESULT_ZIPS.sha256`; CONTROL verifies the downloaded ZIP SHA-256 values and the critical paper configuration before success is reported. `--no-auto-download` is an explicit opt-out.
-
----
