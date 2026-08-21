@@ -94,7 +94,7 @@ The `paper` profile requires TSO, GSO, TX checksum and GRO ON. UDP segmentation,
 
 ## Exact paper execution
 
-Do not launch standalone P7 for the final paper comparison. Use the combined high-level runner so exact Git SHA, P5 TOP3, P5→P7 NIC transition, P7 tuning, recording and packaging are controlled together.
+Do not launch standalone P7 for the final paper comparison. Use the combined high-level runner so exact Git SHA, P5 TOP3, P5→P7 NIC transition, P7 tuning, recording, validation, packaging and result transfer are controlled together.
 
 **RUN ON: CONTROL HOST.** This block also clones the private repository if the normal Mac checkout does not yet exist:
 
@@ -108,14 +108,16 @@ git checkout main && \
 bash results_analysis/run_paper_evaluation.sh
 ```
 
-Immediately in **a second CONTROL-HOST terminal:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after launch:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh
 ```
 
-For another management topology, `run_paper_evaluation.sh` accepts `--server-host`, `--client-host`, `--bastion`, and `--ssh-key`; here `--client-host` is the CLIENT endpoint as seen from SERVER. The run monitor accepts the corresponding SERVER/bastion/key switches.
+For another management topology, `run_paper_evaluation.sh` accepts `--server-host`, `--client-host`, `--bastion`, `--ssh-key`, and `--download-dest`; here `--client-host` is the CLIENT endpoint as seen from SERVER. The run monitor accepts the corresponding SERVER/bastion/key switches.
+
+By default the first CONTROL-HOST terminal waits for the combined run to become `DONE`. It prints final P5/P7 matrix/archive paths and the final local destination before SCP, then automatically SCPs both ZIPs and metadata to `reproduced_results/<TAG>/` and verifies ZIP SHA-256.
 
 ---
 
@@ -135,7 +137,7 @@ git checkout main && \
 bash results_analysis/rebuild_paper_binaries.sh
 ```
 
-Immediately in **a second CONTROL-HOST terminal:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after rebuild starts:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -160,10 +162,22 @@ Standalone lower-level P7 commands remain useful for diagnostics, but they are n
 
 Each run contains local application logs, timeline data, RAPL, frequency/C-state traces, NIC statistics and effective offload state. Aggregate P7 reports/charts are generated under the P7 matrix output directory.
 
+For tag `<TAG>`, the final P7 matrix path is:
+
+```text
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline/matrix_results/P7_FAIR_PAPER_PINNED_6r_5d_<TAG>
+```
+
+The final P7 ZIP is:
+
+```text
+/root/P7_FAIR_PAPER_PINNED_6r_5d_<TAG>.zip
+```
+
 The exact final machine-readable configuration is:
 
 ```text
 results_analysis/configuration/p7_paper_evaluation.json
 ```
 
-For combined result ZIPs, `config.env`, download commands and all start-state workflows, see `results_analysis/README.md`.
+For combined result metadata, automatic/manual download behavior, result-path printing, and all start-state workflows, see `results_analysis/README.md`.
