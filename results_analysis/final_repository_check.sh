@@ -31,6 +31,7 @@ python3 -m py_compile \
   "$P7/build_p7_report.py"
 
 for f in \
+  results_analysis/configuration/dependencies.json \
   results_analysis/configuration/experiment_paths.json \
   results_analysis/configuration/p5_paper_evaluation.json \
   results_analysis/configuration/p7_paper_evaluation.json \
@@ -63,7 +64,17 @@ for f in results_analysis/*.tmp results_analysis/.*tmp*; do
   fail "temporary audit files remain"
 done
 
-# 5) Paper routing defaults are centralized, while runtime role checks stay portable.
+# 5) Dependency/source-version invariants.
+[[ -f results_analysis/configuration/dependencies.json ]] || fail "dependencies.json missing"
+[[ -f results_analysis/print_dependency_versions.sh ]] || fail "dependency-version reporter missing"
+[[ "$(tr -d '[:space:]' < msquic/deps/dpdk/VERSION)" == "21.11.9" ]] || fail "vendored DPDK is not 21.11.9"
+grep -Eq 'set\(QUIC_FULL_VERSION[[:space:]]+2\.4\.8\)' msquic/CMakeLists.txt || fail "MsQuic source version 2.4.8 anchor missing"
+grep -Fq 'cmake_minimum_required(VERSION 3.20)' msquic/CMakeLists.txt || fail "CMake >=3.20 static-build requirement anchor missing"
+grep -Fq '"version": "2.4.8"' results_analysis/configuration/dependencies.json || fail "dependencies.json MsQuic version mismatch"
+grep -Fq '"version": "21.11.9"' results_analysis/configuration/dependencies.json || fail "dependencies.json DPDK version mismatch"
+grep -Fq '"required_codename": "trixie"' results_analysis/configuration/dependencies.json || fail "dependencies.json Debian Trixie requirement missing"
+
+# 6) Paper routing defaults are centralized, while runtime role checks stay portable.
 grep -Fq 'GQ_SERVER_HOST="${GQ_SERVER_HOST:-idex}"' results_analysis/paper_testbed_defaults.sh || fail "SERVER paper default missing"
 grep -Fq 'GQ_CLIENT_HOST="${GQ_CLIENT_HOST:-tinyman}"' results_analysis/paper_testbed_defaults.sh || fail "CLIENT paper default missing"
 grep -Fq 'GQ_SERVER_TO_CLIENT_HOST="${GQ_SERVER_TO_CLIENT_HOST:-$GQ_CLIENT_HOST}"' results_analysis/paper_testbed_defaults.sh || fail "SERVER->CLIENT paper default missing"
@@ -75,7 +86,7 @@ grep -Fq 'CLIENT_NAME="${CLIENT_NAME:-$GQ_LOCAL_SHORT_HOST}"' greenquic_test_sui
 ! grep -Fq 'SERVER_NAME="${SERVER_NAME:-idex}"' greenquic_test_suite_v22/suite.env || fail "idex was reintroduced as runtime SERVER hostname requirement"
 ! grep -Fq 'CLIENT_NAME="${CLIENT_NAME:-tinyman}"' greenquic_test_suite_v22/suite.env || fail "tinyman was reintroduced as runtime CLIENT hostname requirement"
 
-# 6) CONTROL main synchronization must be safe: clean, main-only and fast-forward-only.
+# 7) CONTROL main synchronization must be safe: clean, main-only and fast-forward-only.
 for f in results_analysis/setup_paper_testbed.sh results_analysis/run_paper_evaluation.sh results_analysis/rebuild_paper_binaries.sh; do
   grep -Fq 'control_main_sync.sh' "$f" || fail "$f does not use safe CONTROL main synchronization"
 done
@@ -83,7 +94,7 @@ grep -Fq "git fetch origin '+refs/heads/main:refs/remotes/origin/main'" results_
 grep -Fq 'git merge-base --is-ancestor' results_analysis/control_main_sync.sh || fail "control sync ahead/divergence protection missing"
 grep -Fq 'git status --porcelain=v1 --untracked-files=all' results_analysis/control_main_sync.sh || fail "control sync dirty-tree protection missing"
 
-# 7) High-level wrappers and monitors must expose role-oriented management switches.
+# 8) High-level wrappers and monitors must expose role-oriented management switches.
 for token in '--server-host' '--client-host' '--server-to-client-host' '--bastion' '--ssh-key'; do
   grep -Fq -- "$token" results_analysis/setup_paper_testbed.sh || fail "setup wrapper missing $token"
 done
@@ -97,8 +108,11 @@ done
 for token in '--server-host' '--bastion' '--ssh-key'; do
   grep -Fq -- "$token" results_analysis/live_monitor_run.sh || fail "run monitor missing $token"
 done
+for token in '--server-host' '--client-host' '--bastion' '--ssh-key'; do
+  grep -Fq -- "$token" results_analysis/print_dependency_versions.sh || fail "dependency reporter missing $token"
+done
 
-# 8) Supported setup/final launcher must remain role/switch based; no literal SSH to paper names.
+# 9) Supported setup/final launcher must remain role/switch based; no literal SSH to paper names.
 for token in '--server-host' '--client-host' '--bastion' '--ssh-key'; do
   grep -Fq -- "$token" tum_testbed_setup/greenquic_fresh_setup.sh || fail "TUM setup missing $token"
   grep -Fq -- "$token" "$P5/mac_run_p5_p7_fair_repro_6x5.sh" || fail "paper launcher missing $token"
@@ -123,12 +137,15 @@ if grep -nF 'performance2/p5-multicore' \
   fail "old paper branch name appears in a supported operational script"
 fi
 
-# 9) Current READMEs must label command location and pair long-running operations with monitors.
+# 10) Current READMEs must label command location, include dependency guidance,
+# use the paper-default CONTROL checkout, and pair long-running work with monitors.
 for f in README.md results_analysis/README.md tum_testbed_setup/README.md "$P5/README.md" "$P7/README.md"; do
   grep -Fq 'RUN ON:' "$f" || fail "$f does not label command location"
 done
-
 for f in README.md results_analysis/README.md tum_testbed_setup/README.md; do
+  grep -Fq 'Dependencies' "$f" || fail "$f missing Dependencies section"
+  grep -Fq 'git clone git@github.com:Meamarian/GreenQUIC-Plus.git' "$f" || fail "$f missing clone-if-needed CONTROL bootstrap"
+  grep -Fq '$HOME/Downloads/GreenQUIC-Plus' "$f" || fail "$f missing paper-default Mac checkout path"
   grep -Fq 'bash results_analysis/setup_paper_testbed.sh' "$f" || fail "$f missing supported setup command"
   grep -Fq 'bash results_analysis/live_monitor_setup.sh' "$f" || fail "$f missing setup monitor"
   grep -Fq 'bash results_analysis/run_paper_evaluation.sh' "$f" || fail "$f missing final-run command"
@@ -141,7 +158,7 @@ for f in "$P5/README.md" "$P7/README.md"; do
   grep -Fq 'bash results_analysis/live_monitor_setup.sh' "$f" || fail "$f missing rebuild monitor"
 done
 
-# 10) Exact paper build/run anchors.
+# 11) Exact paper build/run anchors.
 MARKER='GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0'
 grep -Fq "$MARKER" "$P5/mac_run_p5_p7_fair_repro_6x5.sh" || fail "final P5 marker missing from authoritative launcher"
 for token in '--env PRESSURE_UP=450' '--env RX_QUEUE_HIGH=48' '--env ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16' '--env FREQ_PERIOD_US=10000'; do
@@ -157,6 +174,7 @@ echo "TUM setup: one implementation"
 echo "Host roles/SSH switches: PASS"
 echo "High-level wrappers/monitors: parameterized"
 echo "CONTROL main synchronization safety: PASS"
-echo "Paper defaults: idex/tinyman via mohsen@coinbase with \$HOME/.ssh/id_ed25519"
+echo "Dependencies: MsQuic 2.4.8 source, DPDK 21.11.9, Debian Trixie policy recorded"
+echo "Paper defaults: Mac CONTROL checkout under \$HOME/Downloads, idex/tinyman via mohsen@coinbase"
 echo "Artifacts: 2 XLSX + chart_v2.py + 41 SVG"
 echo "P5/P7 configuration, launcher and guide consistency: PASS"
