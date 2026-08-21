@@ -1,0 +1,125 @@
+{
+  "schema": "greenquic.dependencies.v1",
+  "scope": "Dependencies for the supported GreenQUIC+ P5/P7 paper reproduction workflow",
+  "source_pinned": {
+    "msquic": {
+      "version": "2.4.8",
+      "source": "msquic/CMakeLists.txt: QUIC_FULL_VERSION",
+      "note": "The repository contains a modified MsQuic source tree. Exact reproducibility is defined by the GreenQUIC-Plus main commit SHA, not by fetching stock MsQuic 2.4.8."
+    },
+    "dpdk": {
+      "version": "21.11.9",
+      "source": "msquic/deps/dpdk/VERSION",
+      "note": "The DPDK source is vendored in the repository and built by the supported setup."
+    },
+    "cmake_minimum_for_current_static_msquic_build": "3.20",
+    "tls_backend": "OpenSSL",
+    "build_type": "Release"
+  },
+  "operating_system": {
+    "required_distribution": "Debian",
+    "required_codename": "trixie",
+    "version_pinning": "codename pinned; exact apt package and kernel patch versions are not pinned by the setup script",
+    "note": "The setup validates ID=debian and VERSION_CODENAME=trixie on both endpoints."
+  },
+  "control_host": {
+    "paper_default": "macOS Mac used as CONTROL HOST",
+    "supported": "Unix-like control host",
+    "required_commands": [
+      "git",
+      "ssh",
+      "scp",
+      "base64",
+      "ssh-keygen",
+      "python3"
+    ],
+    "private_github_access_required": true,
+    "note": "Only the CONTROL HOST needs private GitHub credentials."
+  },
+  "endpoint_packages_installed_from_debian_trixie": [
+    "ca-certificates",
+    "openssh-client",
+    "git",
+    "curl",
+    "wget",
+    "file",
+    "unzip",
+    "xz-utils",
+    "tar",
+    "patch",
+    "zip",
+    "build-essential",
+    "gcc",
+    "g++",
+    "make",
+    "cmake",
+    "meson",
+    "ninja-build",
+    "pkg-config",
+    "python3",
+    "python3-dev",
+    "python3-pyelftools",
+    "python3-setuptools",
+    "python3-wheel",
+    "python3-matplotlib",
+    "python3-numpy",
+    "perl",
+    "m4",
+    "nasm",
+    "autoconf",
+    "automake",
+    "libtool",
+    "flex",
+    "bison",
+    "libnuma-dev",
+    "libssl-dev",
+    "libelf-dev",
+    "libpcap-dev",
+    "libarchive-dev",
+    "libnl-3-dev",
+    "libnl-route-3-dev",
+    "libnl-genl-3-dev",
+    "zlib1g-dev",
+    "libzstd-dev",
+    "libbsd-dev",
+    "libudev-dev",
+    "pciutils",
+    "ethtool",
+    "numactl",
+    "hwloc",
+    "rsync",
+    "iproute2",
+    "kmod",
+    "procps",
+    "util-linux",
+    "msr-tools",
+    "lm-sensors",
+    "irqbalance"
+  ],
+  "package_version_policy": {
+    "debian_packages": "not individually pinned; resolved from the configured Debian Trixie repositories at setup time",
+    "why": "The current setup intentionally uses the Debian Trixie package set rather than hard-coded package revisions.",
+    "reproducibility_action": "Record the effective package/tool/kernel versions for every evaluation environment; do not claim an unrecorded package revision was used in the paper."
+  },
+  "paper_hardware_assumptions": {
+    "test_nic": "Intel Ethernet Controller E810-C family",
+    "test_nic_pci": "0000:18:00.0",
+    "linux_nic_driver_for_link_and_p7": "ice",
+    "accepted_dpdk_binding_drivers": [
+      "igb_uio",
+      "vfio-pci"
+    ],
+    "hugepages": "16384 x 2 MiB on the test-NIC NUMA node",
+    "dpdk_or_linux_dataplane_cpu": 19,
+    "msquic_worker_cpus": [21, 22, 23, 24]
+  },
+  "measurement_dependencies": {
+    "rapl": "required for authoritative energy runs",
+    "msr": "msr kernel module + msr-tools",
+    "acpi_helper": "/root/mohsen/acpi.sh",
+    "msr_helper": "/root/mohsen/msr.py",
+    "matplotlib": "required for P5/P7 report generation",
+    "numpy": "required for report generation",
+    "lm_sensors": "required by supported setup/verification"
+  }
+}
