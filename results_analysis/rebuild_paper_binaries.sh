@@ -31,6 +31,9 @@ Options:
   --bastion USER@HOST|none optional ProxyJump
   --ssh-key PATH           CONTROL private key
   -h, --help
+
+The complete CONTROL-side stdout/stderr stream is recorded under
+results_analysis/runtime/ so live_monitor_setup.sh can follow the exact rebuild.
 USAGE
 }
 
@@ -46,6 +49,25 @@ while (($#)); do
 done
 
 cd "$GQ_CONTROL_REPO"
+RUNTIME_DIR="$GQ_CONTROL_REPO/results_analysis/runtime"
+STATE_FILE="$RUNTIME_DIR/current_setup_operation"
+mkdir -p "$RUNTIME_DIR"
+if [[ -s "$STATE_FILE" ]]; then
+  old_pid="$(sed -n '1p' "$STATE_FILE" 2>/dev/null || true)"
+  if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then
+    echo "ERROR: another setup/rebuild operation is already active on this CONTROL HOST (pid=$old_pid)" >&2
+    exit 2
+  fi
+fi
+LOG_FILE="$RUNTIME_DIR/rebuild_$(date +%Y%m%d_%H%M%S)_$$.log"
+printf '%s\n%s\n' "$$" "$LOG_FILE" > "$STATE_FILE"
+cleanup_state(){ rm -f "$STATE_FILE"; }
+trap cleanup_state EXIT
+trap 'cleanup_state; exit 130' INT
+trap 'cleanup_state; exit 143' TERM
+exec > >(tee -a "$LOG_FILE") 2>&1
+printf 'CONTROL_LIVE_LOG=%s\n' "$LOG_FILE"
+
 EXPECTED_SHA="$(git rev-parse refs/remotes/origin/main)"
 
 [[ -f "$GQ_SSH_KEY" ]] || { echo "ERROR: SSH key not found: $GQ_SSH_KEY" >&2; exit 2; }
