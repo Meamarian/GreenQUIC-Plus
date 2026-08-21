@@ -345,7 +345,7 @@ Changing these management names does not change the recorded paper hardware assu
 
 ## Results recording
 
-For tag `<TAG>`, SERVER stores the final matrix trees at:
+For tag `<TAG>` (tag is test timestamp), SERVER stores the final matrix trees at:
 
 ```text
 /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/matrix_results/P5_FAIR_OPT_PINNED_6r_5d_<TAG>
