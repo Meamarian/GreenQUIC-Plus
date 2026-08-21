@@ -312,6 +312,37 @@ For the final run, `--client-host` means the CLIENT endpoint as seen from SERVER
 Changing these management names does not change the recorded paper hardware assumptions: root remote operation, `/root/mohsen`, E810 PCI `0000:18:00.0`, the paper data-plane IP/MAC pair, CPU19/21-24 placement, and the hugepage configuration remain part of the paper testbed and must be intentionally revalidated on different hardware.
 
 ---
+## DPDK Datapath Performance Transformations
+
+The DPDK datapath used in our evaluation includes additional performance optimizations that are applied at build time. Therefore, the base `datapath_raw_dpdk_linux.c` file alone does not represent the complete datapath used in the evaluation.
+
+These optimizations are implemented as Python source transformers instead of being permanently merged into the base datapath. This keeps the original GreenQUIC/GreenQUIC+ implementation separate from the performance optimizations and makes the applied changes easier to reproduce, verify, and modify.
+
+The transformers are located in:
+
+`greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/`
+
+Main transformers:
+
+- `apply_p5_super_performance.py`
+- `apply_p5_super_packet_counter_guard.py`
+- `apply_p5_performance2.py`
+- `apply_p5_performance2_v2.py`
+
+They modify the generated evaluation copy of:
+
+`msquic-p5-source/src/platform/datapath_raw_dpdk_linux.c`
+
+before MsQuic is compiled.
+
+The corresponding build scripts are:
+
+- `greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/build_p5_super_performance.sh`
+- `greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/build_p5_performance2.sh`
+
+The resulting performance-optimized DPDK datapath is shared by the evaluated OFF, GreenQUIC (BASIC), and GreenQUIC+ (PLUS) modes. The modes differ in their power-management behavior rather than these common datapath performance optimizations.
+
+---
 
 ## Results recording
 
