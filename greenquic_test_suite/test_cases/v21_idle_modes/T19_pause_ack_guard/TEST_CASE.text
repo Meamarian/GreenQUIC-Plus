@@ -1,5 +1,0 @@
-T19 — V21 ACK guard against optimized pause
-============================================
-Purpose: allow pause during the active-transfer envelope, then verify that a live ACK_PENDING hint still vetoes optimized pause.
-Workload: 100 persistent 64-KiB requests separated by 20 ms; high-frequency diagnostic stats capture the 2-ms ACK hint.
-Required evidence: ACK hint observed on the client TX direction, optimized pause occurs outside protected windows, and no `optimized_pause*` action overlaps `txh & 0x1`.

@@ -1,6 +1,0 @@
-T10 — V21 short bounded software sleep
-======================================
-Purpose: prove the legacy-safe `short` mode actually calls bounded `rte_delay_us_sleep()` after confirmed empty polling.
-Workload: 10 seconds with no client traffic; single RX+TX DPDK lcore.
-Required evidence: `idle_mode=short`, cumulative `slept_us>0`, and zero pause/monitor/epoll attempts.
-This is a diagnostic run with logging enabled; do not use it as the final energy number.

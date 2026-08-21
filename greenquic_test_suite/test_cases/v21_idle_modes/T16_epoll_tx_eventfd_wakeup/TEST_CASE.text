@@ -1,5 +1,0 @@
-T16 — V21 epoll TX eventfd wake-up
-==================================
-Purpose: stress the persistent software wake path. One in-process client keeps DPDK alive across 60 short connections separated by 50-ms gaps.
-A QUIC worker publishes TX work, increments the wake sequence, and writes eventfd after enqueue.
-Required evidence on each tested endpoint: epoll attempts, non-timeout wakeups, and nonzero `wake_signal`. All requests must still complete.
