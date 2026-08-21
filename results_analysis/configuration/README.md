@@ -7,7 +7,7 @@ Files in this directory:
 ```text
 p5_paper_evaluation.json   final P5 OFF/BASIC/PLUS workload, datapath and TOP3 policy
 p7_paper_evaluation.json   final isolated Linux P7 workload/network/recording profile
-experiment_paths.json      role, directory and binary-path definitions
+experiment_paths.json      role, SSH, directory, binary and result-path definitions
 dependencies.json          source versions, OS/package policy and hardware assumptions
 ```
 
@@ -47,6 +47,12 @@ DPDK CPU=19 on both endpoints
 MsQuic worker CPUs=21,22,23,24 on both endpoints
 ```
 
+Required Performance2 V2 binary marker:
+
+```text
+GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
+```
+
 Final focused power-policy configuration: **TOP3**.
 
 | Parameter | Final value | Effective mode(s) |
@@ -60,11 +66,29 @@ Final focused power-policy configuration: **TOP3**.
 
 The complete effective policy/runtime values are in `p5_paper_evaluation.json`.
 
+### P5 recorder validation
+
+The final runner uses `GQ_CLAIM_RECORDER_CPU=auto` and validates recorder placement from evidence that survives normal result bundling. It requires a complete `matrix_integrity.json` and checks every canonical server/client OFF/BASIC/PLUS run log for the selected CPU of the whole-system power, C RAPL, Linux C-state, and CPU-frequency recorders.
+
+Validator:
+
+```text
+greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/validate_p5_recorder_evidence.py
+```
+
+The durable result is saved as:
+
+```text
+/root/GQ_FAIR_REPRO_<TAG>/p5_recorder_evidence.json
+```
+
+`*_affinity.txt` sidecars are optional evidence. Their absence after bundling is **not** a final-run failure condition.
+
 ---
 
 ## P7: Linux MsQuic baseline
 
-P7 is an Linux MsQuic build:
+P7 is a Linux MsQuic build with:
 
 ```text
 DPDK disabled
@@ -98,6 +122,31 @@ See `p7_paper_evaluation.json` for the full machine-readable record.
 
 ---
 
+## Final result handling
+
+The default final run is launched from the CONTROL HOST with `results_analysis/run_paper_evaluation.sh`. The first CONTROL-HOST terminal waits for remote `DONE`; a second CONTROL-HOST terminal follows the exact run log with `results_analysis/live_monitor_run.sh`.
+
+Before any result SCP begins, the final workflow prints:
+
+```text
+remote controller artifact directory
+remote P5 matrix directory
+remote P7 matrix directory
+remote P5 ZIP
+remote P7 ZIP
+final CONTROL-HOST destination
+```
+
+It then performs automatic SCP by default into:
+
+```text
+$HOME/Downloads/GreenQUIC-Plus/reproduced_results/<TAG>/
+```
+
+SERVER creates `RESULT_DIRS.env`, `RESULT_ZIPS.txt`, and `RESULT_ZIPS.sha256`; CONTROL verifies the downloaded ZIP SHA-256 values and the critical paper configuration before success is reported. `--no-auto-download` is an explicit opt-out.
+
+---
+
 # Static configuration checks
 
 **RUN ON: CONTROL HOST:**
@@ -106,7 +155,7 @@ See `p7_paper_evaluation.json` for the full machine-readable record.
 python3 results_analysis/verify_paper_configuration.py
 ```
 
-This is a local static check and does not start a remote process, so there is no live experiment log.
+**LIVE MONITOR:** not applicable; this is a local synchronous static check and does not start a remote process.
 
 For the broader repository/layout/artifact/dependency check:
 
@@ -116,5 +165,4 @@ For the broader repository/layout/artifact/dependency check:
 bash results_analysis/final_repository_check.sh
 ```
 
-This is also local/static and has no remote live log.
-
+**LIVE MONITOR:** not applicable; this is also local and synchronous.
