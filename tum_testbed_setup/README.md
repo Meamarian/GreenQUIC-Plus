@@ -103,7 +103,6 @@ From CONTROL, `greenquic_fresh_setup.sh`:
 16. installs `/root/run_p5.sh` and `/root/run_p7.sh` on SERVER;
 17. verifies exact SHA, binaries, P5 marker, hugepages, helpers, and final NIC driver.
 
-The setup implementation itself does **not** allocate/reimage POS nodes and does not reboot them.
 
 # 2. Final build outputs
 
