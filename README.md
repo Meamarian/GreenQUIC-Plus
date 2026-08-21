@@ -11,17 +11,17 @@
 
 **Contact:** mohsen.memarian@kau.se, andreas.kassler@kau.se, spaethj@net.in.tum.de, kempfm@net.in.tum.de, lachnit@net.in.tum.de, jzirngib@mpi-inf.mpg.de, carle@net.in.tum.de
 
-GreenQUIC+ repository is the implementation of the **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK”** paper. 
+GreenQUIC+ repository is the implementation of the **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK”** paper.
 
 High-performance QUIC implementations can leverage DPDK to bypass the kernel network stack and achieve high packet-processing rates. However, DPDK's polling-based execution model can consume substantial CPU resources and energy even during periods of low traffic. In this paper, we present an adaptive power-management mechanism for a DPDK-based MsQuic implementation that dynamically adjusts CPU frequency and idle behavior based on both datapath activity and QUIC transport information. We evaluate the implementation using repeated QUIC file transfers under different operating configurations. The results show that the proposed mechanism lowers power consumption at both the QUIC client and server while achieving high goodput across the evaluated workloads.
 
 The same optimized DPDK datapath is used for three runtime modes:
 
 - **OFF / MsQuic-DPDK:** GreenQUIC power-management decisions are bypassed.
-- **BASIC / GreenQUIC:** Power decisions use DPDK activity.
-- **PLUS / GreenQUIC+:** The BASIC policy is extended with short-lived QUIC transport information.
+- **BASIC / GreenQUIC:** power decisions use DPDK activity.
+- **PLUS / GreenQUIC+:** the BASIC policy is extended with short-lived QUIC transport information.
 
-We have also tested the Linux datapath, a MsQuic UDP build with DPDK disabled.
+We also evaluate the Linux datapath using a MsQuic UDP build with DPDK and XDP disabled.
 
 ---
 
@@ -32,7 +32,7 @@ We have also tested the Linux datapath, a MsQuic UDP build with DPDK disabled.
 | `msquic/` | MsQuic + DPDK source used by GreenQUIC+ |
 | `greenquic_test_suite_v22/` | P5/P7 build, execution, recording, report, and validation suite |
 | `results_analysis/` | paper configuration, dependency records, original tuning XLSX files, chart code, high-level reproduction helpers and final audit |
-| `tum_testbed_setup/` | TUM testbed setup guide |
+| `tum_testbed_setup/` | single TUM testbed provisioning/build entrypoint and guide |
 | `acpi.sh` | ACPI/platform power helper |
 | `msr.py` | MSR energy helper |
 
@@ -70,7 +70,7 @@ branch:                 main
 paper test NIC PCI:     0000:18:00.0
 ```
 
-On our paper testbed, the high-level commands need no host arguments. On another deployment, the **same high-level setup, rebuild, run and monitor wrappers accept explicit `--server-host`, `--client-host`, `--bastion`, and `--ssh-key` switches**. Setup additionally accepts `--server-to-client-host` when SERVER reaches CLIENT under a different name/address. Host names should be changed with switches, not by editing scripts.
+On our paper testbed, the high-level commands need no host arguments. On another deployment, the same high-level setup, rebuild, run and monitor wrappers accept explicit `--server-host`, `--client-host`, `--bastion`, and `--ssh-key` switches. Setup additionally accepts `--server-to-client-host` when SERVER reaches CLIENT under a different name/address. Change host names with switches, not by editing scripts.
 
 `idex` and `tinyman` are only our paper-testbed defaults.
 
@@ -120,7 +120,7 @@ Final workload:
 seed 20260806
 ```
 
-Tests CPU topology:
+Test CPU topology:
 
 ```text
 ENABLE_MULTICORE=0
@@ -164,7 +164,7 @@ The current reproduction path has two kinds of dependencies: repository-pinned s
 | NIC tools | `ethtool`, `iproute2`, PCI/kernel modules | setup/network transition dependency |
 | Power tools | RAPL access, `msr-tools`, `lm-sensors`, `acpi.sh`, `msr.py` | measurement dependency |
 
-The exact Debian package revisions and kernel patch version are **not individually pinned** by the setup script. They are installed from the configured Debian Trixie repositories. The full package list and pinning policy are machine-readable in:
+The exact Debian package revisions and kernel patch version are not individually pinned by the setup script. They are installed from the configured Debian Trixie repositories. The full package list and pinning policy are machine-readable in:
 
 ```text
 results_analysis/configuration/dependencies.json
@@ -176,11 +176,9 @@ After provisioning, **RUN ON: CONTROL HOST** to record/inspect the actual versio
 bash results_analysis/print_dependency_versions.sh
 ```
 
-This is an inspection command and starts no traffic; no live experiment monitor applies.
+**LIVE MONITOR:** not applicable; this is a synchronous inspection command and starts no traffic.
 
-Paper hardware assumptions remain: 
-
-Intel E810 test NIC at PCI `0000:18:00.0`, Linux `ice` for link/P7 operation, `igb_uio` or `vfio-pci` for DPDK, `16384 × 2 MiB` hugepages on the test-NIC NUMA node, CPU19 for dataplane work and CPUs21-24 for MsQuic.
+Paper hardware assumptions remain: Intel E810 test NIC at PCI `0000:18:00.0`, Linux `ice` for link/P7 operation, `igb_uio` or `vfio-pci` for DPDK, `16384 × 2 MiB` hugepages on the test-NIC NUMA node, CPU19 for dataplane work and CPUs21-24 for MsQuic.
 
 ---
 
@@ -188,11 +186,9 @@ Intel E810 test NIC at PCI `0000:18:00.0`, Linux `ice` for link/P7 operation, `i
 
 The blocks below are intended to be pasteable on the CONTROL HOST. For our paper testbed they default to the Mac checkout `$HOME/Downloads/GreenQUIC-Plus`, SERVER `idex`, CLIENT `tinyman`, BASTION `mohsen@coinbase`, and SSH key `$HOME/.ssh/id_ed25519`.
 
-The clone logic is included: if the private repository is not already present on the CONTROL HOST, it is cloned first. SERVER and CLIENT are **not** cloned from GitHub directly; the setup transfers the exact `main` SHA by Git bundle.
+The clone logic is included: if the private repository is not already present on the CONTROL HOST, it is cloned first. SERVER and CLIENT are **not** cloned from GitHub directly; setup transfers the exact `main` SHA by Git bundle.
 
 For POS allocation/reimage/reset, use `tum_testbed_setup/README.md`; every long-running operation there states where it must run and is followed by its live monitor/readiness loop.
-
-**Based on your current status, choose one of the following cases:**
 
 ## 1. Debian Trixie exists; deploy current `main`, prepare hosts and build everything
 
@@ -208,7 +204,7 @@ git checkout main && \
 bash results_analysis/setup_paper_testbed.sh
 ```
 
-You can monitor in **a second CONTROL-HOST terminal**, use the live setup/build monitor:
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after starting setup:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -231,7 +227,7 @@ git checkout main && \
 bash results_analysis/rebuild_paper_binaries.sh
 ```
 
-You can monitor in **a second CONTROL-HOST terminal:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after starting rebuild:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -254,16 +250,26 @@ git checkout main && \
 bash results_analysis/run_paper_evaluation.sh
 ```
 
-You can monitor in **a second CONTROL-HOST terminal:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after launch:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh
 ```
 
-The final launcher deliberately rebuilds/verifies P5 and P7 before measured traffic, records the exact Git SHA and effective configuration, runs P5 then P7, and packages results on the SERVER role.
+The final launcher deliberately rebuilds/verifies P5 and P7 before measured traffic, records the exact Git SHA/effective configuration, runs P5 then P7, validates the result trees, and packages results on SERVER.
 
-## 4. Download the latest finished result
+By default the first CONTROL-HOST terminal stays attached until the remote run is `DONE`. It then prints the final SERVER matrix/archive paths and final local destination **before SCP**, performs **automatic SCP** of both result ZIPs and metadata, and verifies the downloaded ZIP SHA-256 values. The default local destination is:
+
+```text
+$HOME/Downloads/GreenQUIC-Plus/reproduced_results/<TAG>/
+```
+
+P5 recorder placement is validated from durable per-run log evidence plus `matrix_integrity.json`; final success no longer depends on disposable `*_affinity.txt` sidecars surviving bundling.
+
+## 4. Manual re-download of the last finished result
+
+Normally step 3 already performs automatic SCP. Use this only to re-download the exact recorded run.
 
 **RUN ON: CONTROL HOST:**
 
@@ -272,7 +278,14 @@ cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/download_paper_results.sh
 ```
 
-This operates only after a run is marked `DONE`; there is no live experiment log to follow during this short post-run download. Use `live_monitor_run.sh` while the experiment itself is still running.
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal:**
+
+```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
+bash results_analysis/live_monitor_run.sh
+```
+
+The downloader also prints all final remote result paths and the local destination before SCP begins.
 
 ## 5. Local final repository/reproduction audit
 
@@ -283,13 +296,13 @@ cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/final_repository_check.sh
 ```
 
-This is a local static audit; it launches no remote workload, so there is no live experiment log. It checks current shell syntax, dependency/configuration JSON consistency, TUM layout, host-role switches, README/monitor pairing, imported artifacts, and the exact P5/P7 paper anchors.
+**LIVE MONITOR:** not applicable; this is a local static audit and launches no remote workload. It checks current shell/Python/JSON syntax, the P5 recorder-evidence self-test, dependency/configuration consistency, TUM layout, host-role switches, README/monitor pairing, imported artifacts, automatic result handling, and the exact P5/P7 paper anchors.
 
 ---
 
 ## Another deployment: management switches
 
-The high-level wrappers support explicit management routing. For setup, the relevant interface is:
+The high-level wrappers support explicit management routing. For setup:
 
 ```text
 --server-host HOST
@@ -299,7 +312,9 @@ The high-level wrappers support explicit management routing. For setup, the rele
 --ssh-key PATH
 ```
 
-Example:
+Example setup:
+
+**RUN ON: CONTROL HOST:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -311,7 +326,7 @@ bash results_analysis/setup_paper_testbed.sh \
   --ssh-key "$HOME/.ssh/lab_key"
 ```
 
-You can monitor from **a second CONTROL-HOST terminal**:
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -322,21 +337,22 @@ bash results_analysis/live_monitor_setup.sh \
   --ssh-key "$HOME/.ssh/lab_key"
 ```
 
-For the final run, `--client-host` means the CLIENT endpoint **as seen from SERVER**. Setup separates the CONTROL view and SERVER view of CLIENT so a different lab topology does not require aliases matching our paper testbed.
+For the final run, `--client-host` means the CLIENT endpoint as seen from SERVER. Setup separates the CONTROL view and SERVER view of CLIENT so a different lab topology does not require aliases matching our paper testbed.
 
 Changing these management names does not change the recorded paper hardware assumptions: root remote operation, `/root/mohsen`, E810 PCI `0000:18:00.0`, the paper data-plane IP/MAC pair, CPU19/21-24 placement, and the hugepage configuration remain part of the paper testbed and must be intentionally revalidated on different hardware.
 
 ---
-## Results Recording
 
-The results by default go to the matrix_results subfolder, saved with a timestamp, for example:
+## Results recording
 
+For tag `<TAG>`, SERVER stores the final matrix trees at:
+
+```text
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/matrix_results/P5_FAIR_OPT_PINNED_6r_5d_<TAG>
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline/matrix_results/P7_FAIR_PAPER_PINNED_6r_5d_<TAG>
 ```
-/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/matrix_results/*_20260821_143431
 
-```
-You can explore the subfolders; main charts will be saved into the the_sheet_rules_all folder.
-
+Controller metadata is under `/root/GQ_FAIR_REPRO_<TAG>/`, and the two final ZIPs are `/root/P5_FAIR_OPT_PINNED_6r_5d_<TAG>.zip` and `/root/P7_FAIR_PAPER_PINNED_6r_5d_<TAG>.zip`. `RESULT_DIRS.env` records these exact paths. Main generated charts are in each matrix result's `the_sheet_rules_all/` report tree.
 
 ## Analysis artifacts
 
@@ -350,8 +366,6 @@ results_analysis/charts/...
 
 `artifact_files.sha256.json` records expected sizes/SHA-256 values for the imported artifacts.
 
-## Contact 
+## Contact
 
-If you have any questions regarding the repository, you can contact mohsen.memarian@kau.se.
-
-
+If you have any questions regarding the repository, contact mohsen.memarian@kau.se.
