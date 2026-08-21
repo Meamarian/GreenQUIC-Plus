@@ -1,0 +1,21 @@
+01_active_goodput: P5: the_sheet_rules_all(2).zip :: the_sheet_rules_all/newchart/statistics_all_scopes.csv; Linux: P7_LINUX_PAPER_6r_6d_20260816_203454(1).zip :: P7_P1_FINAL_linux_paper_6r_6d_20260816_203454/p7_statistics.csv
+02_total_transfer_duration: P5: the_sheet_rules_all(2).zip :: the_sheet_rules_all/newchart/statistics_all_scopes.csv; Linux: P7_LINUX_PAPER_6r_6d_20260816_203454(1).zip :: P7_P1_FINAL_linux_paper_6r_6d_20260816_203454/p7_statistics.csv
+03_active_power: P5: the_sheet_rules_all(2).zip :: the_sheet_rules_all/newchart/statistics_all_scopes.csv; Linux: P7_LINUX_PAPER_6r_6d_20260816_203454(1).zip :: P7_P1_FINAL_linux_paper_6r_6d_20260816_203454/p7_statistics.csv
+04_gap_power: P5: the_sheet_rules_all(2).zip :: the_sheet_rules_all/newchart/statistics_all_scopes.csv; Linux: P7_LINUX_PAPER_6r_6d_20260816_203454(1).zip :: P7_P1_FINAL_linux_paper_6r_6d_20260816_203454/p7_statistics.csv
+05_active_energy: P5: the_sheet_rules_all(2).zip :: the_sheet_rules_all/newchart/statistics_all_scopes.csv; Linux: P7_LINUX_PAPER_6r_6d_20260816_203454(1).zip :: P7_P1_FINAL_linux_paper_6r_6d_20260816_203454/p7_statistics.csv
+06_gap_energy: P5: the_sheet_rules_all(2).zip :: the_sheet_rules_all/newchart/statistics_all_scopes.csv; Linux: P7_LINUX_PAPER_6r_6d_20260816_203454(1).zip :: P7_P1_FINAL_linux_paper_6r_6d_20260816_203454/p7_statistics.csv
+07_active_energy_cost: P5: the_sheet_rules_all(2).zip :: the_sheet_rules_all/derived/active/corrected_energy_cost_statistics.csv; Linux: P7_LINUX_PAPER_6r_6d_20260816_203454(1).zip :: P7_P1_FINAL_linux_paper_6r_6d_20260816_203454/p7_statistics.csv
+08_cpu_idle_fraction: P5: the_sheet_rules_all(2).zip :: the_sheet_rules_all/data/phase_cstate_all_runs.csv + the_sheet_rules_all/data/phase_rapl_all_runs.csv; Linux: the_sheet_rules_all/charts/svg/with_values/19_active_cstate_residency.svg + 20_gap_cstate_residency.svg
+09_cstate_residency_fraction: P5: the_sheet_rules_all(2).zip :: the_sheet_rules_all/data/phase_cstate_all_runs.csv + the_sheet_rules_all/data/phase_rapl_all_runs.csv; Linux: the_sheet_rules_all/charts/svg/with_values/19_active_cstate_residency.svg + 20_gap_cstate_residency.svg
+10_active_cstate_idle_intervals: the_sheet_rules_all(2).zip :: the_sheet_rules_all/data/phase_cstate_all_runs.csv
+11_gap_cstate_idle_intervals: the_sheet_rules_all(2).zip :: the_sheet_rules_all/data/phase_cstate_all_runs.csv
+12_active_frequency: P5: the_sheet_rules_all(2).zip :: the_sheet_rules_all/phase_frequency_summary.csv; Linux: P7_LINUX_PAPER_6r_6d_20260816_203454(1).zip :: P7_P1_FINAL_linux_paper_6r_6d_20260816_203454/the_sheet_rules_all/chart_statistics.csv
+13_gap_frequency: P5: the_sheet_rules_all(2).zip :: the_sheet_rules_all/phase_frequency_summary.csv; Linux: P7_LINUX_PAPER_6r_6d_20260816_203454(1).zip :: P7_P1_FINAL_linux_paper_6r_6d_20260816_203454/the_sheet_rules_all/chart_statistics.csv
+14_active_server_actual_dvfs_changes: the_sheet_rules_all(2).zip :: the_sheet_rules_all/newchart/active/with_variance/statistics.csv :: server_actual_dvfs_changes
+15_active_client_actual_dvfs_changes: the_sheet_rules_all(2).zip :: the_sheet_rules_all/newchart/active/with_variance/statistics.csv :: client_actual_dvfs_changes
+16_gap_server_actual_dvfs_changes: the_sheet_rules_all(2).zip :: the_sheet_rules_all/newchart/gap/with_variance/statistics.csv :: server_actual_dvfs_changes
+17_gap_client_actual_dvfs_changes: the_sheet_rules_all(2).zip :: the_sheet_rules_all/newchart/gap/with_variance/statistics.csv :: client_actual_dvfs_changes
+20_quic_ack_pending_hints: the_sheet_rules_all(2).zip :: the_sheet_rules_all/data/greenquic_counters_all_runs.csv :: hint_ack_pending
+21_quic_cubic_hints: the_sheet_rules_all(2).zip :: the_sheet_rules_all/data/greenquic_counters_all_runs.csv :: hint_cubic_ramping / hint_cubic_cwnd_blocked / hint_cubic_recovery
+22_quic_file_transfer_hints: the_sheet_rules_all(2).zip :: the_sheet_rules_all/data/greenquic_counters_all_runs.csv :: file TX/RX begin/end counters
+23_server / 24_client / 25_combined CPU PKG + DRAM power over time: P5 the_sheet_rules_all(2).zip :: 58/60/62_*_endpoints_power_smoothed.svg; Linux P7_LINUX_PAPER_6r_6d_20260816_203454(1).zip :: runs/server|client/rep01..rep06/rapl.csv + summary.json
