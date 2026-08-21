@@ -81,7 +81,7 @@ bash results_analysis/live_monitor_setup.sh
 
 Successful completion prints `GREENQUIC+ MAIN READY`, the selected role endpoints, and final P5/P7 binary paths.
 
-# 3. Case C — different management host names/topology
+# 2. Case C — different management host names/topology
 
 The setup wrapper accepts:
 
@@ -149,7 +149,7 @@ From CONTROL, `greenquic_fresh_setup.sh`:
 
 The setup implementation itself does **not** allocate/reimage POS nodes and does not reboot them.
 
-# 7. Final build outputs
+# 3. Final build outputs
 
 On both SERVER and CLIENT:
 
@@ -178,7 +178,7 @@ MsQuic CPUs=21,22,23,24
 
 P7 is an isolated normal-Linux MsQuic build with DPDK and XDP disabled.
 
-# 8. After setup — run final paper evaluation
+# 4. After setup — run final paper evaluation
 
 **RUN ON: CONTROL HOST:**
 
@@ -209,7 +209,7 @@ Downloaded ZIP SHA-256 values are checked against hashes generated on SERVER. Th
 
 For exact P5/P7 configuration, result paths, manual re-download behavior, and final audit, see `results_analysis/README.md`.
 
-# 9. Safety notes
+# 5. Safety notes
 
 - root SSH is required because setup installs packages, changes hugepages/MSR/PCI drivers, and writes under `/root`;
 - `uio_pci_generic` is not accepted as the final P5 DPDK driver;
