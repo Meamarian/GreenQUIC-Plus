@@ -15,11 +15,14 @@ fail(){ echo "FINAL REPOSITORY CHECK: FAIL: $*" >&2; exit 1; }
 python3 results_analysis/verify_paper_configuration.py
 
 # 2) Syntax-check every current top-level shell entrypoint/helper in the supported
-# reproduction areas, not only the three convenience wrappers.
-while IFS= read -r -d '' f; do
-  bash -n "$f" || fail "bash syntax error in $f"
-done < <(find results_analysis tum_testbed_setup "$P5" "$P7" \
-  -maxdepth 1 -type f -name '*.sh' -print0)
+# reproduction areas, not only the three convenience wrappers. Use shell globs
+# rather than GNU-find-only options so this also works with the default macOS tools.
+for dir in results_analysis tum_testbed_setup "$P5" "$P7"; do
+  for f in "$dir"/*.sh; do
+    [[ -e "$f" ]] || continue
+    bash -n "$f" || fail "bash syntax error in $f"
+  done
+done
 
 # Critical Python helpers must at least parse/compile locally.
 python3 -m py_compile \
@@ -45,9 +48,13 @@ done
 [[ ! -e power_mng_tunning ]] || fail "obsolete power_mng_tunning/ still exists"
 [[ -d greenquic_test_suite_v22 ]] || fail "greenquic_test_suite_v22/ missing"
 
-mapfile -t tum_files < <(find tum_testbed_setup -maxdepth 1 -type f -printf '%f\n' | sort)
-[[ "${#tum_files[@]}" -eq 2 ]] || fail "tum_testbed_setup/ should contain only README.md and greenquic_fresh_setup.sh"
-[[ "${tum_files[0]}" == README.md && "${tum_files[1]}" == greenquic_fresh_setup.sh ]] || fail "unexpected TUM setup files: ${tum_files[*]}"
+tum_listing="$(
+  for f in tum_testbed_setup/*; do
+    [[ -f "$f" ]] && basename "$f"
+  done | sort
+)"
+expected_tum_listing="$(printf '%s\n' README.md greenquic_fresh_setup.sh | sort)"
+[[ "$tum_listing" == "$expected_tum_listing" ]] || fail "tum_testbed_setup/ should contain only README.md and greenquic_fresh_setup.sh; found: $(printf '%s' "$tum_listing" | tr '\n' ' ')"
 
 # 4) Original analysis artifacts must really be committed, not merely documented.
 [[ -f results_analysis/tuning/GreenQUIC_DPDK_Path_Perf_Tunning_v2.xlsx ]] || fail "DPDK tuning workbook missing"
@@ -56,10 +63,11 @@ mapfile -t tum_files < <(find tum_testbed_setup -maxdepth 1 -type f -printf '%f\
 svg_count="$(find results_analysis/charts/svg -type f -name '*.svg' | wc -l | tr -d ' ')"
 [[ "$svg_count" == 41 ]] || fail "expected 41 supplied SVG files, found $svg_count"
 
-if find results_analysis -maxdepth 1 -type f \( -name '*.tmp' -o -name '.*tmp*' \) | grep -q .; then
-  find results_analysis -maxdepth 1 -type f \( -name '*.tmp' -o -name '.*tmp*' \) -print >&2
+for f in results_analysis/*.tmp results_analysis/.*tmp*; do
+  [[ -e "$f" ]] || continue
+  echo "$f" >&2
   fail "temporary audit files remain"
-fi
+done
 
 # 5) Paper-testbed defaults are centralized, but supported runtime role checks
 # must remain portable to different physical host names.
