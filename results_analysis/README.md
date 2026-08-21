@@ -1,113 +1,86 @@
 # GreenQUIC+ results, analysis, and paper reproduction
 
-This directory is the evaluation and reproduction reference for **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK.”** It contains the final paper configuration, supplied tuning workbooks and SVG/chart material, dependency/version records, result helpers, and the supported P5/P7 reproduction workflow.
+This directory is the evaluation and reproduction reference for **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK.”** It contains the final paper configuration, supplied tuning workbooks and SVG/chart material, dependency/version records, high-level setup/run/download helpers, and the final repository audit.
 
-## 1. Roles and command locations
+# Roles and command locations
 
-The words below are experiment roles, not fixed host names:
-
-| Role | Responsibility | Paper-testbed value |
-|---|---|---|
-| **CONTROL HOST** | Holds the private GreenQUIC+ checkout; starts setup/final run; downloads results | Mac |
-| **SERVER** | Runs `quicinteropserver` and the experiment controller | `idex` |
-| **CLIENT** | Runs `quicinterop` | `tinyman` |
-| **BASTION** | Optional SSH jump/bootstrap host | `mohsen@coinbase` |
-
-`idex` does not mean SERVER in the code and `tinyman` does not mean CLIENT. They are only the paper-testbed host names. The supported setup and final launcher accept role endpoints through switches.
-
-Every operational block in this guide is labelled **RUN ON**. In particular, paths beginning with `/root/...` live on an experiment node, not on the CONTROL HOST.
-
-### SSH topology
-
-Fresh setup/deployment requires:
+Roles are semantic; host names are not.
 
 ```text
-CONTROL HOST -> BASTION        only when a bastion is used
-BASTION      -> SERVER         fresh-node key bootstrap when bastion is used
-BASTION      -> CLIENT         fresh-node key bootstrap when bastion is used
-CONTROL HOST -> SERVER         required
-CONTROL HOST -> CLIENT         required
-SERVER       -> CLIENT         required; setup creates/tests this path
-CLIENT       -> SERVER         not required
+CONTROL HOST  machine holding the private GreenQUIC+ checkout and launching work
+SERVER        QUIC server + experiment controller
+CLIENT        QUIC client
+BASTION       optional SSH jump/bootstrap host
 ```
 
-The final paper launcher, after setup, requires only:
+Our paper-testbed defaults are centralized in `results_analysis/paper_testbed_defaults.sh`:
 
 ```text
-CONTROL HOST -> SERVER         required
-SERVER       -> CLIENT         required
-CONTROL HOST -> CLIENT         not required by the final launcher
-CLIENT       -> SERVER         not required
+CONTROL checkout:       $HOME/Downloads/GreenQUIC-Plus on our Mac
+SERVER:                 idex
+CLIENT from CONTROL:    tinyman
+CLIENT from SERVER:     tinyman
+BASTION:                mohsen@coinbase
+CONTROL SSH key:        $HOME/.ssh/id_ed25519
+remote user:            root
+remote repository root: /root/mohsen
 ```
 
-Only the CONTROL HOST needs credentials for the private GitHub repository. The exact `origin/main` SHA is sent to SERVER and CLIENT by Git bundle.
+`idex` does not mean SERVER in the code and `tinyman` does not mean CLIENT. Another deployment supplies its own values through `--server-host`, `--client-host`, `--server-to-client-host`, `--bastion`, and `--ssh-key` as applicable.
 
-If the CLIENT has one address from the CONTROL HOST/bastion and another address from SERVER, setup uses both:
+Every operational command below says **RUN ON**. A path beginning with `/root/...` belongs to an experiment node. Do not execute a block that expects `/root/...` directly from a CONTROL-HOST shell.
+
+## SSH topology
+
+Fresh setup/deployment:
 
 ```text
---client-host <CONTROL/bastion view>
---server-to-client-host <SERVER view>
+CONTROL -> BASTION        only when a bastion is used
+BASTION -> SERVER         fresh-node public-key bootstrap
+BASTION -> CLIENT         fresh-node public-key bootstrap
+CONTROL -> SERVER         required
+CONTROL -> CLIENT         required
+SERVER  -> CLIENT         required
+CLIENT  -> SERVER         not required
 ```
 
-The final launcher uses `--client-host` for the CLIENT address reachable from SERVER.
-
-## 2. What P5 and P7 mean
-
-`P5` and `P7` are internal experiment names, not QUIC versions.
-
-**P5** is the repeated 8-GiB QUIC download experiment over the optimized DPDK MsQuic datapath. It compares the three runtime modes on the same Performance2 V2 datapath:
-
-- `OFF` / MsQuic-DPDK: GreenQUIC power policy bypassed.
-- `BASIC` / GreenQUIC: physical DPDK activity only.
-- `PLUS` / GreenQUIC+: the same physical policy plus QUIC semantic hints/guards.
-
-**P7** is the matching repeated 8-GiB experiment using an isolated normal-Linux MsQuic UDP build with DPDK and XDP disabled.
-
-Final paper workload: **6 independent repetitions × 5 sequential 8-GiB downloads**, with 5-second gaps/cooldowns.
-
-### Exact remote paths
-
-On SERVER and CLIENT:
+Final paper run after provisioning:
 
 ```text
-Repository root:
-/root/mohsen
-
-P5 experiment directory:
-/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
-
-P5 build script:
-/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/build_p5_performance2.sh
-
-P5 client binary:
-/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop
-
-P5 server binary:
-/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinteropserver
-
-P7 experiment directory:
-/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline
-
-P7 build script:
-/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline/build_p7_linux.sh
-
-P7 isolated source:
-/root/mohsen/msquic-p7-linux-source
-
-P7 client binary:
-/root/mohsen/msquic/build-linux-p7/bin/Release/quicinterop
-
-P7 server binary:
-/root/mohsen/msquic/build-linux-p7/bin/Release/quicinteropserver
+CONTROL -> SERVER         required
+SERVER  -> CLIENT         required
+CONTROL -> CLIENT         not required by final launcher
+CLIENT  -> SERVER         not required
 ```
 
-P5 must contain the final marker:
+Only CONTROL needs private-GitHub credentials. The exact `origin/main` source is transferred to SERVER and CLIENT by Git bundle.
+
+# What P5 and P7 mean
+
+`P5` and `P7` are experiment names, not QUIC protocol versions.
+
+**P5** is the repeated 8-GiB QUIC download experiment over the optimized DPDK MsQuic path. OFF, BASIC/GreenQUIC, and PLUS/GreenQUIC+ use the same Performance2 V2 datapath.
+
+**P7** is the matching repeated 8-GiB experiment over an isolated normal-Linux MsQuic UDP build with DPDK and XDP disabled.
+
+Final workload:
+
+```text
+6 independent repetitions
+5 sequential 8-GiB downloads per repetition
+5 s inter-download gap
+5 s edge cooldown
+5 s between workloads/runs
+seed 20260806
+```
+
+Final P5 marker:
 
 ```text
 GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
 ```
 
-Final P5 TOP3 values are:
+Final TOP3 values:
 
 ```text
 PRESSURE_UP=450
@@ -121,23 +94,55 @@ DPDK CPU=19
 MsQuic CPUs=21,22,23,24
 ```
 
-P7 is built Release/OpenSSL with `QUIC_LINUX_DPDK_ENABLED=OFF` and `QUIC_LINUX_XDP_ENABLED=OFF`; its builder verifies that the final P7 executables do not link DPDK.
+# Exact remote paths and binaries
 
-Machine-readable configuration is in `configuration/p5_paper_evaluation.json`, `configuration/p7_paper_evaluation.json`, and `configuration/experiment_paths.json`.
+On SERVER and CLIENT after setup:
 
-## 3. Dependencies and versions
+```text
+Repository root:
+/root/mohsen
 
-The exact modified MsQuic/DPDK source is fixed by the GreenQUIC+ Git SHA. The current source tree records MsQuic source version `2.4.8` and vendored DPDK `21.11.9`. P5/P7 use OpenSSL and Release builds.
+P5 directory:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
 
-The supported setup requires Debian Trixie on SERVER and CLIENT. Exact Debian package revisions and kernel patch version are resolved from the configured Trixie repositories at setup time and are not individually pinned by this repository.
+P5 build script:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/build_p5_performance2.sh
 
-Paper hardware assumptions include Intel E810 at PCI `0000:18:00.0`, Linux `ice` for link/P7 operation, `igb_uio` or `vfio-pci` for DPDK binding, `16384 × 2 MiB` hugepages on the test-NIC NUMA node, CPU19 for DPDK/Linux dataplane work, and CPUs21-24 for MsQuic workers.
+P5 client:
+/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop
 
-See `configuration/dependencies.json` for the machine-readable dependency policy.
+P5 server:
+/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinteropserver
 
-## 4. Supplied analysis artifacts
+P7 directory:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline
 
-The private repository stores the supplied analysis material directly:
+P7 build script:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline/build_p7_linux.sh
+
+P7 isolated source:
+/root/mohsen/msquic-p7-linux-source
+
+P7 client:
+/root/mohsen/msquic/build-linux-p7/bin/Release/quicinterop
+
+P7 server:
+/root/mohsen/msquic/build-linux-p7/bin/Release/quicinteropserver
+```
+
+# Dependencies
+
+The exact modified source is fixed by the GreenQUIC+ Git SHA. The current tree records MsQuic source version `2.4.8` and vendored DPDK `21.11.9`. P5/P7 use OpenSSL and Release builds.
+
+SERVER and CLIENT must run Debian Trixie. Exact Debian package revisions and the kernel patch level are resolved from the configured Trixie repositories at setup time and are not individually pinned.
+
+Paper hardware assumptions include Intel E810 at PCI `0000:18:00.0`, Linux `ice` for link/P7 operation, `igb_uio` or `vfio-pci` for DPDK, `16384 × 2 MiB` hugepages, CPU19 for dataplane work, and CPUs21-24 for MsQuic workers.
+
+Machine-readable dependency policy: `results_analysis/configuration/dependencies.json`.
+
+# Original analysis artifacts
+
+The private repository contains the supplied artifacts directly:
 
 ```text
 results_analysis/
@@ -158,204 +163,112 @@ results_analysis/
 └── artifact_files.sha256.json
 ```
 
-`artifact_files.sha256.json` stores expected sizes/SHA-256 values for the originally supplied workbook/chart files. `SOURCE_REFERENCE.txt` intentionally preserves earlier archive names as provenance; those names do not redefine the final 6×5 experiment.
+The expected supplied set is two XLSX workbooks, `chart_v2.py`, and 41 SVG files. `artifact_files.sha256.json` records expected sizes/SHA-256 values. `SOURCE_REFERENCE.txt` preserves original archive names as provenance and does not redefine the final 6×5 experiment.
 
-# 5. Reproduction workflow: choose the current machine state
+# Reproduction workflow
 
-## State A — allocate/reimage fresh Debian nodes
+## Case A — physical nodes need fresh Debian Trixie
 
-### A1. Allocate/image/reset
+POS allocation/reimage/reset is separate from GreenQUIC+ setup. Follow `tum_testbed_setup/README.md` first. POS commands are **RUN ON: COINBASE/POS SHELL** and have their own live readiness/status monitor.
 
-**RUN ON: COINBASE/POS SHELL.** Do not run these commands on the CONTROL HOST, SERVER, or CLIENT shell.
+After both nodes answer SSH as Debian Trixie, continue with Case B.
 
-Paper-testbed example:
+## Case B — Debian is ready; deploy exact current `main`, prepare hosts, and build everything
 
-```bash
-SERVER_NODE=idex
-CLIENT_NODE=tinyman
-
-pos nodes list | grep -E "$SERVER_NODE|$CLIENT_NODE"
-
-# Allocate only if the node is actually unallocated and local policy permits it.
-pos allocations allocate "$SERVER_NODE"
-pos allocations allocate "$CLIENT_NODE"
-
-pos nodes image "$SERVER_NODE" debian-trixie
-pos nodes image "$CLIENT_NODE" debian-trixie
-
-pos nodes reset "$SERVER_NODE" &
-pos nodes reset "$CLIENT_NODE" &
-wait
-```
-
-**LIVE MONITOR — RUN ON: COINBASE/POS SHELL in another terminal:**
-
-```bash
-SERVER_NODE=idex
-CLIENT_NODE=tinyman
-while true; do
-  clear; date
-  pos nodes list | grep -E "$SERVER_NODE|$CLIENT_NODE"
-  sleep 5
-done
-```
-
-A POS reset destroys the live node filesystem. Treat `/root/mohsen`, old builds, generated payloads, and local results as gone.
-
-After the reset, verify SSH from the POS environment:
-
-```bash
-SERVER_NODE=idex
-CLIENT_NODE=tinyman
-for h in "$SERVER_NODE" "$CLIENT_NODE"; do
-  until ssh -o ConnectTimeout=5 root@"$h" 'hostname; . /etc/os-release; echo "$ID $VERSION_CODENAME"'; do
-    echo "waiting for $h ..."
-    sleep 5
-  done
-done
-```
-
-**LIVE MONITOR — RUN ON: COINBASE/POS SHELL in another terminal:** use the same loop; it prints the first successful OS response for each node.
-
-### A2. Provision, deploy exact `main`, and build P5/P7
-
-**RUN ON: CONTROL HOST.** Paper-testbed example:
-
-```bash
-cd ~/Downloads/GreenQUIC-Plus && \
-git fetch origin '+refs/heads/main:refs/remotes/origin/main' && \
-git checkout main && \
-git reset --hard refs/remotes/origin/main && \
-python3 results_analysis/verify_paper_configuration.py && \
-bash tum_testbed_setup/greenquic_fresh_setup.sh \
-  --server-host idex \
-  --client-host tinyman \
-  --server-to-client-host tinyman \
-  --bastion mohsen@coinbase \
-  --ssh-key "$HOME/.ssh/id_ed25519"
-```
-
-**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal:**
-
-```bash
-SERVER_HOST=idex
-CLIENT_HOST=tinyman
-BASTION=mohsen@coinbase
-KEY="$HOME/.ssh/id_ed25519"
-while true; do
-  clear; date
-  for h in "$SERVER_HOST" "$CLIENT_HOST"; do
-    echo "===== $h ====="
-    ssh -i "$KEY" -J "$BASTION" root@"$h" \
-      'hostname; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || echo repo-not-ready; pgrep -af "meson|ninja|cmake|build_p5|build_p7" || true'
-  done
-  sleep 10
-done
-```
-
-Successful setup prints `GREENQUIC+ MAIN READY` and the selected role hosts/binary paths.
-
-## State B — Debian Trixie is already installed; deploy current code and rebuild everything
-
-Do not reimage. **RUN ON: CONTROL HOST** and use the exact State A2 setup command with the appropriate `--server-host`, `--client-host`, `--server-to-client-host`, `--bastion`, and `--ssh-key` values.
-
-**LIVE MONITOR:** use the State A2 second CONTROL-HOST terminal monitor.
-
-This is the supported equivalent of “fresh clone + build” on the nodes. SERVER/CLIENT do not need private-GitHub credentials; the setup transfers the exact CONTROL-HOST `origin/main` SHA by Git bundle and installs it at `/root/mohsen`.
-
-## State C — code/host provisioning/DPDK are already correct; rebuild only P5/P7
-
-Use this only when `/root/mohsen`, dependencies, hugepages, DPDK install, NIC support, and SERVER→CLIENT SSH are already valid. If source code changed, use State B instead so both endpoints are synchronized to the exact same SHA.
+This is also the supported “fresh clone/deploy + build” case when `/root/mohsen` is absent or stale.
 
 **RUN ON: CONTROL HOST:**
 
 ```bash
-SERVER_HOST=idex
-CLIENT_HOST=tinyman
-BASTION=mohsen@coinbase
-KEY="$HOME/.ssh/id_ed25519"
-for h in "$SERVER_HOST" "$CLIENT_HOST"; do
-  ssh -i "$KEY" -J "$BASTION" root@"$h" '
-    set -Eeuo pipefail
-    ROOT=/root/mohsen
-    P5="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads"
-    P7="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline"
-    test -d "$ROOT/msquic/deps/dpdk-install"
-    P5_BUILD_REUSE=1 bash "$P5/build_p5_performance2.sh"
-    bash "$P7/build_p7_linux.sh"
-    test -x "$ROOT/msquic/build-greenquic-p5/bin/Release/quicinterop"
-    test -x "$ROOT/msquic/build-greenquic-p5/bin/Release/quicinteropserver"
-    test -x "$ROOT/msquic/build-linux-p7/bin/Release/quicinterop"
-    test -x "$ROOT/msquic/build-linux-p7/bin/Release/quicinteropserver"
-  '
-done
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
+bash results_analysis/setup_paper_testbed.sh
 ```
 
-**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after starting setup:**
 
 ```bash
-SERVER_HOST=idex
-CLIENT_HOST=tinyman
-BASTION=mohsen@coinbase
-KEY="$HOME/.ssh/id_ed25519"
-while true; do
-  clear; date
-  for h in "$SERVER_HOST" "$CLIENT_HOST"; do
-    echo "===== $h ====="
-    ssh -i "$KEY" -J "$BASTION" root@"$h" \
-      'pgrep -af "cmake|ninja|build_p5_performance2|build_p7_linux" || echo no-build-process'
-  done
-  sleep 10
-done
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
+bash results_analysis/live_monitor_setup.sh
 ```
 
-## State D — everything is prepared; run the final paper evaluation
+The high-level setup wrapper safely synchronizes a clean CONTROL `main`, statically verifies paper configuration, records a CONTROL-side setup log, runs the single TUM provisioning implementation, and records effective dependency versions. It transfers exact `origin/main` to SERVER/CLIENT by Git bundle; do not manually clone the private repository on experiment nodes.
 
-The authoritative launcher is:
+For another management topology, `setup_paper_testbed.sh` accepts:
 
 ```text
-greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh
+--server-host HOST
+--client-host HOST
+--server-to-client-host HOST
+--bastion USER@HOST|none
+--ssh-key PATH
 ```
 
-`_v2.sh` and `_v3.sh` are compatibility wrappers only.
+Use matching route values with `live_monitor_setup.sh` when desired.
+
+## Case C — remote source/DPDK/host state is already correct; rebuild only P5/P7
+
+Use this only when `/root/mohsen`, dependencies, hugepages, DPDK, NIC support, and SSH are already correct and current. If source may be stale, use Case B.
 
 **RUN ON: CONTROL HOST:**
 
 ```bash
-cd ~/Downloads/GreenQUIC-Plus && \
-git fetch origin '+refs/heads/main:refs/remotes/origin/main' && \
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
 git checkout main && \
-git reset --hard refs/remotes/origin/main && \
-python3 results_analysis/verify_paper_configuration.py && \
-bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh \
-  --server-host idex \
-  --client-host tinyman \
-  --bastion mohsen@coinbase \
-  --ssh-key "$HOME/.ssh/id_ed25519"
+bash results_analysis/rebuild_paper_binaries.sh
+```
+
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal:**
+
+```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
+bash results_analysis/live_monitor_setup.sh
+```
+
+## Case D — everything is ready; run the final paper evaluation
+
+**RUN ON: CONTROL HOST:**
+
+```bash
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
+bash results_analysis/run_paper_evaluation.sh
 ```
 
 **LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after launch:**
 
 ```bash
-SERVER_HOST=idex
-BASTION=mohsen@coinbase
-KEY="$HOME/.ssh/id_ed25519"
-ssh -i "$KEY" -J "$BASTION" root@"$SERVER_HOST" '
-log=$(find /root -maxdepth 1 -type f -name "GQ_FAIR_REPRO_*.log" -printf "%T@ %p\n" 2>/dev/null | sort -nr | sed -n "1p" | cut -d" " -f2-)
-echo "FOLLOWING: $log"; echo
-if [ -z "$log" ]; then
-  echo "No GQ_FAIR_REPRO log found yet"
-else
-  tail -n +1 -F "$log"
-fi
-'
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
+bash results_analysis/live_monitor_run.sh
 ```
 
-The final launcher deliberately rebuilds/verifies P5 and P7 before measured traffic so stale binaries cannot silently change the result.
+`run_paper_evaluation.sh` safely synchronizes CONTROL `main`, records the exact tag, and calls the single authoritative combined launcher. The monitor follows that exact tag instead of guessing the newest log.
 
-# 6. Result locations, packaging, and download
+For another deployment, the run wrapper accepts `--server-host`, `--client-host`, `--bastion`, and `--ssh-key`. Here `--client-host` is the CLIENT endpoint as seen from SERVER.
 
-The SERVER role stores controller artifacts. For tag `<TAG>`:
+The authoritative low-level implementation is:
+
+```text
+greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh
+```
+
+The `_v2.sh` and `_v3.sh` names are compatibility wrappers only.
+
+# Results: do not manually package `/root` from the CONTROL HOST
+
+The SERVER role stores controller/result artifacts. For tag `<TAG>`:
 
 ```text
 /root/GQ_FAIR_REPRO_<TAG>.log
@@ -368,55 +281,39 @@ The SERVER role stores controller artifacts. For tag `<TAG>`:
 /root/P7_FAIR_PAPER_PINNED_6r_5d_<TAG>.zip
 ```
 
-The P5 and P7 ZIPs contain the full result trees, including the per-run recorder/affinity evidence generated inside those trees. Do **not** create extra `P5_AFFINITY_SERVER_*.tar.gz`, `P5_AFFINITY_CLIENT_*.tar.gz`, or manually repack `/root/...` from the CONTROL HOST. A shell prompt on the CONTROL HOST cannot access SERVER paths such as `/root/GQ_FAIR_REPRO_*` or `/root/mohsen/...` directly.
+The P5/P7 ZIPs contain the complete matrix result trees, including recorder/affinity evidence saved under those trees. Separate `P5_AFFINITY_SERVER_*.tar.gz` or `P5_AFFINITY_CLIENT_*.tar.gz` packaging is not part of the supported final workflow.
 
-Use the repository downloader instead.
+A CONTROL-HOST prompt such as `... GreenQUIC-Plus %` cannot directly access `/root/GQ_FAIR_REPRO_*`, `/root/mohsen/...`, or `/root/...tar.gz`; those are SERVER paths. If you see `ls: /root/... No such file or directory` together with a CONTROL-HOST prompt, the command was run on the wrong machine.
 
-**RUN ON: CONTROL HOST after the run is DONE:**
-
-```bash
-cd ~/Downloads/GreenQUIC-Plus && \
-bash results_analysis/download_latest_reproduction.sh \
-  --server-host idex \
-  --bastion mohsen@coinbase \
-  --ssh-key "$HOME/.ssh/id_ed25519"
-```
-
-This command is synchronous and prints each copied file plus final configuration verification. If you want a live SERVER-side view while it runs, use a second CONTROL-HOST terminal:
-
-```bash
-SERVER_HOST=idex
-BASTION=mohsen@coinbase
-KEY="$HOME/.ssh/id_ed25519"
-ssh -i "$KEY" -J "$BASTION" root@"$SERVER_HOST" '
-while true; do
-  clear; date
-  find /root -maxdepth 1 \( -name "GQ_FAIR_REPRO_*" -o -name "P5_FAIR_OPT_PINNED_*.zip" -o -name "P7_FAIR_PAPER_PINNED_*.zip" \) -printf "%TY-%Tm-%Td %TH:%TM:%TS %s %p\n" 2>/dev/null | sort
-  sleep 5
-done
-'
-```
-
-The downloader requires the latest artifact to contain `DONE`, `RESULT_ZIPS.txt`, and `config.env`, copies the two result ZIPs and controller metadata, then checks the saved paper configuration.
-
-# 7. Static preflight
-
-Before setup or a final run, `results_analysis/verify_paper_configuration.py` checks that the final P5/P7 JSON records, role-based `suite.env`, TUM setup interface, authoritative launcher, compatibility wrappers, and P7 offload implementation still agree.
+After the final run is marked DONE, use the downloader.
 
 **RUN ON: CONTROL HOST:**
 
 ```bash
-python3 results_analysis/verify_paper_configuration.py
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
+bash results_analysis/download_paper_results.sh
 ```
 
-This is an immediate local/static check; it does not launch remote work and therefore has no remote live log.
+This is synchronous and prints each copied artifact plus paper-configuration verification. If you want a live view while copying, **RUN ON: second CONTROL-HOST terminal:**
 
-# 8. TUM provisioning details
-
-For the provisioning implementation and TUM/POS-specific notes, see `../tum_testbed_setup/README.md`. There is one supported setup entrypoint:
-
-```text
-tum_testbed_setup/greenquic_fresh_setup.sh
+```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
+bash results_analysis/live_monitor_run.sh
 ```
 
-The setup script itself does not allocate/reimage POS nodes and does not reboot them. It starts only after Debian Trixie is reachable.
+The downloader copies `config.env`, `RESULT_ZIPS.txt`, `DONE`, the two result ZIPs, and the controller log into `reproduced_results/<TAG>/` and verifies the critical P5/P7 settings.
+
+# Static final repository check
+
+Before a release/reproduction handoff, use the repository audit.
+
+**RUN ON: CONTROL HOST:**
+
+```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
+bash results_analysis/final_repository_check.sh
+```
+
+This is an immediate local/static check; it starts no experiment, so no remote live log applies. It validates shell/Python/JSON syntax, repository cleanup/layout, committed analysis artifacts, source/dependency anchors, role-based routing, safe CONTROL-main synchronization, setup/run wrappers/monitors, current README requirements, and final P5/P7 configuration anchors.
+
+For TUM/POS provisioning details, see `tum_testbed_setup/README.md`.
