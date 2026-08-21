@@ -1,34 +1,37 @@
-GreenQUIC V22 pretests
-======================
+GreenQUIC+ V22 pretests
+=======================
 
-P0_smoke_1MiB
-  Purpose: prove that the V22 DPDK/MsQuic server on idex and client on tinyman
-  start correctly and complete one QUIC download. The client stores the 1 MiB
-  result and verifies both byte count and SHA-256. GreenQUIC mode is OFF.
+This directory contains historical and current pretests. Host names are not
+roles.
 
-P1_goodput_off_10GiB
-  Purpose: high-goodput baseline with GreenQuicMode=off. Both GreenQUIC
-  frequency scaling and GreenQUIC sleeping are explicitly disabled. One QUIC
-  connection, one stream, one 10 GiB payload.
+Roles:
+  SERVER  QUIC server + controller
+  CLIENT  QUIC client
 
-P2_goodput_basic_10GiB
-  Purpose: identical 10 GiB workload with GreenQuicMode=basic. BASIC uses DPDK
-  physical RX/TX pressure only; it enables both frequency scaling and the V22
-  short-sleep path. It does not use ACK/CUBIC/application semantic hints.
-  Defaults: GreenQuicEnableFreq=1, GreenQuicEnableSleep=1,
-  GreenQuicIdleMode=short, ACK/Data/Max sleep = 1/2/2 us.
+Paper-testbed defaults were SERVER=idex and CLIENT=tinyman, but current P5/P7
+entrypoints accept host switches.
 
-Goodput scope
--------------
-Payload bits are divided by the client measurement interval. The interval
-includes DPDK/MsQuic startup, handshake, transfer and shutdown. For 10 GiB the
-startup fraction is normally small, but these remain pretests rather than the
-final externally synchronized energy campaign.
+Current paper-evaluation paths:
+  P5_repeated_8GiB_downloads
+    optimized DPDK MsQuic OFF/BASIC/PLUS comparison
+  P7_linux_udp_baseline
+    isolated normal-Linux MsQuic UDP baseline
 
-Recommended order
------------------
-1. Deploy this same suite to /root/mohsen/greenquic_test_suite_v22 on idex and tinyman.
-2. Run ./check_v22_install.sh on both hosts.
-3. Run ./test_cases/pretests/prepare_10g_on_idex.sh on idex.
-4. Run P0, then P1, then P2. Stop each matching server before starting the next.
-5. Or run all three from idex with ./run_pretests_from_idex.sh.
+Current operating guides:
+  P5_repeated_8GiB_downloads/README.md
+  P7_linux_udp_baseline/README.md
+  ../../../results_analysis/README.md   (from repository root use results_analysis/README.md)
+
+Historical P0/P1/P2 meaning:
+  P0_smoke_1MiB          early one-download DPDK smoke test
+  P1_goodput_off_10GiB   early OFF goodput baseline
+  P2_goodput_basic_10GiB early BASIC goodput test
+
+Those earlier paths and scripts may still contain original idex/tinyman labels or
+*_from_idex* filenames. Treat them as historical testbed provenance. For the
+current paper comparison, run the authoritative launcher from the CONTROL HOST
+and select the real endpoint names with --server-host / --client-host.
+
+For standalone server-side matrices, SERVER -> CLIENT root SSH is required and
+the CLIENT should be passed explicitly with --client-host. CLIENT -> SERVER SSH
+is not required.
