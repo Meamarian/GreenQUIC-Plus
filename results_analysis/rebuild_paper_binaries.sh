@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$HERE/paper_testbed_defaults.sh"
+
+SSH_OPTS=(-o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -i "$GQ_SSH_KEY" -o IdentitiesOnly=yes)
+if [[ -n "$GQ_BASTION" && "$GQ_BASTION" != none ]]; then SSH_OPTS+=(-J "$GQ_BASTION"); fi
+
+remote_build() {
+  local role="$1" host="$2"
+  echo "===== BUILD $role ($host) ====="
+  ssh "${SSH_OPTS[@]}" "$GQ_REMOTE_USER@$host" bash -s <<'REMOTE'
+set -Eeuo pipefail
+ROOT=/root/mohsen
+P5="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads"
+P7="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline"
+[[ -d "$ROOT/.git" ]]
+[[ "$(git -C "$ROOT" branch --show-current)" == main ]]
+test -d "$ROOT/msquic/deps/dpdk-install"
+P5_BUILD_REUSE=1 bash "$P5/build_p5_performance2.sh"
+bash "$P7/build_p7_linux.sh"
+P5C="$ROOT/msquic/build-greenquic-p5/bin/Release/quicinterop"
+P5S="$ROOT/msquic/build-greenquic-p5/bin/Release/quicinteropserver"
+P7C="$ROOT/msquic/build-linux-p7/bin/Release/quicinterop"
+P7S="$ROOT/msquic/build-linux-p7/bin/Release/quicinteropserver"
+for f in "$P5C" "$P5S" "$P7C" "$P7S"; do test -x "$f"; done
+MARKER='GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0'
+grep -aFq -- "$MARKER" "$P5C"
+grep -aFq -- "$MARKER" "$P5S"
+if ldd "$P7C" 2>/dev/null | grep -qi dpdk || ldd "$P7S" 2>/dev/null | grep -qi dpdk; then
+  echo "ERROR: P7 unexpectedly links DPDK" >&2
+  exit 2
+fi
+echo "REBUILD PASS host=$(hostname) head=$(git -C "$ROOT" rev-parse HEAD)"
+sha256sum "$P5C" "$P5S" "$P7C" "$P7S"
+REMOTE
+}
+
+remote_build SERVER "$GQ_SERVER_HOST" & p1=$!
+remote_build CLIENT "$GQ_CLIENT_HOST" & p2=$!
+rc=0
+wait "$p1" || rc=1
+wait "$p2" || rc=1
+(( rc == 0 )) || { echo "ERROR: one or both endpoint builds failed" >&2; exit 1; }
+
+echo "P5/P7 REBUILD PASS ON BOTH ENDPOINTS"
