@@ -18,6 +18,10 @@ reproduced_results/
 **/__pycache__/
 *.pyc
 
+# macOS local metadata
+.DS_Store
+**/.DS_Store
+
 # Archives and crash dumps
 *.zip
 *.tar.gz
