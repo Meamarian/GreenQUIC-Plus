@@ -29,11 +29,36 @@ The three modes differ only in policy behavior on top of the same optimized DPDK
 - **BASIC / GreenQUIC:** uses only physical DPDK activity. The TOP3 physical changes `PRESSURE_UP=450` and `RX_QUEUE_HIGH=48` apply. The PLUS-only active-transfer sleep guard does not affect BASIC.
 - **PLUS / GreenQUIC+:** uses the same physical policy as BASIC plus QUIC semantic hints and PLUS-specific guards. All three TOP3 changes apply, including `ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16`.
 
-The complete effective physical, EWMA, DVFS, idle/sleep and QUIC-hint parameters are stored in `p5_paper_evaluation.json`.
+The complete effective physical, EWMA, DVFS, idle/sleep, recorder and QUIC-hint parameters are stored in `p5_paper_evaluation.json`.
 
-### Reproduction-runner consistency check
+### Exact reproduction-runner consistency
 
-There is one important distinction in the current repository. The generic launcher `mac_run_p5_p7_fair_repro_6x5_v3.sh` currently supplies the common fair settings (monitor/short, CPU placement, recording, etc.) but **does not explicitly inject the three TOP3 overrides**. Therefore, without additional overrides, that generic launcher falls back to the P5 defaults for `PRESSURE_UP`, `RX_QUEUE_HIGH`, and `ACTIVE_TRANSFER_SLEEP_MIN_LEVEL` rather than reproducing TOP3. The JSON in this directory records the final focused paper-evaluation configuration actually selected from the tuning/focused-test workflow. The launcher should be updated separately before using it as an exact one-command TOP3 reproduction entrypoint.
+The supported final launcher is:
+
+```text
+greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v3.sh
+```
+
+It now fails closed unless the internal generated runner explicitly contains the final TOP3 settings. The generated P5 command injects, rather than merely inherits, the critical final values:
+
+```text
+PRESSURE_UP=450
+RX_QUEUE_HIGH=48
+ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16
+FREQ_PERIOD_US=10000
+GQ_IDLE_MODE_OVERRIDE=monitor
+GQ_IDLE_FALLBACK_OVERRIDE=short
+GQ_ENABLE_ACPI_POWER_TRACE=1
+GQ_POWER_SAMPLE_INTERVAL_MS=1000
+GQ_ENABLE_MSR_TRACE=1
+GQ_MSR_SAMPLE_INTERVAL_MS=6
+GQ_MSR_SMOOTH_SAMPLES=3
+ENABLE_CSTATE_RECORD=1
+GQ_ENABLE_FREQ_TRACE=1
+GQ_FREQ_SAMPLE_INTERVAL_MS=1
+```
+
+The run artifact `config.env` also records the TOP3 identity and these critical settings. This removes the previous ambiguity where the generic fair launcher could fall back to the ordinary P5 defaults.
 
 ## P7: normal Linux MsQuic baseline
 
@@ -61,6 +86,16 @@ The Linux network settings are:
 The `paper` offload profile requires TSO, GSO, TX checksum offload and GRO to be ON. UDP segmentation, RX checksum and hardware GRO are enabled on a best-effort basis when supported. The runner restores the exact pre-P7 DPDK driver after the Linux matrix.
 
 See `p7_paper_evaluation.json` for the complete machine-readable configuration.
+
+## Configuration verification
+
+From the repository root, run:
+
+```bash
+python3 results_analysis/verify_paper_configuration.py
+```
+
+The verifier checks the machine-readable configuration and the supported launcher for the critical final P5/P7 values before a measurement is started.
 
 ## Important distinction from the chart bundle
 
