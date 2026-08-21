@@ -8,9 +8,9 @@
 - **SERVER**: runs `quicinteropserver` and the matrix controller.
 - **CLIENT**: runs `quicinterop`, started by SERVER over SSH.
 
-Our paper defaults are SERVER=`idex`, CLIENT=`tinyman`, BASTION=`mohsen@coinbase`, and CONTROL SSH key=`$HOME/.ssh/id_ed25519`. They are centralized in `results_analysis/paper_testbed_defaults.sh`; they are not hard-coded role semantics.
+Our paper defaults are SERVER=`idex`, CLIENT=`tinyman`, BASTION=`mohsen@coinbase`, and CONTROL SSH key=`$HOME/.ssh/id_ed25519`. They are centralized in `results_analysis/paper_testbed_defaults.sh`; they are not role semantics.
 
-SERVER -> CLIENT root SSH is required. CLIENT -> SERVER SSH is not required.
+SERVER -> CLIENT root SSH is required. CLIENT -> SERVER SSH is not required. The high-level setup/run/monitor wrappers accept explicit host/bastion/key switches for another deployment.
 
 ---
 
@@ -103,6 +103,8 @@ Immediately in **a second CONTROL-HOST terminal:**
 bash results_analysis/live_monitor_run.sh
 ```
 
+For another management topology, `run_paper_evaluation.sh` accepts `--server-host`, `--client-host`, `--bastion`, and `--ssh-key`; `--client-host` is the CLIENT endpoint as seen from SERVER. Pass the same SERVER/bastion/key values to `live_monitor_run.sh`.
+
 The runner fixes exact `main`, transfers the SHA by Git bundle, rebuilds/verifies P5 and P7, injects TOP3 and recorder settings, runs the P5 matrix, transitions to P7, validates evidence, and packages both results.
 
 The low-level authoritative implementation is:
@@ -131,13 +133,13 @@ Immediately in **a second CONTROL-HOST terminal:**
 bash results_analysis/live_monitor_setup.sh
 ```
 
-If source changed or the remote checkout may be stale, use `results_analysis/setup_paper_testbed.sh` instead.
+If source changed or the remote checkout may be stale, use `results_analysis/setup_paper_testbed.sh` instead. Rebuild/setup monitors accept explicit role-host switches for non-paper management names.
 
 ---
 
 ## Historical filenames
 
-Files such as `run_matrix_from_idex.sh` and `run_matrix_from_idex_core.sh` retain historical names from the original testbed. The filename does not force SERVER to be named `idex`; current high-level orchestration supplies the selected CLIENT endpoint explicitly.
+Files such as `run_matrix_from_idex.sh` and `run_matrix_from_idex_core.sh` retain historical names from the original testbed. The filename does not force SERVER to be named `idex`; current high-level orchestration supplies the selected CLIENT endpoint explicitly. Some lower-level diagnostic messages/defaults also preserve the old paper names, but they are not used to select roles in the authoritative combined workflow.
 
 Older tuning/bottleneck documents in this directory are research history, not the current paper operating guide.
 
@@ -160,4 +162,4 @@ P5 matrix outputs are stored under:
 /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/matrix_results/
 ```
 
-The combined paper runner additionally creates `/root/GQ_FAIR_REPRO_<TAG>/`, a controller log, `config.env`, and the final P5/P7 ZIP paths on the SERVER role. See `results_analysis/README.md`.
+The combined paper runner additionally creates `/root/GQ_FAIR_REPRO_<TAG>/`, a controller log, `config.env`, and final P5/P7 ZIP paths on the SERVER role. See `results_analysis/README.md`.
