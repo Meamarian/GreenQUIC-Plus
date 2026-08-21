@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # Paper-testbed convenience defaults for GreenQUIC+.
 #
-# These defaults make the supported wrappers zero-argument on our testbed.
-# Another deployment can override any GQ_* value in the environment without
-# editing the repository.
+# The management-routing values below make the supported wrappers zero-argument
+# on our paper testbed. Another deployment can override SERVER/CLIENT/bastion/key
+# GQ_* values without editing the repository.
+#
+# GQ_REMOTE_USER, GQ_REMOTE_ROOT and GQ_TEST_NIC_PCI also document fixed values
+# used by the current paper workflow. The underlying setup/experiment code
+# requires root, /root/mohsen and the recorded paper hardware layout; overriding
+# those three helper variables alone does NOT make the core workflow portable to
+# different privileges, paths or hardware.
 
 if [[ -z "${GQ_CONTROL_REPO:-}" ]]; then
     _gq_defaults_here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
