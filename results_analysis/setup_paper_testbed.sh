@@ -36,6 +36,8 @@ This wrapper deploys exact origin/main by Git bundle, prepares both hosts, and
 builds/verifies P5 and P7. It does not allocate/reimage POS nodes.
 The complete CONTROL-side stdout/stderr stream is recorded under
 results_analysis/runtime/ so live_monitor_setup.sh can follow the exact run.
+After successful provisioning it also records the effective CONTROL/SERVER/
+CLIENT dependency versions in that same setup log.
 USAGE
 }
 
@@ -92,3 +94,13 @@ bash tum_testbed_setup/greenquic_fresh_setup.sh \
   --server-to-client-host "$GQ_SERVER_TO_CLIENT_HOST" \
   --bastion "$GQ_BASTION" \
   --ssh-key "$GQ_SSH_KEY"
+
+echo
+echo "===== EFFECTIVE DEPENDENCY/VERSION SNAPSHOT AFTER SETUP ====="
+bash results_analysis/print_dependency_versions.sh \
+  --server-host "$GQ_SERVER_HOST" \
+  --client-host "$GQ_CLIENT_HOST" \
+  --bastion "$GQ_BASTION" \
+  --ssh-key "$GQ_SSH_KEY"
+
+echo "DEPENDENCY VERSION SNAPSHOT: PASS"
