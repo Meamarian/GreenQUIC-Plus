@@ -81,50 +81,6 @@ bash results_analysis/live_monitor_setup.sh
 
 Successful completion prints `GREENQUIC+ MAIN READY`, the selected role endpoints, and final P5/P7 binary paths.
 
-# 2. Case C — different management host names/topology
-
-The setup wrapper accepts:
-
-```text
---server-host HOST
---client-host HOST
---server-to-client-host HOST
---bastion USER@HOST|none
---ssh-key PATH
-```
-
-`--client-host` is the CLIENT name/address visible from CONTROL/bastion during setup. `--server-to-client-host` is the CLIENT name/address visible from SERVER. They may differ.
-
-Example **RUN ON: CONTROL HOST:**
-
-```bash
-REPO="$HOME/Downloads/GreenQUIC-Plus"
-if [ ! -d "$REPO/.git" ]; then
-  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
-fi
-cd "$REPO" && \
-git checkout main && \
-bash results_analysis/setup_paper_testbed.sh \
-  --server-host server01 \
-  --client-host client-via-gateway \
-  --server-to-client-host 10.0.0.22 \
-  --bastion user@gateway \
-  --ssh-key "$HOME/.ssh/lab_key"
-```
-
-**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal:**
-
-```bash
-cd "$HOME/Downloads/GreenQUIC-Plus" && \
-bash results_analysis/live_monitor_setup.sh \
-  --server-host server01 \
-  --client-host client-via-gateway \
-  --bastion user@gateway \
-  --ssh-key "$HOME/.ssh/lab_key"
-```
-
-Changing management names does not make the hardware configuration generic. CPU placement, E810 PCI/data-plane settings, hugepages, root privilege, and `/root/mohsen` are part of the current paper setup and require explicit revalidation on different hardware.
-
 # 6. What the single setup implementation does
 
 From CONTROL, `greenquic_fresh_setup.sh`:
@@ -149,7 +105,7 @@ From CONTROL, `greenquic_fresh_setup.sh`:
 
 The setup implementation itself does **not** allocate/reimage POS nodes and does not reboot them.
 
-# 3. Final build outputs
+# 2. Final build outputs
 
 On both SERVER and CLIENT:
 
@@ -178,7 +134,7 @@ MsQuic CPUs=21,22,23,24
 
 P7 is an isolated normal-Linux MsQuic build with DPDK and XDP disabled.
 
-# 4. After setup — run final paper evaluation
+# 3. After setup — run final paper evaluation
 
 **RUN ON: CONTROL HOST:**
 
@@ -209,7 +165,7 @@ Downloaded ZIP SHA-256 values are checked against hashes generated on SERVER. Th
 
 For exact P5/P7 configuration, result paths, manual re-download behavior, and final audit, see `results_analysis/README.md`.
 
-# 5. Safety notes
+# 4. Safety notes
 
 - root SSH is required because setup installs packages, changes hugepages/MSR/PCI drivers, and writes under `/root`;
 - `uio_pci_generic` is not accepted as the final P5 DPDK driver;
