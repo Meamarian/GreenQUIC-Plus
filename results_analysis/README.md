@@ -7,9 +7,9 @@ This directory is the evaluation/reproduction reference for **“Sleep Tight, QU
 
 The dependency record distinguishes **source-pinned versions** from Debian packages whose exact package revisions are resolved at setup time.
 
-## Source-pinned software
+## Software
 
-| Component | Version / requirement | How it is fixed |
+| Component | Version | How it is fixed |
 |---|---|---|
 | Modified MsQuic source | `2.4.8` source version | vendored under `msquic/`; exact experiment source is the GreenQUIC+ Git commit SHA |
 | DPDK | `21.11.9` | vendored under `msquic/deps/dpdk/` |
@@ -62,7 +62,7 @@ results_analysis/
 └── artifact_files.sha256.json
 ```
 
-The chart set contains **41 SVG files**. `artifact_files.sha256.json` stores the expected sizes/SHA-256 hashes for the supplied workbook/chart artifacts. `SOURCE_REFERENCE.txt` intentionally preserves the original archive names, including earlier intermediate runs; those names are provenance, not the definition of the final 6×5 paper experiment.
+The chart set contains **SVG files**. `artifact_files.sha256.json` stores the expected sizes/SHA-256 hashes for the supplied workbook/chart artifacts. `SOURCE_REFERENCE.txt` intentionally preserves the original archive names, including earlier intermediate runs; those names are provenance, not the definition of the final 6×5 paper experiment.
 
 ---
 
