@@ -16,9 +16,39 @@ case "$sync_rc" in
   *) exit "$sync_rc" ;;
 esac
 
+usage() {
+  cat <<'USAGE'
+GreenQUIC+ rebuild-only wrapper
+
+RUN ON: CONTROL HOST
+
+Use only when /root/mohsen on both endpoints is already exact current main and
+host/DPDK provisioning is already correct.
+
+Options:
+  --server-host HOST       SERVER as seen from CONTROL/BASTION
+  --client-host HOST       CLIENT as seen from CONTROL/BASTION
+  --bastion USER@HOST|none optional ProxyJump
+  --ssh-key PATH           CONTROL private key
+  -h, --help
+USAGE
+}
+
+while (($#)); do
+  case "$1" in
+    --server-host) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --server-host needs a value" >&2; exit 2; }; GQ_SERVER_HOST="$2"; shift 2 ;;
+    --client-host) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --client-host needs a value" >&2; exit 2; }; GQ_CLIENT_HOST="$2"; shift 2 ;;
+    --bastion) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --bastion needs a value" >&2; exit 2; }; GQ_BASTION="$2"; shift 2 ;;
+    --ssh-key) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --ssh-key needs a value" >&2; exit 2; }; GQ_SSH_KEY="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "ERROR: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
 cd "$GQ_CONTROL_REPO"
 EXPECTED_SHA="$(git rev-parse refs/remotes/origin/main)"
 
+[[ -f "$GQ_SSH_KEY" ]] || { echo "ERROR: SSH key not found: $GQ_SSH_KEY" >&2; exit 2; }
 SSH_OPTS=(-o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -i "$GQ_SSH_KEY" -o IdentitiesOnly=yes)
 if [[ -n "$GQ_BASTION" && "$GQ_BASTION" != none ]]; then SSH_OPTS+=(-J "$GQ_BASTION"); fi
 remote(){ local host="$1"; shift; ssh "${SSH_OPTS[@]}" "$GQ_REMOTE_USER@$host" "$@"; }
@@ -71,6 +101,7 @@ sha256sum "$P5C" "$P5S" "$P7C" "$P7S"
 REMOTE
 }
 
+printf 'RUN ON: CONTROL HOST\nSERVER=%s\nCLIENT=%s\nBASTION=%s\n' "$GQ_SERVER_HOST" "$GQ_CLIENT_HOST" "$GQ_BASTION"
 remote_build SERVER "$GQ_SERVER_HOST" & p1=$!
 remote_build CLIENT "$GQ_CLIENT_HOST" & p2=$!
 rc=0
