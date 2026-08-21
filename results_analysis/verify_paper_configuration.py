@@ -5,8 +5,9 @@ RUN ON: control host, from any GreenQUIC-Plus clone.
 
 This does not contact the experiment nodes. It verifies that the machine-readable
 paper configuration, dependency/source versions, authoritative launcher,
-compatibility wrappers, role-based runtime defaults, P7 network tuning, and
-setup interface still agree on the critical settings.
+compatibility wrappers, durable recorder validation, automatic result-copy path,
+role-based runtime defaults, P7 network tuning, and setup interface still agree
+on the critical settings.
 """
 from __future__ import annotations
 
@@ -25,24 +26,32 @@ P5_DIR = ROOT / "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_d
 FINAL = P5_DIR / "mac_run_p5_p7_fair_repro_6x5.sh"
 V2 = P5_DIR / "mac_run_p5_p7_fair_repro_6x5_v2.sh"
 V3 = P5_DIR / "mac_run_p5_p7_fair_repro_6x5_v3.sh"
+P5_RECORDER_VALIDATOR = P5_DIR / "validate_p5_recorder_evidence.py"
 P7_DIR = ROOT / "greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline"
 P7_TUNER = P7_DIR / "p7_network_tuning.sh"
 TUM_SETUP = ROOT / "tum_testbed_setup/greenquic_fresh_setup.sh"
+DOWNLOADER = ROOT / "results_analysis/download_latest_reproduction.sh"
+RUN_WRAPPER = ROOT / "results_analysis/run_paper_evaluation.sh"
+
 
 class CheckError(RuntimeError):
     pass
+
 
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise CheckError(message)
 
+
 def require_equal(actual, expected, label: str) -> None:
     if actual != expected:
         raise CheckError(f"{label}: expected {expected!r}, found {actual!r}")
 
+
 def load_json(path: Path):
     require(path.is_file(), f"missing JSON: {path.relative_to(ROOT)}")
     return json.loads(path.read_text(encoding="utf-8"))
+
 
 def require_tokens(path: Path, tokens: list[str], label: str) -> str:
     require(path.is_file(), f"missing {label}: {path.relative_to(ROOT)}")
@@ -50,6 +59,7 @@ def require_tokens(path: Path, tokens: list[str], label: str) -> str:
     for token in tokens:
         require(token in text, f"{label} missing required token: {token}")
     return text
+
 
 def main() -> int:
     try:
@@ -156,9 +166,7 @@ def main() -> int:
         require_equal(cpu7["dataplane_cpu"], 19, "P7 dataplane CPU")
         require_equal(cpu7["quic_worker_cpus"], [21, 22, 23, 24], "P7 QUIC CPUs")
 
-        # Runtime role guards must not silently force the paper hostnames. Both
-        # P5 and P7 source suite.env, so this is a real portability check rather
-        # than documentation-only validation.
+        # Runtime role guards must not silently force the paper hostnames.
         suite_text = require_tokens(SUITE_ENV, [
             'GQ_LOCAL_SHORT_HOST=',
             'SERVER_NAME="${SERVER_NAME:-$GQ_LOCAL_SHORT_HOST}"',
@@ -169,13 +177,28 @@ def main() -> int:
         require('CLIENT_NAME="${CLIENT_NAME:-tinyman}"' not in suite_text,
                 "suite.env still hard-codes tinyman as CLIENT hostname")
 
-        # One authoritative launcher contains the full final profile directly.
-        require_tokens(FINAL, [
+        # Durable P5 recorder validation. The 2026-08-21 failure was caused by
+        # requiring *_affinity.txt sidecars after bundling although the durable
+        # run logs already contained the actual recorder CPU. Prevent regression.
+        require_tokens(P5_RECORDER_VALIDATOR, [
+            'matrix_integrity.json',
+            'whole-system power1 trace',
+            'C RAPL powercap trace',
+            'Linux cpu_idle trace',
+            'CPU-frequency trace',
+            'affinity_sidecars_required',
+            'P5 RECORDER EVIDENCE VALIDATION: PASS',
+        ], "P5 durable recorder validator")
+
+        final_text = require_tokens(FINAL, [
             'BRANCH=main',
             '--server-host',
             '--client-host',
             '--bastion',
             '--ssh-key',
+            '--download-dest',
+            '--no-auto-download',
+            'AUTO_DOWNLOAD=',
             "git fetch origin '+refs/heads/main:refs/remotes/origin/main'",
             '--env PRESSURE_UP=450',
             '--env RX_QUEUE_HIGH=48',
@@ -186,6 +209,14 @@ def main() -> int:
             '--env GQ_ENABLE_ACPI_POWER_TRACE=1',
             '--env GQ_ENABLE_MSR_TRACE=1',
             '--env GQ_ENABLE_FREQ_TRACE=1',
+            'validate_p5_recorder_evidence.py',
+            'P5_recorder_validation=durable_per_run_log_evidence',
+            'RESULT_DIRS.env',
+            'RESULT_ZIPS.sha256',
+            'FINAL REMOTE RESULT PATHS (before archive/SCP)',
+            'download_latest_reproduction.sh',
+            '--expect-runs',
+            '--expect-downloads',
             'P5_power_profile=TOP3',
             '--nic-offloads paper',
             '--udp-rmem 6815744',
@@ -201,6 +232,28 @@ def main() -> int:
             'server_role_host=',
             'client_role_host=',
         ], "authoritative final launcher")
+        require("p5_affinity_files.txt" not in final_text,
+                "obsolete P5 affinity-sidecar validation was reintroduced")
+        require("find \"$P5OUT/runs\" -type f -name '*_affinity.txt'" not in final_text,
+                "obsolete P5 *_affinity.txt requirement was reintroduced")
+
+        require_tokens(DOWNLOADER, [
+            'FINAL RESULT PATHS — BEFORE SCP',
+            'REMOTE RESULT PATHS:',
+            'REMOTE ZIP PATHS:',
+            'LOCAL FINAL RESULT DIRECTORY:',
+            'STARTING AUTOMATIC SCP...',
+            'RESULT_ZIPS.sha256',
+            'P5_recorder_validation=durable_per_run_log_evidence',
+            '--expect-runs',
+            '--expect-downloads',
+        ], "automatic result downloader")
+        require_tokens(RUN_WRAPPER, [
+            '--download-dest',
+            '--no-auto-download',
+            'AUTO_DOWNLOAD=',
+            'run_paper_evaluation.sh',
+        ], "high-level paper run wrapper")
 
         # Old names remain only as compatibility entrypoints, not separate logic.
         wrapper_token = 'exec bash "$HERE/mac_run_p5_p7_fair_repro_6x5.sh" "$@"'
@@ -238,11 +291,14 @@ def main() -> int:
     print("PAPER CONFIGURATION PREFLIGHT: PASS")
     print("Dependencies: modified MsQuic 2.4.8 source + DPDK 21.11.9 + Debian Trixie policy")
     print("P5: Performance2 V2 + TOP3, 6x5, CPU19 + QUIC CPUs21-24")
+    print("P5 recorder validation: durable per-run log evidence; affinity sidecars not required")
     print("P7: isolated Linux paper profile, 6x5, CPU19 + QUIC CPUs21-24")
+    print("Results: final paths printed before automatic SCP; ZIP SHA-256 verified")
     print("Hosts: role-based; paper defaults are server=idex, client=tinyman")
     print("Runtime hostname guards: portable; no idex/tinyman requirement")
     print("Launcher: mac_run_p5_p7_fair_repro_6x5.sh")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
