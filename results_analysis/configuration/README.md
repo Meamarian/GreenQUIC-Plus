@@ -31,6 +31,10 @@ The three modes differ only in policy behavior on top of the same optimized DPDK
 
 The complete effective physical, EWMA, DVFS, idle/sleep and QUIC-hint parameters are stored in `p5_paper_evaluation.json`.
 
+### Reproduction-runner consistency check
+
+There is one important distinction in the current repository. The generic launcher `mac_run_p5_p7_fair_repro_6x5_v3.sh` currently supplies the common fair settings (monitor/short, CPU placement, recording, etc.) but **does not explicitly inject the three TOP3 overrides**. Therefore, without additional overrides, that generic launcher falls back to the P5 defaults for `PRESSURE_UP`, `RX_QUEUE_HIGH`, and `ACTIVE_TRANSFER_SLEEP_MIN_LEVEL` rather than reproducing TOP3. The JSON in this directory records the final focused paper-evaluation configuration actually selected from the tuning/focused-test workflow. The launcher should be updated separately before using it as an exact one-command TOP3 reproduction entrypoint.
+
 ## P7: normal Linux MsQuic baseline
 
 P7 is an isolated normal-Linux MsQuic build: DPDK disabled, XDP disabled, normal Linux UDP socket datapath, Release build, OpenSSL TLS.
