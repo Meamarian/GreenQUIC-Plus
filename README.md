@@ -49,7 +49,7 @@ The exact imported state is preserved as `paper/original-p5-multicore`. Current 
 |---|---|
 | `msquic/` | MsQuic + DPDK source used by GreenQUIC+ |
 | `greenquic_test_suite_v22/` | authoritative P5/P7 build, execution, recording, report and validation suite |
-| `results_analysis/` | exact paper configuration, tuning XLSX files, chart code/SVGs, zero-argument reproduction helpers |
+| `results_analysis/` | exact paper configuration, original tuning XLSX files, chart code/SVGs, high-level reproduction helpers and final audit |
 | `tum_testbed_setup/` | single supported TUM/LRZ provisioning/build implementation and guide |
 | `acpi.sh` | ACPI/platform power helper |
 | `msr.py` | MSR helper |
@@ -90,7 +90,7 @@ branch:                 main
 paper test NIC PCI:     0000:18:00.0
 ```
 
-Therefore, on our testbed the supported high-level commands need **no host name, bastion or SSH-key arguments**. Another deployment can override the `GQ_*` environment variables or call the lower-level scripts with explicit switches.
+On our paper testbed the high-level commands need no host arguments. On another deployment, the **same high-level setup, rebuild, run and monitor wrappers accept explicit `--server-host`, `--client-host`, `--bastion`, and `--ssh-key` switches**. Setup additionally accepts `--server-to-client-host` when SERVER reaches CLIENT under a different name/address. Host names should be changed with switches, not by editing scripts.
 
 `idex` does not mean SERVER in the code and `tinyman` does not mean CLIENT in the code. They are only our paper-testbed defaults.
 
@@ -117,7 +117,7 @@ CONTROL -> CLIENT         not required by the final launcher
 CLIENT  -> SERVER         not required
 ```
 
-Only the CONTROL HOST needs private-GitHub credentials. Exact source commits are transferred to the experiment nodes with Git bundles.
+Only the CONTROL HOST needs private-GitHub credentials. Exact source commits are transferred to the experiment nodes with Git bundles. The CONTROL private SSH key is never copied to SERVER or CLIENT; setup installs only its public half and creates a separate SERVER key for SERVER -> CLIENT.
 
 ---
 
@@ -187,7 +187,7 @@ P7 is built with `QUIC_LINUX_DPDK_ENABLED=OFF` and `QUIC_LINUX_XDP_ENABLED=OFF`,
 
 # Reproduction quick start
 
-For POS allocation/reimage/reset, use `tum_testbed_setup/README.md`; every command there states where it must run.
+For POS allocation/reimage/reset, use `tum_testbed_setup/README.md`; every long-running operation there states where it must run and is followed by its live monitor/readiness loop.
 
 ## 1. Debian Trixie exists; deploy current `main`, prepare hosts and build everything
 
@@ -245,7 +245,35 @@ The final launcher deliberately rebuilds/verifies P5 and P7 before measured traf
 bash results_analysis/download_paper_results.sh
 ```
 
-This operates only after a run is marked `DONE`; there is no live experiment log to follow during this short download. Use `live_monitor_run.sh` while the experiment itself is still running.
+This operates only after a run is marked `DONE`; there is no live experiment log to follow during this short post-run download. Use `live_monitor_run.sh` while the experiment itself is still running.
+
+## 5. Local final repository/reproduction audit
+
+**RUN ON: CONTROL HOST:**
+
+```bash
+bash results_analysis/final_repository_check.sh
+```
+
+This is a local static audit; it launches no remote workload, so there is no live experiment log. It checks current shell syntax, JSON/configuration consistency, TUM layout, host-role switches, README/monitor pairing, imported artifacts, and the exact P5/P7 paper anchors.
+
+---
+
+## Another deployment: management switches
+
+The high-level wrappers support explicit management routing. For setup, the relevant interface is:
+
+```text
+--server-host HOST
+--client-host HOST
+--server-to-client-host HOST
+--bastion USER@HOST|none
+--ssh-key PATH
+```
+
+For the final run, `--client-host` means the CLIENT endpoint **as seen from SERVER**. Setup separates the CONTROL view and SERVER view of CLIENT so a different lab topology does not require aliases matching our paper testbed.
+
+Changing these management names does not change the recorded paper hardware assumptions: root remote operation, `/root/mohsen`, E810 PCI `0000:18:00.0`, the paper data-plane IP/MAC pair, CPU19/21-24 placement, and the hugepage configuration remain part of the paper testbed and must be intentionally revalidated on different hardware.
 
 ---
 
