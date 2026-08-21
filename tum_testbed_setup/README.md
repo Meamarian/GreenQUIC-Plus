@@ -6,7 +6,7 @@
 
 ## A1. POS allocation/image/reset
 
-**RUN ON: Coinbase/POS shell.** Do not run these node-management commands on CONTROL, SERVER, or CLIENT.
+**RUN ON: Coinbase/POS shell.**
 
 Set the physical POS node names. For our paper testbed:
 
