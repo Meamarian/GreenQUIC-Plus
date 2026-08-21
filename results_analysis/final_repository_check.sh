@@ -11,7 +11,8 @@ P7="greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline"
 fail(){ echo "FINAL REPOSITORY CHECK: FAIL: $*" >&2; exit 1; }
 
 # 1) Machine-readable paper configuration must agree with the supported setup,
-# launcher, role defaults, TOP3 policy, P7 network profile, and compatibility wrappers.
+# launcher, role defaults, TOP3 policy, P7 network profile, durable recorder
+# validation, automatic result download, and compatibility wrappers.
 python3 results_analysis/verify_paper_configuration.py
 
 # 2) Syntax-check every current top-level shell entrypoint/helper in the supported
@@ -26,9 +27,15 @@ done
 python3 -m py_compile \
   results_analysis/verify_paper_configuration.py \
   results_analysis/import_attached_artifacts.py \
+  "$P5/validate_p5_recorder_evidence.py" \
   "$P5/apply_p5_performance2.py" \
   "$P5/apply_p5_performance2_v2.py" \
   "$P7/build_p7_report.py"
+
+# Regression self-test for the exact bug seen on 2026-08-21: a fully complete P5
+# matrix must validate from durable per-run log evidence even when zero
+# *_affinity.txt sidecars survive bundling.
+python3 "$P5/validate_p5_recorder_evidence.py" --self-test >/dev/null || fail "P5 recorder evidence self-test failed"
 
 for f in \
   results_analysis/configuration/dependencies.json \
@@ -102,6 +109,9 @@ for token in '--server-host' '--client-host' '--bastion' '--ssh-key'; do
   grep -Fq -- "$token" results_analysis/run_paper_evaluation.sh || fail "paper-run wrapper missing $token"
   grep -Fq -- "$token" results_analysis/rebuild_paper_binaries.sh || fail "rebuild wrapper missing $token"
 done
+for token in '--download-dest' '--no-auto-download'; do
+  grep -Fq -- "$token" results_analysis/run_paper_evaluation.sh || fail "paper-run wrapper missing $token"
+done
 for token in '--server-host' '--client-host' '--bastion' '--ssh-key'; do
   grep -Fq -- "$token" results_analysis/live_monitor_setup.sh || fail "setup monitor missing $token"
 done
@@ -138,7 +148,8 @@ if grep -nF 'performance2/p5-multicore' \
 fi
 
 # 10) Current READMEs must label command location, include dependency guidance,
-# use the paper-default CONTROL checkout, and pair long-running work with monitors.
+# use the paper-default CONTROL checkout, pair long-running work with monitors,
+# and document automatic result transfer.
 for f in README.md results_analysis/README.md tum_testbed_setup/README.md "$P5/README.md" "$P7/README.md"; do
   grep -Fq 'RUN ON:' "$f" || fail "$f does not label command location"
 done
@@ -151,6 +162,10 @@ for f in README.md results_analysis/README.md tum_testbed_setup/README.md; do
   grep -Fq 'bash results_analysis/run_paper_evaluation.sh' "$f" || fail "$f missing final-run command"
   grep -Fq 'bash results_analysis/live_monitor_run.sh' "$f" || fail "$f missing final-run monitor"
 done
+for f in README.md results_analysis/README.md; do
+  grep -Fiq 'automatic scp' "$f" || fail "$f missing automatic SCP behavior"
+  grep -Fiq 'before scp' "$f" || fail "$f missing final-path-before-SCP behavior"
+done
 for f in "$P5/README.md" "$P7/README.md"; do
   grep -Fq 'bash results_analysis/run_paper_evaluation.sh' "$f" || fail "$f missing high-level final-run command"
   grep -Fq 'bash results_analysis/live_monitor_run.sh' "$f" || fail "$f missing final-run monitor"
@@ -158,7 +173,7 @@ for f in "$P5/README.md" "$P7/README.md"; do
   grep -Fq 'bash results_analysis/live_monitor_setup.sh' "$f" || fail "$f missing rebuild monitor"
 done
 
-# 11) Exact paper build/run anchors.
+# 11) Exact paper build/run anchors and post-run robustness.
 MARKER='GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0'
 grep -Fq "$MARKER" "$P5/mac_run_p5_p7_fair_repro_6x5.sh" || fail "final P5 marker missing from authoritative launcher"
 for token in '--env PRESSURE_UP=450' '--env RX_QUEUE_HIGH=48' '--env ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16' '--env FREQ_PERIOD_US=10000'; do
@@ -166,6 +181,13 @@ for token in '--env PRESSURE_UP=450' '--env RX_QUEUE_HIGH=48' '--env ACTIVE_TRAN
 done
 for token in '--nic-offloads paper' '--udp-rmem 6815744' '--udp-wmem 6815744' '--combined-channels 1' '--dataplane-cpu 19' '--quic-cpus 21,22,23,24'; do
   grep -Fq -- "$token" "$P5/mac_run_p5_p7_fair_repro_6x5.sh" || fail "paper P7 launcher missing $token"
+done
+for token in 'validate_p5_recorder_evidence.py' 'P5_recorder_validation=durable_per_run_log_evidence' 'RESULT_DIRS.env' 'RESULT_ZIPS.sha256' 'download_latest_reproduction.sh'; do
+  grep -Fq -- "$token" "$P5/mac_run_p5_p7_fair_repro_6x5.sh" || fail "final launcher missing post-run robustness token: $token"
+done
+! grep -Fq 'p5_affinity_files.txt' "$P5/mac_run_p5_p7_fair_repro_6x5.sh" || fail "obsolete P5 affinity sidecar requirement returned"
+for token in 'FINAL RESULT PATHS — BEFORE SCP' 'STARTING AUTOMATIC SCP...' 'RESULT_ZIPS.sha256' '--expect-runs' '--expect-downloads'; do
+  grep -Fq -- "$token" results_analysis/download_latest_reproduction.sh || fail "result downloader missing: $token"
 done
 
 echo "FINAL REPOSITORY CHECK: PASS"
@@ -177,4 +199,6 @@ echo "CONTROL main synchronization safety: PASS"
 echo "Dependencies: MsQuic 2.4.8 source, DPDK 21.11.9, Debian Trixie policy recorded"
 echo "Paper defaults: Mac CONTROL checkout under \$HOME/Downloads, idex/tinyman via mohsen@coinbase"
 echo "Artifacts: 2 XLSX + chart_v2.py + 41 SVG"
+echo "P5 recorder validation: durable per-run logs; zero affinity sidecars is allowed"
+echo "Result handling: paths printed before automatic SCP; ZIP SHA-256 verified"
 echo "P5/P7 configuration, launcher and guide consistency: PASS"
