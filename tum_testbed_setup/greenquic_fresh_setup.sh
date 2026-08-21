@@ -1,92 +1,178 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# GreenQUIC+ final-paper TUM/LRZ fresh-node setup.
-# Run this script on the Mac after IDEX and Tinyman have been reimaged with
-# Debian Trixie and are reachable through mohsen@coinbase.
-#
-# This is the only supported TUM setup entrypoint on GreenQUIC-Plus/main.
-# It prepares the exact origin/main SHA, both hosts, DPDK, the final P5
-# Performance2 V2 build, and the isolated P7 Linux baseline.
+# GreenQUIC+ final-paper TUM/LRZ provisioning/build setup.
+# RUN ON: control host (Mac in our paper setup; another Unix control host is OK).
+# The host names idex/tinyman are paper-testbed defaults only. The semantic roles
+# are SERVER (QUIC server + experiment controller) and CLIENT (QUIC client).
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$HERE/.." rev-parse --show-toplevel 2>/dev/null || true)"
-BASTION="mohsen@coinbase"
 REPO_SSH="git@github.com:Meamarian/GreenQUIC-Plus.git"
-ROOT="/root/mohsen"
-PCI="0000:18:00.0"
-HUGEPAGES_2M="16384"
-MAC_KEY="$HOME/.ssh/id_ed25519"
+ROOT=/root/mohsen
+PCI=0000:18:00.0
+HUGEPAGES_2M=16384
 P5_REL="greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads"
 P7_REL="greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline"
 PAPER_MARKER='GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0'
-SSH_OPTS=(-o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new)
 
-fail() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
-remote() { local host="$1"; shift; ssh "${SSH_OPTS[@]}" -J "$BASTION" root@"$host" "$@"; }
-section() { printf '\n======================================================================\n%s\n======================================================================\n' "$*"; }
+# Paper-testbed defaults. Change them with switches; do not edit the script.
+SERVER_HOST="${GQ_SERVER_HOST:-idex}"
+CLIENT_HOST="${GQ_CLIENT_HOST:-tinyman}"
+SERVER_TO_CLIENT_HOST="${GQ_SERVER_TO_CLIENT_HOST:-}"
+BASTION="${GQ_BASTION:-mohsen@coinbase}"
+CONTROL_KEY="${GQ_SSH_KEY:-$HOME/.ssh/id_ed25519}"
 
-[[ -n "$REPO_ROOT" && -d "$REPO_ROOT/.git" ]] || fail "run this script from a GreenQUIC-Plus Git clone"
+usage() {
+    cat <<'USAGE'
+GreenQUIC+ fresh-node / fresh-deployment setup
+
+RUN ON: control host (Mac in our paper setup)
+
+Required roles:
+  SERVER = QUIC server and experiment controller
+  CLIENT = QUIC client
+
+Host/SSH switches:
+  --server-host HOST              server endpoint as seen from control/bastion
+                                  (paper default: idex)
+  --client-host HOST              client endpoint as seen from control/bastion
+                                  (paper default: tinyman)
+  --server-to-client-host HOST    client endpoint/name as seen from SERVER;
+                                  defaults to --client-host
+  --bastion USER@HOST             ProxyJump/bootstrap bastion
+                                  (paper default: mohsen@coinbase)
+  --bastion none                  direct control-host -> nodes SSH
+  --ssh-key PATH                  control-host private key installed/used on nodes
+                                  (default: ~/.ssh/id_ed25519)
+  -h, --help
+
+SSH topology for setup:
+  control host -> bastion: required only when --bastion is used
+  bastion -> SERVER and CLIENT: required during fresh-node bootstrap
+  control host -> SERVER and CLIENT: required after key bootstrap (direct or via bastion)
+  SERVER -> CLIENT: required; this script installs/tests a dedicated server key
+  CLIENT -> SERVER: not required
+
+GitHub access:
+  Only the control host needs access to the private GreenQUIC-Plus repository.
+  SERVER and CLIENT receive the exact origin/main SHA by Git bundle and do not
+  need GitHub credentials.
+
+The setup requires root SSH on both experiment nodes because it installs packages,
+configures hugepages/MSR/PCI drivers, and writes under /root.
+USAGE
+}
+
+fail(){ printf '\nERROR: %s\n' "$*" >&2; exit 1; }
+section(){ printf '\n======================================================================\n%s\n======================================================================\n' "$*"; }
+need_arg(){ [[ $# -ge 2 && -n "$2" ]] || fail "$1 needs a value"; }
+while (($#)); do
+    case "$1" in
+        --server-host) need_arg "$@"; SERVER_HOST="$2"; shift 2 ;;
+        --client-host) need_arg "$@"; CLIENT_HOST="$2"; shift 2 ;;
+        --server-to-client-host) need_arg "$@"; SERVER_TO_CLIENT_HOST="$2"; shift 2 ;;
+        --bastion) need_arg "$@"; BASTION="$2"; shift 2 ;;
+        --ssh-key) need_arg "$@"; CONTROL_KEY="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) fail "unknown argument: $1 (use --help)" ;;
+    esac
+done
+SERVER_TO_CLIENT_HOST="${SERVER_TO_CLIENT_HOST:-$CLIENT_HOST}"
+[[ "$SERVER_HOST" != "$CLIENT_HOST" ]] || fail "server and client hosts must differ"
+
+[[ -n "$REPO_ROOT" && -d "$REPO_ROOT/.git" ]] || fail "run this from a GreenQUIC-Plus Git clone on the control host"
 cd "$REPO_ROOT"
 ORIGIN_URL="$(git remote get-url origin 2>/dev/null || true)"
 case "$ORIGIN_URL" in
     git@github.com:Meamarian/GreenQUIC-Plus.git|https://github.com/Meamarian/GreenQUIC-Plus.git) ;;
     *) fail "origin must be Meamarian/GreenQUIC-Plus, got: ${ORIGIN_URL:-none}" ;;
 esac
-for c in git ssh scp base64; do command -v "$c" >/dev/null || fail "$c is required on the Mac"; done
+for c in git ssh scp base64 ssh-keygen; do command -v "$c" >/dev/null || fail "$c is required on the control host"; done
 
-section "STEP 1/10 — RESOLVE EXACT GREENQUIC+ MAIN SHA"
-git fetch origin main
-EXPECTED_SHA="$(git rev-parse origin/main)"
+mkdir -p "$(dirname "$CONTROL_KEY")"
+if [[ ! -f "$CONTROL_KEY" ]]; then
+    echo "Creating control-host node key: $CONTROL_KEY"
+    ssh-keygen -q -t ed25519 -f "$CONTROL_KEY" -N ""
+fi
+[[ -f "$CONTROL_KEY.pub" ]] || fail "missing public key: $CONTROL_KEY.pub"
+chmod 600 "$CONTROL_KEY" 2>/dev/null || true
+
+SSH_OPTS=(-o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -i "$CONTROL_KEY")
+JUMP_OPTS=()
+if [[ -n "$BASTION" && "$BASTION" != none ]]; then JUMP_OPTS=(-J "$BASTION"); fi
+remote(){ local host="$1"; shift; ssh "${SSH_OPTS[@]}" "${JUMP_OPTS[@]}" root@"$host" "$@"; }
+copy_to(){ local src="$1" host="$2" dst="$3"; scp "${SSH_OPTS[@]}" "${JUMP_OPTS[@]}" "$src" root@"$host":"$dst"; }
+
+section "STEP 1/10 — RESOLVE EXACT GREENQUIC+ main SHA ON CONTROL HOST"
+# Explicit refspec works even when this clone was originally --single-branch.
+git fetch origin '+refs/heads/main:refs/remotes/origin/main'
+EXPECTED_SHA="$(git rev-parse refs/remotes/origin/main)"
 [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "cannot resolve origin/main"
-printf 'Repository: Meamarian/GreenQUIC-Plus (private)\nBranch: main\nSHA: %s\n' "$EXPECTED_SHA"
+printf 'RUN ON: control host\nRepository: Meamarian/GreenQUIC-Plus (private)\nBranch: main\nSHA: %s\nSERVER role: %s\nCLIENT role: %s\nSERVER->CLIENT name: %s\nBastion: %s\n' \
+    "$EXPECTED_SHA" "$SERVER_HOST" "$CLIENT_HOST" "$SERVER_TO_CLIENT_HOST" "${BASTION:-none}"
 
-section "STEP 2/10 — RESTORE MAC SSH ACCESS TO IDEX + TINYMAN"
-if [[ ! -f "$MAC_KEY" ]]; then ssh-keygen -q -t ed25519 -f "$MAC_KEY" -N ""; fi
-[[ -f "$MAC_KEY.pub" ]] || fail "missing $MAC_KEY.pub"
-ssh-add "$MAC_KEY" >/dev/null 2>&1 || { eval "$(ssh-agent -s)" >/dev/null; ssh-add "$MAC_KEY"; }
-for h in idex tinyman 172.16.136.1 172.16.139.1; do ssh-keygen -R "$h" >/dev/null 2>&1 || true; done
-PUB64="$(base64 < "$MAC_KEY.pub" | tr -d '\n')"
-ssh "${SSH_OPTS[@]}" "$BASTION" bash -s -- "$PUB64" <<'COINBASE'
+section "STEP 2/10 — ESTABLISH CONTROL-HOST SSH TO SERVER + CLIENT"
+PUB64="$(base64 < "$CONTROL_KEY.pub" | tr -d '\n')"
+ssh-keygen -R "$SERVER_HOST" >/dev/null 2>&1 || true
+ssh-keygen -R "$CLIENT_HOST" >/dev/null 2>&1 || true
+
+if [[ -n "$BASTION" && "$BASTION" != none ]]; then
+    echo "Bootstrap path: control host -> $BASTION -> SERVER/CLIENT"
+    # The control host must already be able to authenticate to the bastion.
+    ssh -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new "$BASTION" bash -s -- \
+        "$PUB64" "$SERVER_HOST" "$CLIENT_HOST" <<'BOOTSTRAP'
 set -Eeuo pipefail
-PUB64="$1"
-for h in idex tinyman 172.16.136.1 172.16.139.1; do ssh-keygen -R "$h" >/dev/null 2>&1 || true; done
-for host in idex tinyman; do
-    printf 'Installing Mac public key on %s...\n' "$host"
+PUB64="$1"; SERVER_HOST="$2"; CLIENT_HOST="$3"
+for host in "$SERVER_HOST" "$CLIENT_HOST"; do
+    ssh-keygen -R "$host" >/dev/null 2>&1 || true
+    printf 'Installing control-host public key on %s...\n' "$host"
     printf '%s' "$PUB64" | base64 -d | ssh -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new root@"$host" '
         set -Eeuo pipefail
         mkdir -p /root/.ssh; chmod 700 /root/.ssh
-        KEY="$(cat)"; touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys
+        KEY="$(cat)"
+        touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys
         grep -qxF "$KEY" /root/.ssh/authorized_keys || printf "%s\n" "$KEY" >> /root/.ssh/authorized_keys
     '
 done
-COINBASE
-for host in idex tinyman; do
+BOOTSTRAP
+else
+    echo "Direct mode: control host must already be authorized as root on both nodes."
+fi
+
+for host in "$SERVER_HOST" "$CLIENT_HOST"; do
+    remote "$host" 'hostname; . /etc/os-release; printf "OS=%s %s\n" "$ID" "$VERSION_CODENAME"'
     OS_ID="$(remote "$host" '. /etc/os-release; printf "%s" "$ID"')"
     OS_CODENAME="$(remote "$host" '. /etc/os-release; printf "%s" "$VERSION_CODENAME"')"
-    [[ "$OS_ID" == debian && "$OS_CODENAME" == trixie ]] || fail "$host must run Debian Trixie; detected ID=$OS_ID VERSION_CODENAME=$OS_CODENAME"
+    [[ "$OS_ID" == debian && "$OS_CODENAME" == trixie ]] || fail "$host must run Debian Trixie; found $OS_ID/$OS_CODENAME"
 done
 
-section "STEP 3/10 — RESTORE IDEX -> TINYMAN SSH"
-IDEX_PUB="$(remote idex '
+section "STEP 3/10 — ESTABLISH SERVER-ROLE -> CLIENT-ROLE SSH"
+SERVER_PUB="$(remote "$SERVER_HOST" '
     set -Eeuo pipefail
     mkdir -p /root/.ssh; chmod 700 /root/.ssh
     if [[ ! -f /root/.ssh/id_ed25519 ]]; then ssh-keygen -q -t ed25519 -f /root/.ssh/id_ed25519 -N ""; fi
-    chmod 600 /root/.ssh/id_ed25519; cat /root/.ssh/id_ed25519.pub
+    chmod 600 /root/.ssh/id_ed25519
+    cat /root/.ssh/id_ed25519.pub
 ' | awk '/^ssh-ed25519 / {print; exit}')"
-[[ "$IDEX_PUB" == ssh-ed25519\ * ]] || fail "could not obtain IDEX SSH public key"
-IDEX_PUB64="$(printf '%s\n' "$IDEX_PUB" | base64 | tr -d '\n')"
-remote tinyman bash -s -- "$IDEX_PUB64" <<'TINYKEY'
+[[ "$SERVER_PUB" == ssh-ed25519\ * ]] || fail "could not obtain SERVER public key"
+SERVER_PUB64="$(printf '%s\n' "$SERVER_PUB" | base64 | tr -d '\n')"
+remote "$CLIENT_HOST" bash -s -- "$SERVER_PUB64" <<'CLIENTKEY'
 set -Eeuo pipefail
 KEY="$(printf '%s' "$1" | base64 -d)"
 mkdir -p /root/.ssh; chmod 700 /root/.ssh
 touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys
 grep -qxF "$KEY" /root/.ssh/authorized_keys || printf '%s\n' "$KEY" >> /root/.ssh/authorized_keys
-TINYKEY
-remote idex 'ssh-keygen -R tinyman >/dev/null 2>&1 || true; ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new root@tinyman hostname'
+CLIENTKEY
+remote "$SERVER_HOST" bash -s -- "$SERVER_TO_CLIENT_HOST" <<'SERVERSSH'
+set -Eeuo pipefail
+CLIENT="$1"
+ssh-keygen -R "$CLIENT" >/dev/null 2>&1 || true
+ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new root@"$CLIENT" 'echo SERVER_TO_CLIENT_SSH_PASS; hostname'
+SERVERSSH
 
-section "STEP 4/10 — INSTALL EXACT origin/main ON BOTH NODES WITHOUT REMOTE GITHUB CREDENTIALS"
-for host in idex tinyman; do
+section "STEP 4/10 — INSTALL EXACT main SHA ON BOTH NODES WITHOUT GITHUB CREDENTIALS"
+for host in "$SERVER_HOST" "$CLIENT_HOST"; do
     remote "$host" '
         set -Eeuo pipefail
         if ! command -v git >/dev/null 2>&1; then
@@ -98,25 +184,28 @@ for host in idex tinyman; do
 done
 STAMP="$(date +%Y%m%d_%H%M%S)_$$"
 LOCAL_BUNDLE="${TMPDIR:-/tmp}/GreenQUIC-Plus-main-${STAMP}.bundle"
-REMOTE_BUNDLE="/tmp/GreenQUIC-Plus-main.bundle"
+REMOTE_BUNDLE=/tmp/GreenQUIC-Plus-main.bundle
 BUNDLE_REF="refs/heads/__gqplus_setup_${STAMP}"
-cleanup() { git update-ref -d "$BUNDLE_REF" >/dev/null 2>&1 || true; rm -f "$LOCAL_BUNDLE"; }
+cleanup(){ git update-ref -d "$BUNDLE_REF" >/dev/null 2>&1 || true; rm -f "$LOCAL_BUNDLE"; }
 trap cleanup EXIT HUP INT TERM
 git update-ref "$BUNDLE_REF" "$EXPECTED_SHA"
 git bundle create "$LOCAL_BUNDLE" "$BUNDLE_REF"
 git update-ref -d "$BUNDLE_REF"
 git bundle verify "$LOCAL_BUNDLE" >/dev/null
-scp "${SSH_OPTS[@]}" -o ProxyJump="$BASTION" "$LOCAL_BUNDLE" root@idex:"$REMOTE_BUNDLE"
-scp "${SSH_OPTS[@]}" -o ProxyJump="$BASTION" "$LOCAL_BUNDLE" root@tinyman:"$REMOTE_BUNDLE"
-for host in idex tinyman; do
+copy_to "$LOCAL_BUNDLE" "$SERVER_HOST" "$REMOTE_BUNDLE"
+copy_to "$LOCAL_BUNDLE" "$CLIENT_HOST" "$REMOTE_BUNDLE"
+for host in "$SERVER_HOST" "$CLIENT_HOST"; do
     remote "$host" bash -s -- "$EXPECTED_SHA" "$REMOTE_BUNDLE" "$BUNDLE_REF" "$REPO_SSH" <<'CHECKOUT'
 set -Eeuo pipefail
 SHA="$1"; BUNDLE="$2"; REF="$3"; REPO="$4"; ROOT=/root/mohsen
 if [[ -e "$ROOT" && ! -d "$ROOT/.git" ]]; then
-    BACKUP="/root/mohsen.before-greenquic-plus-$(date +%Y%m%d_%H%M%S)"; mv "$ROOT" "$BACKUP"; echo "Preserved non-Git $ROOT as $BACKUP"
+    BACKUP="/root/mohsen.before-greenquic-plus-$(date +%Y%m%d_%H%M%S)"
+    mv "$ROOT" "$BACKUP"
+    echo "Preserved non-Git $ROOT as $BACKUP"
 fi
 if [[ ! -d "$ROOT/.git" ]]; then mkdir -p "$ROOT"; git -C "$ROOT" init; fi
-cd "$ROOT"; git reset --hard >/dev/null 2>&1 || true
+cd "$ROOT"
+git reset --hard >/dev/null 2>&1 || true
 if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin "$REPO"; else git remote add origin "$REPO"; fi
 git fetch "$BUNDLE" "$REF"
 git checkout -B main FETCH_HEAD
@@ -126,16 +215,17 @@ printf 'CHECKOUT READY host=%s branch=main head=%s\n' "$(hostname)" "$(git rev-p
 CHECKOUT
 done
 
-section "STEP 5/10 — DEPENDENCIES, ICE FIRMWARE, MSR/P-STATE, HUGEPAGES, DPDK BUILD"
-prepare_host() {
-    local host="$1"; echo "----- PREPARING $host -----"
+section "STEP 5/10 — DEPENDENCIES, ICE FIRMWARE, MSR/P-STATE, HUGEPAGES, DPDK"
+prepare_host(){
+    local host="$1"
+    echo "----- PREPARING ROLE HOST $host -----"
     remote "$host" bash -s -- "$PCI" "$HUGEPAGES_2M" <<'HOSTPREP'
 set -Eeuo pipefail
 PCI="$1"; HUGEPAGES_2M="$2"; ROOT=/root/mohsen
 COMMON="$ROOT/greenquic_test_suite_v22/common"
 DPDK_SRC="$ROOT/msquic/deps/dpdk"; DPDK_BUILD="$DPDK_SRC/build-greenquic"; DPDK_INSTALL="$ROOT/msquic/deps/dpdk-install"
 . /etc/os-release
-[[ "$ID" == debian && "$VERSION_CODENAME" == trixie ]] || { echo "ERROR: expected Debian Trixie" >&2; exit 2; }
+[[ "$ID" == debian && "$VERSION_CODENAME" == trixie ]]
 export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none
 apt-get update
 apt-get -y --no-install-recommends --no-remove --no-upgrade install \
@@ -155,16 +245,17 @@ bash "$COMMON/bin/check_msr_pstate.sh" 19
 test -e "/sys/bus/pci/devices/$PCI"
 NUMA="$(cat "/sys/bus/pci/devices/$PCI/numa_node")"; [[ "$NUMA" != -1 ]] || NUMA=0
 HPDIR="/sys/devices/system/node/node${NUMA}/hugepages/hugepages-2048kB"
-[[ -d "$HPDIR" ]] || { echo "ERROR: 2 MiB hugepages unavailable on NUMA node $NUMA" >&2; exit 3; }
+[[ -d "$HPDIR" ]]
 for node in /sys/devices/system/node/node*; do
     f="$node/hugepages/hugepages-1048576kB/nr_hugepages"; [[ -e "$f" ]] && echo 0 > "$f"
     f="$node/hugepages/hugepages-2048kB/nr_hugepages"; [[ -e "$f" ]] && echo 0 > "$f"
 done
 echo "$HUGEPAGES_2M" > "$HPDIR/nr_hugepages"
-[[ "$(cat "$HPDIR/nr_hugepages")" == "$HUGEPAGES_2M" ]] || { echo "ERROR: hugepage allocation failed" >&2; exit 3; }
+[[ "$(cat "$HPDIR/nr_hugepages")" == "$HUGEPAGES_2M" ]]
 mkdir -p /mnt/huge
 if mountpoint -q /mnt/huge; then
-    FSTYPE="$(findmnt -n -o FSTYPE --target /mnt/huge 2>/dev/null || true)"; OPTS="$(findmnt -n -o OPTIONS --target /mnt/huge 2>/dev/null || true)"
+    FSTYPE="$(findmnt -n -o FSTYPE --target /mnt/huge 2>/dev/null || true)"
+    OPTS="$(findmnt -n -o OPTIONS --target /mnt/huge 2>/dev/null || true)"
     if [[ "$FSTYPE" != hugetlbfs || "$OPTS" != *pagesize=2M* ]]; then umount /mnt/huge; mount -t hugetlbfs -o pagesize=2M none /mnt/huge; fi
 else
     mount -t hugetlbfs -o pagesize=2M none /mnt/huge
@@ -177,18 +268,19 @@ meson setup "$DPDK_BUILD" "$DPDK_SRC" --prefix "$DPDK_INSTALL" --libdir lib -Dbu
 meson compile -C "$DPDK_BUILD" -j "$(nproc)"
 meson install -C "$DPDK_BUILD"
 DPDK_PC="$(find "$DPDK_INSTALL" -type f -name libdpdk.pc -print -quit)"
-[[ -n "$DPDK_PC" ]] || { echo "ERROR: DPDK install did not produce libdpdk.pc" >&2; exit 4; }
+[[ -n "$DPDK_PC" ]]
 PKG_CONFIG_PATH="$(dirname "$DPDK_PC")" pkg-config --exists libdpdk
 python3 "$COMMON/bin/prepare_assets.py" --common "$COMMON" --create-8g
 printf 'HOST PREP PASS host=%s numa=%s hugepages=%s dpdk_pc=%s\n' "$(hostname)" "$NUMA" "$(cat "$HPDIR/nr_hugepages")" "$DPDK_PC"
 HOSTPREP
 }
-prepare_host idex
-prepare_host tinyman
+prepare_host "$SERVER_HOST"
+prepare_host "$CLIENT_HOST"
 
-section "STEP 6/10 — BUILD + VERIFY FINAL P5 PERFORMANCE2 V2 AND ISOLATED P7"
-build_paper_binaries() {
-    local host="$1"; echo "----- BUILDING PAPER BINARIES ON $host -----"
+section "STEP 6/10 — BUILD + VERIFY P5 PERFORMANCE2 V2 AND ISOLATED P7"
+build_paper_binaries(){
+    local host="$1"
+    echo "----- BUILDING PAPER BINARIES ON $host -----"
     remote "$host" bash -s -- "$EXPECTED_SHA" "$P5_REL" "$P7_REL" "$PAPER_MARKER" <<'BUILD'
 set -Eeuo pipefail
 EXPECTED="$1"; P5_REL="$2"; P7_REL="$3"; PAPER_MARKER="$4"; ROOT=/root/mohsen
@@ -212,11 +304,11 @@ printf 'PAPER BUILD PASS host=%s head=%s\nP5 marker: %s\n' "$(hostname)" "$(git 
 sha256sum "$P5C" "$P5S" "$P7C" "$P7S"
 BUILD
 }
-build_paper_binaries idex
-build_paper_binaries tinyman
+build_paper_binaries "$SERVER_HOST"
+build_paper_binaries "$CLIENT_HOST"
 
-section "STEP 7/10 — BRING BOTH E810 PEERS UP ON ICE, THEN VERIFY CARRIER"
-prepare_link_peer() {
+section "STEP 7/10 — BRING BOTH E810 PEERS UP ON ICE AND VERIFY CARRIER"
+prepare_link_peer(){
     local host="$1"
     remote "$host" bash -s -- "$PCI" <<'LINKPREP'
 set -Eeuo pipefail
@@ -227,17 +319,14 @@ if [[ -n "$CURRENT" && "$CURRENT" != ice ]]; then python3 "$DEVBIND" --unbind "$
 CURRENT="$(basename "$(readlink -f "/sys/bus/pci/devices/$PCI/driver" 2>/dev/null || true)")"
 if [[ "$CURRENT" != ice ]]; then python3 "$DEVBIND" --bind=ice "$PCI"; fi
 IFACE="$(find "/sys/bus/pci/devices/$PCI/net" -mindepth 1 -maxdepth 1 -printf '%f\n' | head -n1)"
-[[ -n "$IFACE" ]] || { echo "ERROR: no Linux netdev for $PCI" >&2; exit 1; }
+[[ -n "$IFACE" ]]
 DEFAULT_IF="$(ip route show default | awk 'NR==1 {print $5}')"
-[[ "$IFACE" != "$DEFAULT_IF" ]] || { echo "ERROR: test NIC is the default-route interface" >&2; exit 1; }
+[[ "$IFACE" != "$DEFAULT_IF" ]] || { echo "ERROR: test NIC is default-route interface" >&2; exit 1; }
 ip link set dev "$IFACE" up
 printf 'LINK PEER PREPARED host=%s iface=%s driver=ice\n' "$(hostname)" "$IFACE"
 LINKPREP
 }
-prepare_link_peer idex
-prepare_link_peer tinyman
-sleep 2
-verify_link() {
+verify_link(){
     local host="$1"
     remote "$host" bash -s -- "$PCI" <<'LINKVERIFY'
 set -Eeuo pipefail
@@ -254,11 +343,14 @@ printf 'LINK host=%s iface=%s carrier=%s operstate=%s ethtool=%s\n' "$(hostname)
 [[ "$CARRIER" == 1 && "$OPERSTATE" == up && "$ETHTOOL_LINK" == yes ]]
 LINKVERIFY
 }
-verify_link idex
-verify_link tinyman
+prepare_link_peer "$SERVER_HOST"
+prepare_link_peer "$CLIENT_HOST"
+sleep 2
+verify_link "$SERVER_HOST"
+verify_link "$CLIENT_HOST"
 
 section "STEP 8/10 — BIND BOTH TEST PORTS TO APPROVED DPDK DRIVER"
-bind_dpdk() {
+bind_dpdk(){
     local host="$1"
     remote "$host" bash -s -- "$PCI" <<'BIND'
 set -Eeuo pipefail
@@ -273,32 +365,36 @@ case "$ACTUAL" in igb_uio|vfio-pci) ;; *) echo "ERROR: unacceptable DPDK driver 
 printf 'DPDK BIND PASS host=%s pci=%s driver=%s\n' "$(hostname)" "$PCI" "$ACTUAL"
 BIND
 }
-bind_dpdk idex
-bind_dpdk tinyman
-remote idex 'ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman true'
-
-section "STEP 9/10 — INSTALL SIMPLE P5/P7 LAUNCHERS AND FINAL VERIFY"
-remote idex bash -s -- "$P5_REL" "$P7_REL" <<'LAUNCHERS'
+bind_dpdk "$SERVER_HOST"
+bind_dpdk "$CLIENT_HOST"
+remote "$SERVER_HOST" bash -s -- "$SERVER_TO_CLIENT_HOST" <<'SSHCHECK'
 set -Eeuo pipefail
-P5_REL="$1"; P7_REL="$2"
+ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new root@"$1" true
+SSHCHECK
+
+section "STEP 9/10 — INSTALL SERVER-ROLE CONVENIENCE LAUNCHERS + FINAL VERIFY"
+remote "$SERVER_HOST" bash -s -- "$P5_REL" "$P7_REL" "$SERVER_TO_CLIENT_HOST" <<'LAUNCHERS'
+set -Eeuo pipefail
+P5_REL="$1"; P7_REL="$2"; CLIENT_HOST="$3"
 cat > /root/run_p5.sh <<EOF_P5
 #!/usr/bin/env bash
 set -Eeuo pipefail
 P5=/root/mohsen/$P5_REL
 cd "\$P5"
-exec ./run_matrix_with_sheet.sh --client-host tinyman --client-dir "\$P5" --client-bin /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop "\$@"
+exec ./run_matrix_with_sheet.sh --client-host "$CLIENT_HOST" --client-dir "\$P5" --client-bin /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop "\$@"
 EOF_P5
 cat > /root/run_p7.sh <<EOF_P7
 #!/usr/bin/env bash
 set -Eeuo pipefail
 P7=/root/mohsen/$P7_REL
 cd "\$P7"
-exec ./run_matrix_with_report.sh --client-host tinyman --client-dir "\$P7" "\$@"
+exec ./run_matrix_with_report.sh --client-host "$CLIENT_HOST" --client-dir "\$P7" "\$@"
 EOF_P7
 chmod 700 /root/run_p5.sh /root/run_p7.sh
 /root/run_p5.sh --help >/dev/null; /root/run_p7.sh --help >/dev/null
 LAUNCHERS
-for host in idex tinyman; do
+
+for host in "$SERVER_HOST" "$CLIENT_HOST"; do
     remote "$host" bash -s -- "$EXPECTED_SHA" "$PCI" "$HUGEPAGES_2M" "$PAPER_MARKER" <<'FINALVERIFY'
 set -Eeuo pipefail
 EXPECTED="$1"; PCI="$2"; HUGEPAGES_2M="$3"; PAPER_MARKER="$4"; ROOT=/root/mohsen
@@ -315,31 +411,29 @@ command -v sensors >/dev/null; python3 -c 'import matplotlib, numpy'; test -x "$
 printf 'FINAL VERIFY PASS host=%s head=%s driver=%s hugepages=%s\n' "$(hostname)" "$(git -C "$ROOT" rev-parse HEAD)" "$DRIVER" "$HP"
 FINALVERIFY
 done
-IDEX_SHA="$(remote idex 'git -C /root/mohsen rev-parse HEAD')"; TINYMAN_SHA="$(remote tinyman 'git -C /root/mohsen rev-parse HEAD')"
-[[ "$IDEX_SHA" == "$EXPECTED_SHA" && "$TINYMAN_SHA" == "$EXPECTED_SHA" ]] || fail "final node SHA mismatch"
+SERVER_SHA="$(remote "$SERVER_HOST" 'git -C /root/mohsen rev-parse HEAD')"
+CLIENT_SHA="$(remote "$CLIENT_HOST" 'git -C /root/mohsen rev-parse HEAD')"
+[[ "$SERVER_SHA" == "$EXPECTED_SHA" && "$CLIENT_SHA" == "$EXPECTED_SHA" ]] || fail "final node SHA mismatch"
 
 section "STEP 10/10 — GREENQUIC+ PAPER TESTBED READY"
-printf 'GREENQUIC+ MAIN READY ON BOTH TUM NODES\nrepository: Meamarian/GreenQUIC-Plus (private)\nbranch: main\ncommit: %s\n' "$EXPECTED_SHA"
-printf 'P5: Performance2 V2, txalloc=8, txenqcounter=0, txmetazero=1, rxpipe=2, shardmask=0\n'
-printf 'paper runtime: ENABLE_MULTICORE=0; DPDK owner CPU19; QUIC CPUs21-24\n'
-printf 'P7: isolated normal-Linux MsQuic baseline\nE810: link verified before DPDK binding; final driver igb_uio or vfio-pci\n'
-printf 'hugepages: 16384 x 2 MiB on the E810 NUMA node\nacpi.sh + msr.py: present\n'
+printf 'GREENQUIC+ MAIN READY\nrepository: Meamarian/GreenQUIC-Plus (private)\nbranch: main\ncommit: %s\n' "$EXPECTED_SHA"
+printf 'SERVER role host: %s\nCLIENT role host: %s\nSERVER->CLIENT host: %s\n' "$SERVER_HOST" "$CLIENT_HOST" "$SERVER_TO_CLIENT_HOST"
+printf 'P5 binaries: /root/mohsen/msquic/build-greenquic-p5/bin/Release/{quicinterop,quicinteropserver}\n'
+printf 'P7 binaries: /root/mohsen/msquic/build-linux-p7/bin/Release/{quicinterop,quicinteropserver}\n'
+printf 'P5: Performance2 V2; ENABLE_MULTICORE=0; DPDK CPU19; QUIC CPUs21-24\n'
+printf 'P7: isolated normal-Linux MsQuic baseline\n'
+printf 'SSH verified: control->SERVER, control->CLIENT, SERVER->CLIENT. CLIENT->SERVER is not required.\n'
 
-cat <<'NEXT'
+cat <<NEXT
 
-FINAL PAPER FAIR REPRODUCTION FROM THE MAC:
+NEXT STEP — RUN ON THE CONTROL HOST:
 
-cd ~/Downloads/GreenQUIC-Plus && \
-git fetch origin main && \
-git checkout main && \
-git reset --hard origin/main && \
-bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v3.sh
+bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh \\
+  --server-host '$SERVER_HOST' \\
+  --client-host '$SERVER_TO_CLIENT_HOST' \\
+  --bastion '${BASTION:-none}' \\
+  --ssh-key '$CONTROL_KEY'
 
-LIVE MONITOR FROM ANOTHER MAC TERMINAL:
-
-ssh idex '
-log=$(find /root -maxdepth 1 -type f -name "GQ_FAIR_REPRO_*.log" -printf "%T@ %p\n" 2>/dev/null | sort -nr | sed -n "1p" | cut -d" " -f2-)
-echo "FOLLOWING: $log"; echo
-if [ -z "$log" ]; then echo "No GQ_FAIR_REPRO log found yet"; else tail -n +1 -F "$log"; fi
-'
+RUN THE LIVE MONITOR FROM A SECOND CONTROL-HOST TERMINAL using the same SSH route.
+See results_analysis/README.md for the exact monitor command and all start-state workflows.
 NEXT
