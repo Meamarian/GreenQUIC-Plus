@@ -21,7 +21,7 @@ The same optimized DPDK datapath is used for three runtime modes:
 - **BASIC / GreenQUIC:** Power decisions use DPDK activity.
 - **PLUS / GreenQUIC+:** The BASIC policy is extended with short-lived QUIC transport information.
 
-The Linux comparison is **P7**, an isolated normal-Linux MsQuic UDP build with DPDK disabled.
+We have also tested the Linux datapath in **P7**, a MsQuic UDP build with DPDK disabled.
 
 ---
 
@@ -31,12 +31,10 @@ The Linux comparison is **P7**, an isolated normal-Linux MsQuic UDP build with D
 |---|---|
 | `msquic/` | MsQuic + DPDK source used by GreenQUIC+ |
 | `greenquic_test_suite_v22/` | P5/P7 build, execution, recording, report, and validation suite |
-| `results_analysis/` | paper configuration, dependency records, original tuning XLSX files, chart code/SVGs, high-level reproduction helpers and final audit |
+| `results_analysis/` | paper configuration, dependency records, original tuning XLSX files, chart code, high-level reproduction helpers and final audit |
 | `tum_testbed_setup/` | TUM testbed setup guide |
 | `acpi.sh` | ACPI/platform power helper |
 | `msr.py` | MSR energy helper |
-
-The obsolete `greenquic_test_suite/`, old root bootstrap/patch helpers and old `power_mng_tunning/` directory were removed from `main`. Historical states remain in Git history/backups.
 
 ---
 
@@ -335,8 +333,7 @@ Changing these management names does not change the recorded paper hardware assu
 ```text
 results_analysis/tuning/GreenQUIC_DPDK_Path_Perf_Tunning_v2.xlsx
 results_analysis/tuning/GreenQUIC_Power_Mng_Tuning_v1.xlsx
-results_analysis/charts/chart_v2.py
-results_analysis/charts/svg/...
+results_analysis/charts/...
 ```
 
 `artifact_files.sha256.json` records expected sizes/SHA-256 values for the imported artifacts.
