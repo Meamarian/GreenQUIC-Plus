@@ -82,8 +82,6 @@ The durable result is saved as:
 /root/GQ_FAIR_REPRO_<TAG>/p5_recorder_evidence.json
 ```
 
-`*_affinity.txt` sidecars are optional evidence. Their absence after bundling is **not** a final-run failure condition.
-
 ---
 
 ## P7: Linux MsQuic baseline
@@ -117,8 +115,6 @@ Final network/recording settings include:
 | frequency cadence | `1 ms` |
 
 The `paper` offload profile requires TSO, GSO, TX checksum and GRO ON. UDP segmentation, RX checksum and hardware GRO are enabled best-effort when supported. The P7 wrapper restores the pre-P7 DPDK driver after the Linux matrix.
-
-See `p7_paper_evaluation.json` for the full machine-readable record.
 
 ---
 
