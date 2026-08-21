@@ -1,8 +1,8 @@
-# Final GreenQUIC+ paper evaluation configuration
+# GreenQUIC+ paper evaluation configuration
 
-These files describe the **last/final configuration used for the GreenQUIC+ paper evaluation**. They are experiment records, not TUM/POS provisioning defaults.
+These files describe the **configuration used for the GreenQUIC+ paper evaluation**.
 
-Machine-readable files in this directory:
+Files in this directory:
 
 ```text
 p5_paper_evaluation.json   final P5 OFF/BASIC/PLUS workload, datapath and TOP3 policy
@@ -24,31 +24,7 @@ Those names are provenance/defaults only. Management connectivity is centralized
 
 ---
 
-## Dependencies/version interpretation
-
-The source versions recorded for the current reproduction path are:
-
-```text
-modified MsQuic source version: 2.4.8
-DPDK:                           21.11.9
-CMake requirement:              >= 3.20 for the static build used here
-TLS:                            OpenSSL
-endpoint OS:                    Debian Trixie
-```
-
-The GreenQUIC+ repository contains a **modified** MsQuic tree, so stock upstream MsQuic 2.4.8 is not equivalent. Exact code reproduction is defined by the GreenQUIC+ Git commit SHA. DPDK 21.11.9 is vendored in the repository.
-
-The setup does not pin each Debian package revision or kernel patch version; those are resolved from the configured Debian Trixie repositories at setup time. `dependencies.json` records this distinction and the full package/hardware requirements. `../print_dependency_versions.sh` can print the effective versions on CONTROL/SERVER/CLIENT after provisioning.
-
----
-
 ## P5: OFF, BASIC and PLUS
-
-P5 uses one common optimized DPDK/MsQuic datapath for all three modes. The final datapath is **Performance2 V2** and is identified by:
-
-```text
-GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
-```
 
 Final workload:
 
@@ -82,19 +58,13 @@ Final focused power-policy configuration: **TOP3**.
 | `GQ_IDLE_FALLBACK_OVERRIDE` | short | BASIC + PLUS |
 | `FREQ_PERIOD_US` | 10000 | BASIC + PLUS |
 
-Mode meaning:
-
-- **OFF / MsQuic-DPDK:** GreenQUIC power-policy decisions bypassed.
-- **BASIC / GreenQUIC:** physical DPDK activity only.
-- **PLUS / GreenQUIC+:** same physical policy plus QUIC semantic hints/guards.
-
 The complete effective policy/runtime values are in `p5_paper_evaluation.json`.
 
 ---
 
-## P7: normal Linux MsQuic baseline
+## P7: Linux MsQuic baseline
 
-P7 is an isolated normal-Linux MsQuic build:
+P7 is an Linux MsQuic build:
 
 ```text
 DPDK disabled
@@ -128,20 +98,6 @@ See `p7_paper_evaluation.json` for the full machine-readable record.
 
 ---
 
-# Authoritative execution
-
-The low-level authoritative implementation remains:
-
-```text
-greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh
-```
-
-`_v2.sh` and `_v3.sh` are compatibility wrappers only.
-
-For our paper testbed, use the high-level wrapper; the normal Mac checkout is `$HOME/Downloads/GreenQUIC-Plus`. The full clone-if-missing commands and their live monitors are maintained in `../README.md` and the repository root `README.md` so this configuration file does not duplicate operational instructions.
-
----
-
 # Static configuration checks
 
 **RUN ON: CONTROL HOST:**
@@ -162,8 +118,3 @@ bash results_analysis/final_repository_check.sh
 
 This is also local/static and has no remote live log.
 
----
-
-## Chart provenance
-
-The supplied chart artifact keeps its original `SOURCE_REFERENCE.txt`. Some source names refer to earlier intermediate archives, including an older Linux 6×6 archive. Those names are provenance only. The JSON files in this directory plus the authoritative 6×5 launcher define the final paper evaluation.
