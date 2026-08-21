@@ -5,6 +5,17 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "$HERE/paper_testbed_defaults.sh"
 
+# Ensure the CONTROL-HOST wrapper and the exact code sent to the experiment
+# nodes come from the same current main revision. Safe fast-forward only; local
+# work and unique local commits are never discarded.
+sync_rc=0
+bash "$HERE/control_main_sync.sh" || sync_rc=$?
+case "$sync_rc" in
+  0) ;;
+  10) exec bash "$GQ_CONTROL_REPO/results_analysis/run_paper_evaluation.sh" "$@" ;;
+  *) exit "$sync_rc" ;;
+esac
+
 cd "$GQ_CONTROL_REPO"
 python3 results_analysis/verify_paper_configuration.py
 
