@@ -146,23 +146,3 @@ $HOME/Downloads/GreenQUIC-Plus/reproduced_results/<TAG>/
 SERVER creates `RESULT_DIRS.env`, `RESULT_ZIPS.txt`, and `RESULT_ZIPS.sha256`; CONTROL verifies the downloaded ZIP SHA-256 values and the critical paper configuration before success is reported. `--no-auto-download` is an explicit opt-out.
 
 ---
-
-# Static configuration checks
-
-**RUN ON: CONTROL HOST:**
-
-```bash
-python3 results_analysis/verify_paper_configuration.py
-```
-
-**LIVE MONITOR:** not applicable; this is a local synchronous static check and does not start a remote process.
-
-For the broader repository/layout/artifact/dependency check:
-
-**RUN ON: CONTROL HOST:**
-
-```bash
-bash results_analysis/final_repository_check.sh
-```
-
-**LIVE MONITOR:** not applicable; this is also local and synchronous.
