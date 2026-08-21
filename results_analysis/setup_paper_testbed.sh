@@ -17,6 +17,42 @@ case "$sync_rc" in
   *) exit "$sync_rc" ;;
 esac
 
+usage() {
+  cat <<'USAGE'
+GreenQUIC+ paper-testbed deployment/build wrapper
+
+RUN ON: CONTROL HOST
+
+Paper defaults come from results_analysis/paper_testbed_defaults.sh.
+Override management routing without editing files:
+  --server-host HOST              SERVER as seen from CONTROL/BASTION
+  --client-host HOST              CLIENT as seen from CONTROL/BASTION
+  --server-to-client-host HOST    CLIENT as seen from SERVER; defaults to --client-host
+  --bastion USER@HOST|none        optional SSH jump/bootstrap host
+  --ssh-key PATH                  CONTROL private key; only its public half is installed on nodes
+  -h, --help
+
+This wrapper deploys exact origin/main by Git bundle, prepares both hosts, and
+builds/verifies P5 and P7. It does not allocate/reimage POS nodes.
+USAGE
+}
+
+server_to_client_explicit=0
+while (($#)); do
+  case "$1" in
+    --server-host) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --server-host needs a value" >&2; exit 2; }; GQ_SERVER_HOST="$2"; shift 2 ;;
+    --client-host) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --client-host needs a value" >&2; exit 2; }; GQ_CLIENT_HOST="$2"; shift 2 ;;
+    --server-to-client-host) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --server-to-client-host needs a value" >&2; exit 2; }; GQ_SERVER_TO_CLIENT_HOST="$2"; server_to_client_explicit=1; shift 2 ;;
+    --bastion) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --bastion needs a value" >&2; exit 2; }; GQ_BASTION="$2"; shift 2 ;;
+    --ssh-key) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --ssh-key needs a value" >&2; exit 2; }; GQ_SSH_KEY="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "ERROR: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+if (( server_to_client_explicit == 0 )); then
+  GQ_SERVER_TO_CLIENT_HOST="$GQ_CLIENT_HOST"
+fi
+
 cd "$GQ_CONTROL_REPO"
 python3 results_analysis/verify_paper_configuration.py
 
