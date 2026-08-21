@@ -10,8 +10,6 @@ SERVER and CLIENT must run Debian Trixie. Exact Debian package revisions and the
 
 Paper hardware assumptions include Intel E810 at PCI `0000:18:00.0`, Linux `ice` for link/P7 operation, `igb_uio` or `vfio-pci` for DPDK, `16384 × 2 MiB` hugepages, CPU19 for dataplane work, and CPUs21-24 for MsQuic workers.
 
-Machine-readable dependency policy: `results_analysis/configuration/dependencies.json`.
-
 # Original analysis artifacts
 
 The private repository contains the supplied artifacts directly:
@@ -55,21 +53,3 @@ On SERVER, for tag `<TAG>`:
 /root/P5_FAIR_OPT_PINNED_6r_5d_<TAG>.zip
 /root/P7_FAIR_PAPER_PINNED_6r_5d_<TAG>.zip
 ```
-
-The exact P5/P7 matrix directories are written to `RESULT_DIRS.env`. The final launcher prints these paths before SCP and the downloader repeats them before copying.
-
-## Manual/re-download only
-
-Normally no separate download command is needed because the final run performs automatic SCP. To re-download the exact last run:
-
-**RUN ON: CONTROL HOST:**
-
-```bash
-cd "$HOME/Downloads/GreenQUIC-Plus" && \
-bash results_analysis/download_paper_results.sh
-```
-```
-
-**LIVE MONITOR:** not applicable. This command is a synchronous local/static check and starts no remote process. It validates shell/Python/JSON syntax, the P5 recorder-evidence self-test, repository cleanup/layout, committed analysis artifacts, source/dependency anchors, role-based routing, safe CONTROL-main synchronization, setup/run wrappers/monitors, automatic result handling, and final P5/P7 configuration anchors.
-
-For TUM/POS provisioning details, see `tum_testbed_setup/README.md`.
