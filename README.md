@@ -176,8 +176,6 @@ After provisioning, **RUN ON: CONTROL HOST** to record/inspect the actual versio
 bash results_analysis/print_dependency_versions.sh
 ```
 
-**LIVE MONITOR:** not applicable; this is a synchronous inspection command and starts no traffic.
-
 Paper hardware assumptions remain: Intel E810 test NIC at PCI `0000:18:00.0`, Linux `ice` for link/P7 operation, `igb_uio` or `vfio-pci` for DPDK, `16384 × 2 MiB` hugepages on the test-NIC NUMA node, CPU19 for dataplane work and CPUs21-24 for MsQuic.
 
 ---
