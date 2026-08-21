@@ -26,9 +26,9 @@ remote user:            root
 remote repository root: /root/mohsen
 ```
 
-`idex` does not mean SERVER in the code and `tinyman` does not mean CLIENT. Another deployment supplies its own values through `--server-host`, `--client-host`, `--server-to-client-host`, `--bastion`, and `--ssh-key` as applicable.
+`idex` does **not** mean SERVER in the code and `tinyman` does **not** mean CLIENT. Another deployment supplies its own values through `--server-host`, `--client-host`, `--server-to-client-host`, `--bastion`, and `--ssh-key` as applicable.
 
-Every operational command below says **RUN ON**. A path beginning with `/root/...` belongs to an experiment node. Do not execute a block that expects `/root/...` directly from a CONTROL-HOST shell.
+Every operational block below says **RUN ON**. A path beginning with `/root/...` belongs to an experiment node, not to the CONTROL HOST.
 
 ## SSH topology
 
@@ -169,13 +169,52 @@ The expected supplied set is two XLSX workbooks, `chart_v2.py`, and 41 SVG files
 
 ## Case A — physical nodes need fresh Debian Trixie
 
-POS allocation/reimage/reset is separate from GreenQUIC+ setup. Follow `tum_testbed_setup/README.md` first. POS commands are **RUN ON: COINBASE/POS SHELL** and have their own live readiness/status monitor.
+Use this only when the nodes are unallocated, on another image, or you deliberately want a clean Debian deployment.
 
-After both nodes answer SSH as Debian Trixie, continue with Case B.
+### A1. Allocate/image/reset
+
+**RUN ON: COINBASE/POS SHELL.** For our paper node names:
+
+```bash
+SERVER_NODE=idex
+CLIENT_NODE=tinyman
+
+pos nodes list | grep -E "$SERVER_NODE|$CLIENT_NODE"
+
+# Allocate only if the nodes are actually unallocated and according to POS policy.
+pos allocations allocate "$SERVER_NODE"
+pos allocations allocate "$CLIENT_NODE"
+
+pos nodes image "$SERVER_NODE" debian-trixie
+pos nodes image "$CLIENT_NODE" debian-trixie
+pos nodes reset "$SERVER_NODE" &
+pos nodes reset "$CLIENT_NODE" &
+wait
+```
+
+A reset destroys the live node filesystem, including `/root/mohsen`, old builds, generated payloads, and local results.
+
+**LIVE STATUS MONITOR — RUN ON: the same COINBASE/POS SHELL after reset:**
+
+```bash
+while true; do
+  clear
+  date
+  pos nodes list | grep -E 'idex|tinyman'
+  echo
+  for h in idex tinyman; do
+    printf '%-10s ' "$h"
+    ssh -o ConnectTimeout=3 root@"$h" 'hostname; . /etc/os-release; echo "$ID $VERSION_CODENAME"' 2>&1 | tail -2 || true
+  done
+  sleep 5
+done
+```
+
+When both answer as Debian Trixie, continue with Case B.
 
 ## Case B — Debian is ready; deploy exact current `main`, prepare hosts, and build everything
 
-This is also the supported “fresh clone/deploy + build” case when `/root/mohsen` is absent or stale.
+This is also the supported “fresh clone/deploy + build” case when `/root/mohsen` is absent or stale. Do **not** manually clone the private repository on SERVER/CLIENT. The setup transfers the exact CONTROL `origin/main` SHA by Git bundle.
 
 **RUN ON: CONTROL HOST:**
 
@@ -196,9 +235,9 @@ cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_setup.sh
 ```
 
-The high-level setup wrapper safely synchronizes a clean CONTROL `main`, statically verifies paper configuration, records a CONTROL-side setup log, runs the single TUM provisioning implementation, and records effective dependency versions. It transfers exact `origin/main` to SERVER/CLIENT by Git bundle; do not manually clone the private repository on experiment nodes.
+The setup wrapper safely synchronizes a clean CONTROL `main`, runs the static paper preflight, logs setup, invokes the single TUM provisioning implementation, installs the exact code on both nodes, prepares DPDK/NIC/hugepages/MSR state, builds P5/P7, verifies binaries, and establishes SERVER -> CLIENT SSH.
 
-For another management topology, `setup_paper_testbed.sh` accepts:
+For another topology, `setup_paper_testbed.sh` accepts:
 
 ```text
 --server-host HOST
@@ -207,8 +246,6 @@ For another management topology, `setup_paper_testbed.sh` accepts:
 --bastion USER@HOST|none
 --ssh-key PATH
 ```
-
-Use matching route values with `live_monitor_setup.sh` when desired.
 
 ## Case C — remote source/DPDK/host state is already correct; rebuild only P5/P7
 
@@ -226,7 +263,7 @@ git checkout main && \
 bash results_analysis/rebuild_paper_binaries.sh
 ```
 
-**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after starting rebuild:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -234,6 +271,8 @@ bash results_analysis/live_monitor_setup.sh
 ```
 
 ## Case D — everything is ready; run the final paper evaluation
+
+This is the normal final-paper command. It still rebuilds/verifies P5 and P7 immediately before measured traffic to prevent stale binaries.
 
 **RUN ON: CONTROL HOST:**
 
@@ -254,9 +293,17 @@ cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh
 ```
 
-`run_paper_evaluation.sh` safely synchronizes CONTROL `main`, records the exact tag, and calls the single authoritative combined launcher. The monitor follows that exact tag instead of guessing the newest log.
+`run_paper_evaluation.sh` remains attached on the first CONTROL-HOST terminal by default. It waits for the remote controller to become `DONE`. The second terminal follows the exact run tag live.
 
-For another deployment, the run wrapper accepts `--server-host`, `--client-host`, `--bastion`, and `--ssh-key`. Here `--client-host` is the CLIENT endpoint as seen from SERVER.
+After validation and ZIP creation, the first terminal prints all final SERVER paths and the final CONTROL-HOST destination **before SCP starts**. Then **automatic SCP** copies the two result ZIPs plus metadata/logs to:
+
+```text
+$HOME/Downloads/GreenQUIC-Plus/reproduced_results/<TAG>/
+```
+
+The downloaded ZIPs are SHA-256 checked against hashes generated on SERVER. If the remote run fails, automatic SCP of result ZIPs is not attempted; the launcher prints the remote artifact/log/P5/P7 paths for diagnosis.
+
+For another deployment, the run wrapper accepts `--server-host`, `--client-host`, `--bastion`, `--ssh-key`, and `--download-dest`. Here `--client-host` is the CLIENT endpoint as seen from SERVER. Automatic download is the default; `--no-auto-download` is an explicit opt-out.
 
 The authoritative low-level implementation is:
 
@@ -266,14 +313,44 @@ greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_
 
 The `_v2.sh` and `_v3.sh` names are compatibility wrappers only.
 
-# Results: do not manually package `/root` from the CONTROL HOST
+# Recorder-affinity validation: durable evidence, not disposable sidecars
 
-The SERVER role stores controller/result artifacts. For tag `<TAG>`:
+The final P5 run uses `GQ_CLAIM_RECORDER_CPU=auto` so high-rate recorder processes are placed on a housekeeping CPU outside the protected DPDK/QUIC CPUs.
+
+A previous final-run validator incorrectly required `*_affinity.txt` files to remain in the final P5 matrix tree. A completed 6×5 run can legitimately have zero such sidecars after bundling/cleanup even though every run log records the selected recorder CPU. The supported validator is now:
+
+```text
+greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/validate_p5_recorder_evidence.py
+```
+
+It requires `matrix_integrity.json` to report all expected bundles/summaries/env snapshots, then checks every canonical server/client OFF/BASIC/PLUS run log for all four recorder-start records:
+
+```text
+whole-system power1        recorder_cpu=N
+C RAPL powercap            recorder_cpu=N
+Linux cpu_idle             reader_cpu=N
+CPU-frequency              recorder_cpu=N
+```
+
+The final run stores the resulting durable summary as:
+
+```text
+/root/GQ_FAIR_REPRO_<TAG>/p5_recorder_evidence.json
+```
+
+`*_affinity.txt` sidecars are optional evidence, not a final-run completion requirement.
+
+# Final result paths
+
+On SERVER, for tag `<TAG>`:
 
 ```text
 /root/GQ_FAIR_REPRO_<TAG>.log
 /root/GQ_FAIR_REPRO_<TAG>/config.env
+/root/GQ_FAIR_REPRO_<TAG>/RESULT_DIRS.env
 /root/GQ_FAIR_REPRO_<TAG>/RESULT_ZIPS.txt
+/root/GQ_FAIR_REPRO_<TAG>/RESULT_ZIPS.sha256
+/root/GQ_FAIR_REPRO_<TAG>/p5_recorder_evidence.json
 /root/GQ_FAIR_REPRO_<TAG>/DONE
 /root/GQ_FAIR_REPRO_<TAG>/FAILED
 
@@ -281,11 +358,11 @@ The SERVER role stores controller/result artifacts. For tag `<TAG>`:
 /root/P7_FAIR_PAPER_PINNED_6r_5d_<TAG>.zip
 ```
 
-The P5/P7 ZIPs contain the complete matrix result trees, including recorder/affinity evidence saved under those trees. Separate `P5_AFFINITY_SERVER_*.tar.gz` or `P5_AFFINITY_CLIENT_*.tar.gz` packaging is not part of the supported final workflow.
+The exact P5/P7 matrix directories are written to `RESULT_DIRS.env`. The final launcher prints these paths before SCP and the downloader repeats them before copying.
 
-A CONTROL-HOST prompt such as `... GreenQUIC-Plus %` cannot directly access `/root/GQ_FAIR_REPRO_*`, `/root/mohsen/...`, or `/root/...tar.gz`; those are SERVER paths. If you see `ls: /root/... No such file or directory` together with a CONTROL-HOST prompt, the command was run on the wrong machine.
+## Manual/re-download only
 
-After the final run is marked DONE, use the downloader.
+Normally no separate download command is needed because the final run performs automatic SCP. To re-download the exact last run:
 
 **RUN ON: CONTROL HOST:**
 
@@ -294,14 +371,14 @@ cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/download_paper_results.sh
 ```
 
-This is synchronous and prints each copied artifact plus paper-configuration verification. If you want a live view while copying, **RUN ON: second CONTROL-HOST terminal:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal while the download is associated with an active/latest run:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh
 ```
 
-The downloader copies `config.env`, `RESULT_ZIPS.txt`, `DONE`, the two result ZIPs, and the controller log into `reproduced_results/<TAG>/` and verifies the critical P5/P7 settings.
+The downloader prints the remote matrix/archive paths and final local destination **before SCP**, copies the ZIPs and metadata, then verifies ZIP SHA-256 and the critical paper configuration.
 
 # Static final repository check
 
@@ -314,6 +391,6 @@ cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/final_repository_check.sh
 ```
 
-This is an immediate local/static check; it starts no experiment, so no remote live log applies. It validates shell/Python/JSON syntax, repository cleanup/layout, committed analysis artifacts, source/dependency anchors, role-based routing, safe CONTROL-main synchronization, setup/run wrappers/monitors, current README requirements, and final P5/P7 configuration anchors.
+**LIVE MONITOR:** not applicable. This command is a synchronous local/static check and starts no remote process. It validates shell/Python/JSON syntax, the P5 recorder-evidence self-test, repository cleanup/layout, committed analysis artifacts, source/dependency anchors, role-based routing, safe CONTROL-main synchronization, setup/run wrappers/monitors, automatic result handling, and final P5/P7 configuration anchors.
 
 For TUM/POS provisioning details, see `tum_testbed_setup/README.md`.
