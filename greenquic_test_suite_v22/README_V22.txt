@@ -1,17 +1,28 @@
 GreenQUIC+ test suite V22
 =========================
 
-This file is a short suite overview. The final paper reproduction instructions
-are maintained in results_analysis/README.md.
+This is the authoritative test-suite tree used by the final GreenQUIC+ paper
+workflow. Full reproduction instructions are maintained in:
+
+  ../results_analysis/README.md
+  ../tum_testbed_setup/README.md
 
 Roles
 -----
-  CONTROL HOST  launches setup/final paper evaluation
+  CONTROL HOST  launches setup/build/final paper evaluation
   SERVER        QUIC server + experiment controller
   CLIENT        QUIC client
 
-Paper-testbed host names were SERVER=idex and CLIENT=tinyman. They are defaults,
-not required names. Current supported entrypoints take host switches.
+Paper-testbed defaults
+----------------------
+Defaults are centralized in ../results_analysis/paper_testbed_defaults.sh:
+
+  SERVER=idex
+  CLIENT=tinyman
+  BASTION=mohsen@coinbase
+  SSH key=$HOME/.ssh/id_ed25519
+
+These are conveniences for our testbed, not required host names.
 
 Current paper paths
 -------------------
@@ -25,36 +36,41 @@ Current paper paths
   P7 build:
     /root/mohsen/msquic/build-linux-p7
 
-Final launcher
---------------
+Fresh deploy/build
+------------------
 RUN ON: CONTROL HOST
+
+  bash results_analysis/setup_paper_testbed.sh
+
+LIVE MONITOR — RUN ON: SECOND CONTROL-HOST TERMINAL
+
+  bash results_analysis/live_monitor_setup.sh
+
+Final paper evaluation
+----------------------
+RUN ON: CONTROL HOST
+
+  bash results_analysis/run_paper_evaluation.sh
+
+LIVE MONITOR — RUN ON: SECOND CONTROL-HOST TERMINAL
+
+  bash results_analysis/live_monitor_run.sh
+
+The low-level authoritative launcher remains:
 
   greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/
     mac_run_p5_p7_fair_repro_6x5.sh
 
-Host options:
-  --server-host HOST
-  --client-host HOST
-  --bastion USER@HOST|none
-  --ssh-key PATH
+The _v2.sh and _v3.sh names are compatibility wrappers only.
 
-Fresh provisioning/build setup
-------------------------------
-RUN ON: CONTROL HOST after Debian Trixie is installed/reachable.
-
-  tum_testbed_setup/greenquic_fresh_setup.sh
-
-It additionally supports --server-to-client-host HOST.
-
-SSH requirement
----------------
+SSH requirements
+----------------
 SERVER must be able to SSH as root to CLIENT. CLIENT does not need to SSH back.
-During fresh setup the CONTROL HOST must reach both endpoints directly or through
-the configured bastion. Only the CONTROL HOST needs private-GitHub access.
+During fresh setup CONTROL must reach both endpoints directly or through the
+configured bastion. Only CONTROL needs private-GitHub access.
 
 Historical material
 -------------------
-The V22 tree still contains old P0/P1/P2 and V18/V21 diagnostic/research paths.
-Some historical filenames/comments mention idex/tinyman. They are retained for
-provenance and old-experiment recovery; do not use them as the host-selection
-interface for the current P5/P7 paper reproduction.
+The V22 tree still contains older diagnostic/research paths and historical
+filenames such as run_matrix_from_idex.sh. Those names are retained for
+provenance/compatibility and do not select the current physical hosts.
