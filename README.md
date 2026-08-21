@@ -263,16 +263,6 @@ Step 3 performs automatic SCP. Use this only to re-download the exact recorded r
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/download_paper_results.sh
 ```
-```
-
-## 5. Local final repository/reproduction audit
-
-**RUN ON: CONTROL HOST:**
-
-```bash
-cd "$HOME/Downloads/GreenQUIC-Plus" && \
-bash results_analysis/final_repository_check.sh
-```
 
 ---
 
