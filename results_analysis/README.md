@@ -1,6 +1,6 @@
 # GreenQUIC+ results, analysis, and paper reproduction
 
-This directory is the evaluation/reproduction reference for **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK.”** It contains the final paper configuration, the original tuning workbooks and SVG/chart material, host-role documentation, result helpers, and the supported reproduction workflow.
+This directory is the evaluation/reproduction reference for **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK.”** It contains the final paper configuration, the original tuning workbooks and SVG/chart material, host-role documentation, dependency/version records, result helpers, and the supported reproduction workflow.
 
 ---
 
@@ -157,7 +157,47 @@ configuration/experiment_paths.json
 
 ---
 
-# 3. Original analysis artifacts
+# 3. Dependencies and versions
+
+The dependency record distinguishes **source-pinned versions** from Debian packages whose exact package revisions are resolved at setup time.
+
+## Source-pinned software
+
+| Component | Version / requirement | How it is fixed |
+|---|---|---|
+| Modified MsQuic source | `2.4.8` source version | vendored under `msquic/`; exact experiment source is the GreenQUIC+ Git commit SHA |
+| DPDK | `21.11.9` | vendored under `msquic/deps/dpdk/` |
+| CMake | `>= 3.20` for the current static MsQuic build | required by `msquic/CMakeLists.txt` when `QUIC_BUILD_SHARED=OFF` |
+| TLS | OpenSSL | P5/P7 configure `QUIC_TLS=openssl` |
+| Build type | Release | P5/P7 build scripts |
+
+The MsQuic tree is **modified**, so stock upstream MsQuic 2.4.8 is not an equivalent source checkout. Reproducibility uses the exact GreenQUIC+ `main` SHA transferred to both endpoints.
+
+## Endpoint OS and packages
+
+The supported setup requires **Debian Trixie** on SERVER and CLIENT and verifies `ID=debian` and `VERSION_CODENAME=trixie` before provisioning. The setup installs the compiler/build/network/measurement packages listed in `configuration/dependencies.json`, including GCC/G++, CMake, Meson, Ninja, OpenSSL development headers, Python 3, NumPy, Matplotlib, `ethtool`, `msr-tools`, `lm-sensors`, and `irqbalance`.
+
+Exact Debian package revisions and the kernel patch version are **not individually pinned by the current setup**. They come from the configured Debian Trixie repositories at setup time. Do not claim a package revision unless it was actually recorded from that run.
+
+Paper hardware assumptions include the Intel E810 test NIC at PCI `0000:18:00.0`, Linux `ice` for link/P7 operation, `igb_uio` or `vfio-pci` for DPDK binding, `16384 × 2 MiB` hugepages on the test-NIC NUMA node, CPU19 for the DPDK/Linux dataplane side, and CPUs21-24 for MsQuic workers.
+
+Machine-readable dependency policy:
+
+```text
+results_analysis/configuration/dependencies.json
+```
+
+After setup, **RUN ON: CONTROL HOST** to print the actual CONTROL/SERVER/CLIENT versions used by the current environment:
+
+```bash
+bash results_analysis/print_dependency_versions.sh
+```
+
+This is inspection only; it does not launch traffic, so no live workload monitor is needed.
+
+---
+
+# 4. Original analysis artifacts
 
 The supplied analysis files are committed in the private repository:
 
@@ -183,18 +223,23 @@ The chart set contains **41 SVG files**. `artifact_files.sha256.json` stores the
 
 ---
 
-# 4. Choose the correct starting state
+# 5. Choose the correct starting state
 
 ## State 0 — new CONTROL HOST / another Mac or Linux machine
 
 Use this when SERVER/CLIENT may already exist but a new person or machine will launch the experiment.
 
-**RUN ON: CONTROL HOST:** clone the private repository with that collaborator's normal GitHub authentication and enter the checkout. A local clone does not start a remote experiment, so there is no live test log to monitor.
+**RUN ON: CONTROL HOST.** The paper-default checkout location is `$HOME/Downloads/GreenQUIC-Plus`. The following block is safe to paste on a new Mac: it clones only when the checkout does not already exist.
 
 ```bash
-git clone git@github.com:Meamarian/GreenQUIC-Plus.git && \
-cd GreenQUIC-Plus
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && git checkout main
 ```
+
+This local clone/update step does not start remote work, so there is no live experiment log to monitor.
 
 The CONTROL HOST needs `git`, `ssh`, `scp`, Python 3, private-repository access, access to the selected bastion when used, and the selected node SSH key. Do not copy the CONTROL private key to SERVER or CLIENT.
 
@@ -260,17 +305,24 @@ done
 
 ### A2. Deploy, provision, and build
 
-After both endpoints answer SSH as Debian Trixie:
+After both endpoints answer SSH as Debian Trixie, the following is the **one-paste paper-default command for the Mac/CONTROL HOST**. It clones the private repository if necessary, selects `main`, and starts the supported setup with defaults `SERVER=idex`, `CLIENT=tinyman`, `BASTION=mohsen@coinbase` and `$HOME/.ssh/id_ed25519`.
 
 **RUN ON: CONTROL HOST:**
 
 ```bash
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
 bash results_analysis/setup_paper_testbed.sh
 ```
 
 Immediately in **a second CONTROL-HOST terminal:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_setup.sh
 ```
 
@@ -284,17 +336,9 @@ Use this when Debian Trixie and management SSH are already ready, but `/root/moh
 
 Do **not** manually clone the private repository on SERVER or CLIENT. The supported setup keeps private GitHub credentials on CONTROL and deploys exact `origin/main` to both endpoints by Git bundle.
 
-**RUN ON: CONTROL HOST:**
+**RUN ON: CONTROL HOST:** use the same one-paste command from State A2.
 
-```bash
-bash results_analysis/setup_paper_testbed.sh
-```
-
-Immediately in **a second CONTROL-HOST terminal:**
-
-```bash
-bash results_analysis/live_monitor_setup.sh
-```
+Immediately in **a second CONTROL-HOST terminal:** use the same `live_monitor_setup.sh` command from State A2.
 
 This is the supported “fresh clone/deploy + build” workflow for already-installed Debian nodes.
 
@@ -307,12 +351,19 @@ Use this only if `/root/mohsen` on both endpoints is already the intended curren
 **RUN ON: CONTROL HOST:**
 
 ```bash
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
 bash results_analysis/rebuild_paper_binaries.sh
 ```
 
 Immediately in **a second CONTROL-HOST terminal:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_setup.sh
 ```
 
@@ -328,17 +379,24 @@ The authoritative low-level implementation is:
 greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh
 ```
 
-The `_v2.sh` and `_v3.sh` names are compatibility wrappers only. For normal reproduction use the high-level wrapper:
+The `_v2.sh` and `_v3.sh` names are compatibility wrappers only. For normal reproduction use the high-level wrapper.
 
 **RUN ON: CONTROL HOST:**
 
 ```bash
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
 bash results_analysis/run_paper_evaluation.sh
 ```
 
 Immediately in **a second CONTROL-HOST terminal:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh
 ```
 
@@ -346,15 +404,21 @@ The launcher synchronizes exact `main`, rebuilds/verifies P5 and P7 before measu
 
 ---
 
-# 5. Another deployment / different management names
+# 6. Another deployment / different management names
 
-The high-level wrappers themselves accept switches; there is no need to edit scripts.
+The paper defaults require no switches. To change management names/routes, pass switches to the same wrappers; do not edit source files.
 
 Example setup where CONTROL sees the client as `client-via-gateway` but SERVER reaches it as `10.0.0.22`:
 
 **RUN ON: CONTROL HOST:**
 
 ```bash
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
 bash results_analysis/setup_paper_testbed.sh \
   --server-host server01 \
   --client-host client-via-gateway \
@@ -366,6 +430,7 @@ bash results_analysis/setup_paper_testbed.sh \
 Immediately in **a second CONTROL-HOST terminal:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_setup.sh \
   --server-host server01 \
   --client-host client-via-gateway \
@@ -378,6 +443,7 @@ After setup, the final run uses the CLIENT address as seen from SERVER:
 **RUN ON: CONTROL HOST:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/run_paper_evaluation.sh \
   --server-host server01 \
   --client-host 10.0.0.22 \
@@ -388,6 +454,7 @@ bash results_analysis/run_paper_evaluation.sh \
 Immediately in **a second CONTROL-HOST terminal:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh \
   --server-host server01 \
   --bastion user@gateway \
@@ -398,7 +465,7 @@ Changing management names does **not** automatically make different hardware equ
 
 ---
 
-# 6. Result locations and download
+# 7. Result locations and download
 
 The SERVER role stores controller artifacts. For tag `<TAG>`:
 
@@ -418,29 +485,32 @@ The SERVER role stores controller artifacts. For tag `<TAG>`:
 **RUN ON: CONTROL HOST** after the run is `DONE`:
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/download_paper_results.sh
 ```
 
-This is a short post-run transfer, not a running experiment. There is no live workload log after the run is already complete. While the experiment is still active, use `live_monitor_run.sh` from the second CONTROL-HOST terminal.
+This is a short post-run transfer, not a running experiment. There is no live workload log after the run is already complete. While the experiment is active, use `live_monitor_run.sh` from the second CONTROL-HOST terminal.
 
 ---
 
-# 7. Static final checks
+# 8. Static final checks
 
 These checks run locally on CONTROL and do not launch remote processes, so no live experiment monitor applies.
 
 Configuration consistency:
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 python3 results_analysis/verify_paper_configuration.py
 ```
 
 Full repository/reproduction audit:
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/final_repository_check.sh
 ```
 
-The full audit checks shell syntax for current P5/P7/setup/helper entrypoints, machine-readable JSON, the single TUM setup layout, absence of obsolete folders/temp files, host-role switches, README monitor pairing, safe CONTROL `main` synchronization, both XLSX files, `chart_v2.py`, all 41 SVGs, and the exact P5/P7 paper anchors.
+The full audit checks shell syntax for current P5/P7/setup/helper entrypoints, machine-readable JSON including dependency metadata, the single TUM setup layout, absence of obsolete folders/temp files, host-role switches, README monitor pairing, safe CONTROL `main` synchronization, both XLSX files, `chart_v2.py`, all 41 SVGs, and the exact P5/P7 paper anchors.
 
 See `HOST_ROLE_AUDIT.md` for the host-name/SSH dependency audit.
