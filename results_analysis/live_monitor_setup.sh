@@ -7,15 +7,20 @@ source "$HERE/paper_testbed_defaults.sh"
 
 usage() {
   cat <<'USAGE'
-GreenQUIC+ setup/build live monitor
+GreenQUIC+ setup/rebuild live log monitor
 
 RUN ON: a second CONTROL-HOST terminal
 
-Options:
-  --server-host HOST       SERVER as seen from CONTROL/BASTION
-  --client-host HOST       CLIENT as seen from CONTROL/BASTION
-  --bastion USER@HOST|none optional ProxyJump
-  --ssh-key PATH           CONTROL private key
+This follows the exact CONTROL-side stdout/stderr log created by the currently
+active setup_paper_testbed.sh or rebuild_paper_binaries.sh process. Because the
+log is local to CONTROL, monitoring works even before fresh nodes accept SSH.
+
+The management options below are accepted for command-line symmetry with older
+examples but are not needed to read the local CONTROL log:
+  --server-host HOST
+  --client-host HOST
+  --bastion USER@HOST|none
+  --ssh-key PATH
   -h, --help
 USAGE
 }
@@ -31,22 +36,24 @@ while (($#)); do
   esac
 done
 
-[[ -f "$GQ_SSH_KEY" ]] || { echo "ERROR: SSH key not found: $GQ_SSH_KEY" >&2; exit 2; }
-SSH_OPTS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -i "$GQ_SSH_KEY" -o IdentitiesOnly=yes)
-if [[ -n "$GQ_BASTION" && "$GQ_BASTION" != none ]]; then SSH_OPTS+=(-J "$GQ_BASTION"); fi
+RUNTIME_DIR="$GQ_CONTROL_REPO/results_analysis/runtime"
+STATE_FILE="$RUNTIME_DIR/current_setup_operation"
+printf 'RUN ON: second CONTROL-HOST terminal\nWAITING FOR ACTIVE SETUP/REBUILD LOG\n'
 
-printf 'RUN ON: second CONTROL-HOST terminal\nSERVER=%s\nCLIENT=%s\nBASTION=%s\n' "$GQ_SERVER_HOST" "$GQ_CLIENT_HOST" "$GQ_BASTION"
 while true; do
-  clear
-  date
-  for pair in "SERVER:$GQ_SERVER_HOST" "CLIENT:$GQ_CLIENT_HOST"; do
-    role="${pair%%:*}"
-    host="${pair#*:}"
-    echo
-    echo "===== $role ($host) ====="
-    ssh "${SSH_OPTS[@]}" "$GQ_REMOTE_USER@$host" \
-      'printf "hostname="; hostname; printf "branch="; git -C /root/mohsen branch --show-current 2>/dev/null || echo repo-not-ready; printf "head="; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || echo repo-not-ready; echo "active setup/build processes:"; pgrep -af "apt-get|meson|ninja|cmake|build_p5|build_p7|greenquic_fresh_setup" || echo none; printf "test NIC driver="; basename "$(readlink -f /sys/bus/pci/devices/0000:18:00.0/driver 2>/dev/null)" 2>/dev/null || echo unavailable' \
-      || echo "SSH unavailable"
-  done
-  sleep 10
+  if [[ -s "$STATE_FILE" ]]; then
+    op_pid="$(sed -n '1p' "$STATE_FILE" 2>/dev/null || true)"
+    log_file="$(sed -n '2p' "$STATE_FILE" 2>/dev/null || true)"
+    if [[ "$op_pid" =~ ^[0-9]+$ ]] && kill -0 "$op_pid" 2>/dev/null && [[ -n "$log_file" ]]; then
+      if [[ -f "$log_file" ]]; then
+        echo "FOLLOWING CONTROL LOG: $log_file"
+        echo "OPERATION PID: $op_pid"
+        echo
+        exec tail -n +1 -F "$log_file"
+      fi
+      echo "Operation pid=$op_pid is active; waiting for log file $log_file ..."
+    fi
+  fi
+  echo "No active setup/rebuild operation found yet; waiting..."
+  sleep 2
 done
