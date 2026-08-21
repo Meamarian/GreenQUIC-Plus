@@ -11,25 +11,27 @@
 
 **Contact:** mohsen.memarian@kau.se, andreas.kassler@kau.se, spaethj@net.in.tum.de, kempfm@net.in.tum.de, lachnit@net.in.tum.de, jzirngib@mpi-inf.mpg.de, carle@net.in.tum.de
 
-This private repository contains the GreenQUIC+ implementation and reproducibility tooling accompanying the paper **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK.”**
+GreenQUIC+ is the implementation and reproducibility repository for **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK.”** The project studies adaptive CPU power management for a DPDK-based MsQuic datapath by controlling CPU frequency and idle behavior while keeping high QUIC goodput.
 
-QUIC is commonly implemented in user space. DPDK provides a high-speed kernel-bypass datapath, but polling-oriented execution can consume unnecessary power as workload demand changes. GreenQUIC+ studies adaptive CPU power management for a DPDK-based MsQuic implementation by controlling CPU frequency and idle behavior while maintaining high QUIC goodput.
+The same optimized DPDK/MsQuic datapath is used for three runtime modes:
 
-The implementation exposes three runtime modes on the same optimized DPDK/MsQuic datapath: `OFF` is the MsQuic-DPDK reference without GreenQUIC power-management decisions, `BASIC` / GreenQUIC uses physical datapath activity, and `PLUS` / GreenQUIC+ extends that policy with short-lived QUIC transport information.
+- **OFF / MsQuic-DPDK:** GreenQUIC power-management decisions are bypassed.
+- **BASIC / GreenQUIC:** power decisions use physical DPDK activity.
+- **PLUS / GreenQUIC+:** the BASIC policy is extended with short-lived QUIC transport information.
 
-The DPDK/MsQuic context is closely related to the public TUM kernel-bypass artifact repository `tumi8/quic-bypass-paper`. GreenQUIC+ adds the adaptive power-management mechanism, its QUIC-aware extension, and the corresponding power/performance evaluation workflow.
+The Linux comparison is **P7**, an isolated normal-Linux MsQuic UDP build with DPDK and XDP disabled.
 
 ---
 
 ## Repository status and provenance
 
 ```text
-Repository: Meamarian/GreenQUIC-Plus
-Visibility: private
+Repository:     Meamarian/GreenQUIC-Plus
+Visibility:     private
 Default branch: main
 ```
 
-`main` was created from the final paper/reproduction line of the original repository:
+`main` originated from the final paper/reproduction branch of the original repository:
 
 ```text
 old repository: Meamarian/GreenQUIC
@@ -37,105 +39,139 @@ old branch:     performance2/p5-multicore
 import SHA:     58d00a39270f512b6e9586704797dff6285e73b2
 ```
 
-The exact imported snapshot is also preserved as `paper/original-p5-multicore`. Current GreenQUIC+ work uses `main` or branches created from it.
+The exact imported state is preserved as `paper/original-p5-multicore`. Current work and reproduction use `main`.
 
 ---
 
 ## Repository layout
 
-| Area | Purpose |
+| Path | Purpose |
 |---|---|
 | `msquic/` | MsQuic + DPDK source used by GreenQUIC+ |
-| `greenquic_test_suite_v22/` | authoritative P5/P7 build, run, recorder, report, and validation suite |
-| `results_analysis/` | exact paper configurations, original XLSX tuning records, chart code/SVGs, reproduction guide |
-| `tum_testbed_setup/` | one supported provisioning/build setup script plus its guide |
+| `greenquic_test_suite_v22/` | authoritative P5/P7 build, execution, recording, report and validation suite |
+| `results_analysis/` | exact paper configuration, tuning XLSX files, chart code/SVGs, zero-argument reproduction helpers |
+| `tum_testbed_setup/` | single supported TUM/LRZ provisioning/build implementation and guide |
 | `acpi.sh` | ACPI/platform power helper |
 | `msr.py` | MSR helper |
 
-The old `greenquic_test_suite/`, obsolete root patch/bootstrap files, and the old top-level `power_mng_tunning/` were removed from `main` after the current paper path was verified. They remain recoverable from Git history/backups.
+The obsolete `greenquic_test_suite/`, old root bootstrap/patch helpers and old `power_mng_tunning/` directory were removed from `main`. Historical states remain in Git history/backups.
 
 ---
 
-## Important: roles are not host names
+# Roles and paper-testbed defaults
 
-All supported guides now use these roles:
+Roles are semantic; host names are not.
 
 ```text
-CONTROL HOST  machine that has the private GitHub checkout and launches setup/tests
+CONTROL HOST  machine holding the private checkout and launching setup/tests
 SERVER        QUIC server + experiment controller
 CLIENT        QUIC client
 BASTION       optional SSH jump/bootstrap host
 ```
 
-Our paper testbed used:
+Our paper-testbed defaults are centralized in:
 
 ```text
-CONTROL HOST = Mac
-SERVER       = idex
-CLIENT       = tinyman
-BASTION      = mohsen@coinbase
+results_analysis/paper_testbed_defaults.sh
 ```
 
-`idex` is not hard-coded to mean SERVER and `tinyman` is not hard-coded to mean CLIENT in the supported entrypoints. Change connectivity with switches rather than editing scripts.
-
-### SSH topology
-
-Fresh setup needs CONTROL HOST -> SERVER and CLIENT, plus SERVER -> CLIENT. If a bastion is used, CONTROL HOST must reach the bastion and the bastion must reach both nodes during public-key bootstrap. CLIENT -> SERVER is not required.
-
-The final paper launcher only needs CONTROL HOST -> SERVER and SERVER -> CLIENT. Only the CONTROL HOST needs private-GitHub credentials; exact source commits are transferred to the experiment nodes by Git bundle.
-
-A different Mac/control host is supported if it can fetch this private repository and has the required SSH route. Use `--bastion` and `--ssh-key` explicitly so the workflow does not depend on one person's `~/.ssh/config`.
-
-The complete role/SSH description is in:
+Default values:
 
 ```text
-results_analysis/README.md
-tum_testbed_setup/README.md
-results_analysis/configuration/experiment_paths.json
+CONTROL checkout:       current GreenQUIC-Plus clone
+SERVER:                 idex
+CLIENT from CONTROL:    tinyman
+CLIENT from SERVER:     tinyman
+BASTION:                mohsen@coinbase
+CONTROL SSH key:        $HOME/.ssh/id_ed25519
+remote user:            root
+remote repository root: /root/mohsen
+branch:                 main
+paper test NIC PCI:     0000:18:00.0
 ```
+
+Therefore, on our testbed the supported high-level commands need **no host name, bastion or SSH-key arguments**. Another deployment can override the `GQ_*` environment variables or call the lower-level scripts with explicit switches.
+
+`idex` does not mean SERVER in the code and `tinyman` does not mean CLIENT in the code. They are only our paper-testbed defaults.
+
+### Required SSH topology
+
+Fresh deployment:
+
+```text
+CONTROL -> BASTION        required only when a bastion is used
+BASTION -> SERVER         required for fresh-node public-key bootstrap
+BASTION -> CLIENT         required for fresh-node public-key bootstrap
+CONTROL -> SERVER         required
+CONTROL -> CLIENT         required
+SERVER  -> CLIENT         required
+CLIENT  -> SERVER         not required
+```
+
+Final paper run after provisioning:
+
+```text
+CONTROL -> SERVER         required
+SERVER  -> CLIENT         required
+CONTROL -> CLIENT         not required by the final launcher
+CLIENT  -> SERVER         not required
+```
+
+Only the CONTROL HOST needs private-GitHub credentials. Exact source commits are transferred to the experiment nodes with Git bundles.
 
 ---
 
-## Final paper configuration
+# What P5 and P7 mean
 
-P5 uses the optimized Performance2 V2 datapath with the exact marker:
+`P5` and `P7` are experiment names, not QUIC versions.
+
+**P5** is the repeated 8-GiB download experiment over the optimized DPDK MsQuic path. It compares OFF, BASIC and PLUS on the same Performance2 V2 datapath.
+
+**P7** is the matching repeated 8-GiB experiment over isolated normal-Linux MsQuic/UDP.
+
+Final workload:
+
+```text
+6 independent repetitions
+5 sequential 8-GiB downloads per repetition
+5 s inter-download gap
+5 s edge cooldown
+5 s between workloads/runs
+seed 20260806
+```
+
+Final P5 datapath marker:
 
 ```text
 GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
 ```
 
-The final focused power-policy configuration is TOP3:
+Final TOP3 power-policy overrides:
 
 ```text
 PRESSURE_UP=450
 RX_QUEUE_HIGH=48
 ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16
 FREQ_PERIOD_US=10000
+GQ_IDLE_MODE_OVERRIDE=monitor
+GQ_IDLE_FALLBACK_OVERRIDE=short
 ```
 
-The paper topology is single-DPDK-owner:
+Paper CPU topology:
 
 ```text
 ENABLE_MULTICORE=0
-DPDK CPU=19
+DPDK / Linux dataplane CPU=19
 MsQuic worker CPUs=21,22,23,24
 ```
 
-P5 OFF, BASIC and PLUS share the same optimized datapath. BASIC uses physical DPDK signals; PLUS adds QUIC semantic hints/guards. The Linux comparison is P7: an isolated normal-Linux MsQuic UDP build with DPDK/XDP disabled.
-
-Machine-readable configuration:
-
-```text
-results_analysis/configuration/p5_paper_evaluation.json
-results_analysis/configuration/p7_paper_evaluation.json
-results_analysis/configuration/experiment_paths.json
-```
+Machine-readable configuration is under `results_analysis/configuration/`.
 
 ---
 
-## P5 and P7 binaries
+# Exact binaries
 
-On both experiment endpoints the repository is installed at `/root/mohsen`.
+On both SERVER and CLIENT, after supported setup:
 
 ```text
 P5 client: /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop
@@ -145,87 +181,86 @@ P7 client: /root/mohsen/msquic/build-linux-p7/bin/Release/quicinterop
 P7 server: /root/mohsen/msquic/build-linux-p7/bin/Release/quicinteropserver
 ```
 
-`P5` and `P7` are internal experiment names, not QUIC versions. See `results_analysis/README.md` for the exact meaning, directories, build scripts, and start-state workflows.
+P7 is built with `QUIC_LINUX_DPDK_ENABLED=OFF` and `QUIC_LINUX_XDP_ENABLED=OFF`, and the build verifies that P7 does not link DPDK.
 
 ---
 
-# Quick reproduction entrypoints
+# Reproduction quick start
 
-## Fresh Debian nodes or Debian already installed but code/builds need provisioning
+For POS allocation/reimage/reset, use `tum_testbed_setup/README.md`; every command there states where it must run.
 
-For POS allocation/image/reset, first follow `tum_testbed_setup/README.md`. POS commands are explicitly marked **RUN ON: Coinbase/POS shell**.
+## 1. Debian Trixie exists; deploy current `main`, prepare hosts and build everything
 
-After Debian Trixie is reachable:
-
-**RUN ON: CONTROL HOST** (paper-testbed example):
+**RUN ON: CONTROL HOST** from the GreenQUIC+ checkout:
 
 ```bash
-cd ~/Downloads/GreenQUIC-Plus && \
-git fetch origin '+refs/heads/main:refs/remotes/origin/main' && \
-git checkout main && \
-git reset --hard refs/remotes/origin/main && \
-python3 results_analysis/verify_paper_configuration.py && \
-bash tum_testbed_setup/greenquic_fresh_setup.sh \
-  --server-host idex \
-  --client-host tinyman \
-  --server-to-client-host tinyman \
-  --bastion mohsen@coinbase \
-  --ssh-key "$HOME/.ssh/id_ed25519"
+bash results_analysis/setup_paper_testbed.sh
 ```
 
-Immediately use **a second CONTROL-HOST terminal** to monitor as shown in `tum_testbed_setup/README.md`.
+Immediately in **a second CONTROL-HOST terminal**, use the live setup/build monitor:
 
-If another deployment uses different host names, replace the switch values. If the CLIENT has a different name from the SERVER's network view, set `--server-to-client-host` separately.
+```bash
+bash results_analysis/live_monitor_setup.sh
+```
 
-## Machines already provisioned: run final paper evaluation
+This is also the supported path when Debian is already installed but `/root/mohsen` is absent, stale, or you want a fresh exact deployment/build. Do not manually clone the private repository on SERVER or CLIENT.
 
-The authoritative launcher is:
+## 2. Hosts/repository/DPDK are already correct; rebuild only P5 and P7
+
+**RUN ON: CONTROL HOST:**
+
+```bash
+bash results_analysis/rebuild_paper_binaries.sh
+```
+
+Immediately in **a second CONTROL-HOST terminal:**
+
+```bash
+bash results_analysis/live_monitor_setup.sh
+```
+
+If source code also changed or the remote checkout may be stale, use the full setup in step 1 instead.
+
+## 3. Everything is ready; run the final paper evaluation
+
+**RUN ON: CONTROL HOST:**
+
+```bash
+bash results_analysis/run_paper_evaluation.sh
+```
+
+Immediately in **a second CONTROL-HOST terminal:**
+
+```bash
+bash results_analysis/live_monitor_run.sh
+```
+
+The final launcher deliberately rebuilds/verifies P5 and P7 before measured traffic, records the exact Git SHA and effective configuration, runs P5 then P7, and packages results on the SERVER role.
+
+## 4. Download the latest finished result
+
+**RUN ON: CONTROL HOST:**
+
+```bash
+bash results_analysis/download_paper_results.sh
+```
+
+This operates only after a run is marked `DONE`; there is no live experiment log to follow during this short download. Use `live_monitor_run.sh` while the experiment itself is still running.
+
+---
+
+## Analysis artifacts
+
+`results_analysis/` contains the original supplied tuning workbooks and chart artifacts, including:
 
 ```text
-greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh
+results_analysis/tuning/GreenQUIC_DPDK_Path_Perf_Tunning_v2.xlsx
+results_analysis/tuning/GreenQUIC_Power_Mng_Tuning_v1.xlsx
+results_analysis/charts/chart_v2.py
+results_analysis/charts/svg/...
 ```
 
-The `_v2.sh` and `_v3.sh` files are compatibility wrappers only; they call the same authoritative implementation.
-
-**RUN ON: CONTROL HOST** (paper-testbed example):
-
-```bash
-cd ~/Downloads/GreenQUIC-Plus && \
-git fetch origin '+refs/heads/main:refs/remotes/origin/main' && \
-git checkout main && \
-git reset --hard refs/remotes/origin/main && \
-python3 results_analysis/verify_paper_configuration.py && \
-bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh \
-  --server-host idex \
-  --client-host tinyman \
-  --bastion mohsen@coinbase \
-  --ssh-key "$HOME/.ssh/id_ed25519"
-```
-
-Immediately use **a second CONTROL-HOST terminal** for the live monitor in `results_analysis/README.md`.
-
-The final launcher itself records the exact Git SHA, server/client role hosts, effective TOP3/P7 configuration, logs, and result ZIP paths.
-
----
-
-## Results and supplied analysis material
-
-`results_analysis/` contains the actual supplied tuning workbooks, `chart_v2.py`, SVG charts, their SHA-256 manifest/provenance, exact P5/P7 JSON configurations, result downloader, and reproducibility preflight.
-
-**RUN ON: CONTROL HOST** to validate the repository's final configuration without contacting the testbed:
-
-```bash
-python3 results_analysis/verify_paper_configuration.py
-```
-
-**RUN ON: CONTROL HOST** to download the latest finished paper run from the selected SERVER role:
-
-```bash
-bash results_analysis/download_latest_reproduction.sh \
-  --server-host idex \
-  --bastion mohsen@coinbase \
-  --ssh-key "$HOME/.ssh/id_ed25519"
-```
+`artifact_files.sha256.json` records expected sizes/SHA-256 values for the imported artifacts.
 
 ---
 
@@ -241,10 +276,12 @@ performance2/p5-max-goodput  preserved Performance2 tuning line
 performance2/p5-multicore    preserved original paper branch name
 ```
 
-Additional historical branches are kept for provenance. For collaborative work, use feature/fix branches and pull requests rather than changing the preserved historical branches.
+Additional historical branches are retained for provenance. Use feature/fix branches and pull requests for collaborative development rather than modifying preserved historical branches.
 
 ---
 
-## Scope
+## Detailed guides
 
-GreenQUIC+ is a research prototype for studying the performance/power tradeoff of QUIC over DPDK and the value of transport-aware information in CPU frequency/idle decisions. It is not a production power-management framework.
+- `results_analysis/README.md` — full start-state decision tree, exact configurations, result locations and analysis artifacts.
+- `tum_testbed_setup/README.md` — POS/Debian provisioning and the single TUM setup implementation.
+- `results_analysis/HOST_ROLE_AUDIT.md` — host-name/SSH dependency audit.
