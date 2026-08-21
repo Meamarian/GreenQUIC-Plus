@@ -1,139 +1,149 @@
 # P7 — isolated Linux UDP baseline
 
-> **Role terminology:** `SERVER` and `CLIENT` are roles, not host names. In the
-> paper testbed the SERVER was `idex` and the CLIENT was `tinyman`; another
-> deployment may use different names. The authoritative combined reproduction is
-> documented in `results_analysis/README.md` and is launched from the control host.
+`P7` is the internal experiment name for the normal-Linux MsQuic UDP comparison used by the GreenQUIC+ paper. It is not a QUIC version.
 
-P7 measures the normal MsQuic Linux kernel UDP datapath against the P5 DPDK
-experiment without mixing the two dataplanes in one binary. `P7` is an internal
-experiment name, not a QUIC version.
+## Roles
 
-## Where commands run
+- **CONTROL HOST** launches the exact combined paper evaluation.
+- **SERVER** runs the Linux `quicinteropserver` and the P7 matrix controller.
+- **CLIENT** runs `quicinterop`, started by SERVER over SSH.
 
-- **Build-only command:** run on each endpoint whose P7 binary you want to rebuild.
-- **Standalone P7 matrix:** run on the **SERVER role**, because the server-side
-  matrix controller starts the CLIENT over SSH.
-- **Final P5/P7 paper reproduction:** run on the **control host** using the
-  repository's `mac_run_p5_p7_fair_repro_6x5.sh`; do not start the standalone P7
-  command for the final comparison.
+Our paper defaults are SERVER=`idex`, CLIENT=`tinyman`, BASTION=`mohsen@coinbase`, and CONTROL SSH key=`$HOME/.ssh/id_ed25519`; see `results_analysis/paper_testbed_defaults.sh`. These are defaults, not semantic host-name requirements.
 
-The SERVER role must be able to SSH as root to the CLIENT role. The CLIENT does
-not need to SSH back to the SERVER for this workflow.
+SERVER -> CLIENT root SSH is required. CLIENT -> SERVER SSH is not required.
 
-## Datapath and binaries
+---
 
-`build_p7_linux.sh` copies the tracked `msquic` source into an isolated source
-tree and builds with:
+## Datapath and build
+
+`build_p7_linux.sh` creates an isolated source tree and builds with:
 
 ```text
 QUIC_LINUX_DPDK_ENABLED=OFF
 QUIC_LINUX_XDP_ENABLED=OFF
 ```
 
-Linux therefore uses `datapath_linux.c` + `datapath_epoll.c` and the kernel UDP
-stack.
+P7 therefore uses the normal Linux UDP socket datapath (`datapath_linux.c` + `datapath_epoll.c`). The build checks that neither P7 executable links DPDK.
 
-On each endpoint:
+On both endpoints:
 
 ```text
 Experiment directory:
 /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline
 
-Build command location:
+Build script:
 /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline/build_p7_linux.sh
 
-Isolated source tree:
+Isolated source:
 /root/mohsen/msquic-p7-linux-source
 
-Client executable:
+Build directory:
+/root/mohsen/msquic/build-linux-p7
+
+CLIENT executable:
 /root/mohsen/msquic/build-linux-p7/bin/Release/quicinterop
 
-Server executable:
+SERVER executable:
 /root/mohsen/msquic/build-linux-p7/bin/Release/quicinteropserver
 ```
 
-The build script verifies that neither executable links DPDK.
+---
 
-## CPU and measurement mapping
+## Final paper P7 configuration
 
-The paper comparison keeps MsQuic workers on CPUs `21,22,23,24`. When
-`--pin-irq 1` is used, E810 MSI interrupts are directed to CPU19 so CPU19 is the
-Linux NIC IRQ/NAPI/softirq target. `--pin-quic 1` also constrains the P7
-client/server process to the selected worker CPU list.
-
-The final paper configuration records package+DRAM RAPL at 6 ms, frequency at
-1 ms, and CPU19 C-state/frequency behavior. Transfer boundaries come from the
-QUIC applications rather than wall-clock matching.
-
-## Final paper Linux network profile
-
-The GreenQUIC+ paper evaluation uses:
+Workload:
 
 ```text
-MTU                         1500
-UDP rmem default/max        6815744 bytes
-UDP wmem default/max        6815744 bytes
-combined channels           1
-RPS                         disabled
-RDMA auxiliary child        disabled during the test
-IRQ/NAPI CPU                19
-MsQuic worker CPUs          21,22,23,24
-NIC offload profile         paper
+6 independent runs
+5 sequential 8-GiB downloads per run
+5 s gaps
+5 s pre/post cooldown
+5 s between runs
 ```
 
-The `paper` offload profile requires TSO, GSO, TX checksum and GRO on, with
-supported UDP segmentation/RX checksum/hardware GRO enabled best-effort. Do not
-use the older `native` example when reproducing the final GreenQUIC+ paper.
+CPU/recording mapping:
 
-## Standalone P7 run for debugging
+```text
+Linux IRQ/NAPI/softirq target CPU=19
+MsQuic worker CPUs=21,22,23,24
+IRQ pinning=on
+QUIC pinning=on
+RPS=off
+irqbalance stopped during measurement
+RAPL cadence=6 ms
+frequency cadence=1 ms
+CPU19 is the main frequency/C-state comparison CPU
+```
 
-**RUN ON: SERVER role.** Substitute a client hostname/address that the SERVER
-can SSH to. Example for the paper testbed:
+Network profile:
+
+```text
+MTU=1500
+UDP rmem default/max=6815744
+UDP wmem default/max=6815744
+combined channels=1
+RDMA auxiliary child disabled during test
+NIC offload profile=paper
+```
+
+The `paper` profile requires TSO, GSO, TX checksum and GRO ON. UDP segmentation, RX checksum and hardware GRO are enabled best-effort when supported. The runner restores the pre-P7 DPDK driver after the Linux matrix.
+
+---
+
+## Exact paper execution
+
+Do not launch standalone P7 for the final paper comparison. Use the combined high-level runner so exact Git SHA, P5 TOP3, P5→P7 NIC transition, P7 tuning, recording and packaging are controlled together.
+
+**RUN ON: CONTROL HOST:**
 
 ```bash
-CLIENT_HOST=tinyman
-
-/root/run_p7.sh \
-  --client-host "$CLIENT_HOST" \
-  --downloads 5 \
-  --gap-seconds 5 \
-  --runs 6 \
-  --pre-cooldown-seconds 5 \
-  --post-cooldown-seconds 5 \
-  --between-runs-seconds 5 \
-  --dataplane-cpu 19 \
-  --quic-cpus 21,22,23,24 \
-  --pin-irq 1 \
-  --pin-quic 1 \
-  --disable-rps 1 \
-  --disable-rdma 1 \
-  --nic-offloads paper \
-  --udp-rmem 6815744 \
-  --udp-wmem 6815744 \
-  --combined-channels 1 \
-  --record-quic-cpus 0 \
-  --rapl-interval-ms 6 \
-  --freq-interval-ms 1 \
-  --restore-dpdk 1 \
-  --mtu 1500
+bash results_analysis/run_paper_evaluation.sh
 ```
 
-Before running that standalone command, verify from the SERVER role:
+Immediately in **a second CONTROL-HOST terminal:**
 
 ```bash
-ssh -o BatchMode=yes -o ConnectTimeout=10 root@"$CLIENT_HOST" 'echo SERVER_TO_CLIENT_SSH_OK; hostname'
+bash results_analysis/live_monitor_run.sh
 ```
 
-For the final paper comparison use the control-host launcher instead, because it
-also fixes the exact Git SHA, rebuilds/verifies P5 and P7, applies the P5 TOP3
-profile, controls the P5→P7 NIC transition, validates recorder evidence, and
-packages both result sets.
+---
+
+## Rebuild P7/P5 without redeploying source
+
+Use this only when the remote checkout and host/DPDK preparation are already correct.
+
+**RUN ON: CONTROL HOST:**
+
+```bash
+bash results_analysis/rebuild_paper_binaries.sh
+```
+
+Immediately in **a second CONTROL-HOST terminal:**
+
+```bash
+bash results_analysis/live_monitor_setup.sh
+```
+
+If code changed or `/root/mohsen` may be stale, use `results_analysis/setup_paper_testbed.sh` instead.
+
+---
+
+## Historical filenames
+
+`run_matrix_from_idex.sh` retains its historical filename from the original testbed. The current combined runner supplies the CLIENT endpoint explicitly; the filename does not require the SERVER OS hostname to be `idex`.
+
+Standalone lower-level P7 commands remain useful for diagnostics, but they are not the authoritative paper reproduction interface.
+
+---
 
 ## Results
 
-Each repetition contains local application logs, timeline data, RAPL,
-frequency/C-state traces, NIC statistics, and effective offload state. The
-matrix root contains the aggregate P7 CSV/JSON statistics and generated charts.
-The exact final configuration is also recorded under
-`results_analysis/configuration/p7_paper_evaluation.json`.
+Each run contains local application logs, timeline data, RAPL, frequency/C-state traces, NIC statistics and effective offload state. Aggregate P7 reports/charts are generated under the P7 matrix output directory.
+
+The exact final machine-readable configuration is:
+
+```text
+results_analysis/configuration/p7_paper_evaluation.json
+```
+
+For combined result ZIPs, `config.env`, download commands and all start-state workflows, see `results_analysis/README.md`.
