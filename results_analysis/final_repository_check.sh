@@ -15,8 +15,7 @@ fail(){ echo "FINAL REPOSITORY CHECK: FAIL: $*" >&2; exit 1; }
 python3 results_analysis/verify_paper_configuration.py
 
 # 2) Syntax-check every current top-level shell entrypoint/helper in the supported
-# reproduction areas, not only the three convenience wrappers. Use shell globs
-# rather than GNU-find-only options so this also works with the default macOS tools.
+# reproduction areas. Use portable shell globs so this works on macOS and Linux.
 for dir in results_analysis tum_testbed_setup "$P5" "$P7"; do
   for f in "$dir"/*.sh; do
     [[ -e "$f" ]] || continue
@@ -24,7 +23,6 @@ for dir in results_analysis tum_testbed_setup "$P5" "$P7"; do
   done
 done
 
-# Critical Python helpers must at least parse/compile locally.
 python3 -m py_compile \
   results_analysis/verify_paper_configuration.py \
   results_analysis/import_attached_artifacts.py \
@@ -32,7 +30,6 @@ python3 -m py_compile \
   "$P5/apply_p5_performance2_v2.py" \
   "$P7/build_p7_report.py"
 
-# Machine-readable records/manifests must be valid JSON.
 for f in \
   results_analysis/configuration/experiment_paths.json \
   results_analysis/configuration/p5_paper_evaluation.json \
@@ -47,16 +44,13 @@ done
 [[ ! -e greenquic_test_suite ]] || fail "legacy greenquic_test_suite/ still exists"
 [[ ! -e power_mng_tunning ]] || fail "obsolete power_mng_tunning/ still exists"
 [[ -d greenquic_test_suite_v22 ]] || fail "greenquic_test_suite_v22/ missing"
+[[ ! -e results_analysis/.final-audit-lock ]] || fail "temporary final-audit marker remains"
 
-tum_listing="$(
-  for f in tum_testbed_setup/*; do
-    [[ -f "$f" ]] && basename "$f"
-  done | sort
-)"
+tum_listing="$(for f in tum_testbed_setup/*; do [[ -f "$f" ]] && basename "$f"; done | sort)"
 expected_tum_listing="$(printf '%s\n' README.md greenquic_fresh_setup.sh | sort)"
 [[ "$tum_listing" == "$expected_tum_listing" ]] || fail "tum_testbed_setup/ should contain only README.md and greenquic_fresh_setup.sh; found: $(printf '%s' "$tum_listing" | tr '\n' ' ')"
 
-# 4) Original analysis artifacts must really be committed, not merely documented.
+# 4) Original analysis artifacts must really be committed.
 [[ -f results_analysis/tuning/GreenQUIC_DPDK_Path_Perf_Tunning_v2.xlsx ]] || fail "DPDK tuning workbook missing"
 [[ -f results_analysis/tuning/GreenQUIC_Power_Mng_Tuning_v1.xlsx ]] || fail "power tuning workbook missing"
 [[ -f results_analysis/charts/chart_v2.py ]] || fail "chart_v2.py missing"
@@ -69,22 +63,19 @@ for f in results_analysis/*.tmp results_analysis/.*tmp*; do
   fail "temporary audit files remain"
 done
 
-# 5) Paper-testbed defaults are centralized, but supported runtime role checks
-# must remain portable to different physical host names.
-grep -Fq 'GQ_SERVER_HOST="${GQ_SERVER_HOST:-idex}"' results_analysis/paper_testbed_defaults.sh || fail "SERVER default missing"
-grep -Fq 'GQ_CLIENT_HOST="${GQ_CLIENT_HOST:-tinyman}"' results_analysis/paper_testbed_defaults.sh || fail "CLIENT default missing"
-grep -Fq 'GQ_SERVER_TO_CLIENT_HOST="${GQ_SERVER_TO_CLIENT_HOST:-$GQ_CLIENT_HOST}"' results_analysis/paper_testbed_defaults.sh || fail "SERVER->CLIENT default missing"
-grep -Fq 'GQ_BASTION="${GQ_BASTION:-mohsen@coinbase}"' results_analysis/paper_testbed_defaults.sh || fail "BASTION default missing"
-grep -Fq 'GQ_SSH_KEY="${GQ_SSH_KEY:-$HOME/.ssh/id_ed25519}"' results_analysis/paper_testbed_defaults.sh || fail "SSH-key default missing"
+# 5) Paper routing defaults are centralized, while runtime role checks stay portable.
+grep -Fq 'GQ_SERVER_HOST="${GQ_SERVER_HOST:-idex}"' results_analysis/paper_testbed_defaults.sh || fail "SERVER paper default missing"
+grep -Fq 'GQ_CLIENT_HOST="${GQ_CLIENT_HOST:-tinyman}"' results_analysis/paper_testbed_defaults.sh || fail "CLIENT paper default missing"
+grep -Fq 'GQ_SERVER_TO_CLIENT_HOST="${GQ_SERVER_TO_CLIENT_HOST:-$GQ_CLIENT_HOST}"' results_analysis/paper_testbed_defaults.sh || fail "SERVER->CLIENT paper default missing"
+grep -Fq 'GQ_BASTION="${GQ_BASTION:-mohsen@coinbase}"' results_analysis/paper_testbed_defaults.sh || fail "BASTION paper default missing"
+grep -Fq 'GQ_SSH_KEY="${GQ_SSH_KEY:-$HOME/.ssh/id_ed25519}"' results_analysis/paper_testbed_defaults.sh || fail "SSH-key paper default missing"
 
 grep -Fq 'SERVER_NAME="${SERVER_NAME:-$GQ_LOCAL_SHORT_HOST}"' greenquic_test_suite_v22/suite.env || fail "portable SERVER runtime hostname guard missing"
 grep -Fq 'CLIENT_NAME="${CLIENT_NAME:-$GQ_LOCAL_SHORT_HOST}"' greenquic_test_suite_v22/suite.env || fail "portable CLIENT runtime hostname guard missing"
 ! grep -Fq 'SERVER_NAME="${SERVER_NAME:-idex}"' greenquic_test_suite_v22/suite.env || fail "idex was reintroduced as runtime SERVER hostname requirement"
 ! grep -Fq 'CLIENT_NAME="${CLIENT_NAME:-tinyman}"' greenquic_test_suite_v22/suite.env || fail "tinyman was reintroduced as runtime CLIENT hostname requirement"
 
-# 6) High-level paper commands must safely synchronize a clean, behind-only
-# CONTROL-HOST main checkout before setup/run/rebuild. They must never blindly
-# reset local work or unique commits.
+# 6) CONTROL main synchronization must be safe: clean, main-only and fast-forward-only.
 for f in results_analysis/setup_paper_testbed.sh results_analysis/run_paper_evaluation.sh results_analysis/rebuild_paper_binaries.sh; do
   grep -Fq 'control_main_sync.sh' "$f" || fail "$f does not use safe CONTROL main synchronization"
 done
@@ -92,7 +83,22 @@ grep -Fq "git fetch origin '+refs/heads/main:refs/remotes/origin/main'" results_
 grep -Fq 'git merge-base --is-ancestor' results_analysis/control_main_sync.sh || fail "control sync ahead/divergence protection missing"
 grep -Fq 'git status --porcelain=v1 --untracked-files=all' results_analysis/control_main_sync.sh || fail "control sync dirty-tree protection missing"
 
-# 7) Supported setup and final launcher must remain role/switch based.
+# 7) High-level wrappers and monitors must expose role-oriented management switches.
+for token in '--server-host' '--client-host' '--server-to-client-host' '--bastion' '--ssh-key'; do
+  grep -Fq -- "$token" results_analysis/setup_paper_testbed.sh || fail "setup wrapper missing $token"
+done
+for token in '--server-host' '--client-host' '--bastion' '--ssh-key'; do
+  grep -Fq -- "$token" results_analysis/run_paper_evaluation.sh || fail "paper-run wrapper missing $token"
+  grep -Fq -- "$token" results_analysis/rebuild_paper_binaries.sh || fail "rebuild wrapper missing $token"
+done
+for token in '--server-host' '--client-host' '--bastion' '--ssh-key'; do
+  grep -Fq -- "$token" results_analysis/live_monitor_setup.sh || fail "setup monitor missing $token"
+done
+for token in '--server-host' '--bastion' '--ssh-key'; do
+  grep -Fq -- "$token" results_analysis/live_monitor_run.sh || fail "run monitor missing $token"
+done
+
+# 8) Supported setup/final launcher must remain role/switch based; no literal SSH to paper names.
 for token in '--server-host' '--client-host' '--bastion' '--ssh-key'; do
   grep -Fq -- "$token" tum_testbed_setup/greenquic_fresh_setup.sh || fail "TUM setup missing $token"
   grep -Fq -- "$token" "$P5/mac_run_p5_p7_fair_repro_6x5.sh" || fail "paper launcher missing $token"
@@ -100,34 +106,42 @@ done
 grep -Fq -- '--server-to-client-host' tum_testbed_setup/greenquic_fresh_setup.sh || fail "TUM setup missing separate SERVER->CLIENT endpoint switch"
 grep -Fq 'SERVER -> CLIENT: required' tum_testbed_setup/greenquic_fresh_setup.sh || fail "TUM setup missing SERVER->CLIENT SSH requirement"
 
+for f in \
+  results_analysis/setup_paper_testbed.sh \
+  results_analysis/run_paper_evaluation.sh \
+  results_analysis/rebuild_paper_binaries.sh \
+  results_analysis/live_monitor_setup.sh \
+  results_analysis/live_monitor_run.sh \
+  tum_testbed_setup/greenquic_fresh_setup.sh \
+  "$P5/mac_run_p5_p7_fair_repro_6x5.sh"; do
+  ! grep -Eq 'root@(idex|tinyman)([^A-Za-z0-9_.-]|$)' "$f" || fail "$f contains a literal SSH target for a paper host name"
+done
+
 # Operational high-level scripts must not fall back to the old paper branch.
 if grep -nF 'performance2/p5-multicore' \
   results_analysis/*.sh tum_testbed_setup/greenquic_fresh_setup.sh "$P5/mac_run_p5_p7_fair_repro_6x5.sh"; then
   fail "old paper branch name appears in a supported operational script"
 fi
 
-# 8) README command-location/monitor pairing for long-running operations.
-for f in README.md results_analysis/README.md tum_testbed_setup/README.md; do
+# 9) Current READMEs must label command location and pair long-running operations with monitors.
+for f in README.md results_analysis/README.md tum_testbed_setup/README.md "$P5/README.md" "$P7/README.md"; do
   grep -Fq 'RUN ON:' "$f" || fail "$f does not label command location"
 done
 
-grep -Fq 'bash results_analysis/setup_paper_testbed.sh' README.md || fail "root README missing zero-argument setup command"
-grep -Fq 'bash results_analysis/live_monitor_setup.sh' README.md || fail "root README missing setup monitor"
-grep -Fq 'bash results_analysis/rebuild_paper_binaries.sh' README.md || fail "root README missing rebuild command"
-grep -Fq 'bash results_analysis/run_paper_evaluation.sh' README.md || fail "root README missing zero-argument final-run command"
-grep -Fq 'bash results_analysis/live_monitor_run.sh' README.md || fail "root README missing final-run monitor"
+for f in README.md results_analysis/README.md tum_testbed_setup/README.md; do
+  grep -Fq 'bash results_analysis/setup_paper_testbed.sh' "$f" || fail "$f missing supported setup command"
+  grep -Fq 'bash results_analysis/live_monitor_setup.sh' "$f" || fail "$f missing setup monitor"
+  grep -Fq 'bash results_analysis/run_paper_evaluation.sh' "$f" || fail "$f missing final-run command"
+  grep -Fq 'bash results_analysis/live_monitor_run.sh' "$f" || fail "$f missing final-run monitor"
+done
+for f in "$P5/README.md" "$P7/README.md"; do
+  grep -Fq 'bash results_analysis/run_paper_evaluation.sh' "$f" || fail "$f missing high-level final-run command"
+  grep -Fq 'bash results_analysis/live_monitor_run.sh' "$f" || fail "$f missing final-run monitor"
+  grep -Fq 'bash results_analysis/rebuild_paper_binaries.sh' "$f" || fail "$f missing rebuild command"
+  grep -Fq 'bash results_analysis/live_monitor_setup.sh' "$f" || fail "$f missing rebuild monitor"
+done
 
-grep -Fq 'bash results_analysis/setup_paper_testbed.sh' results_analysis/README.md || fail "analysis README missing setup command"
-grep -Fq 'bash results_analysis/live_monitor_setup.sh' results_analysis/README.md || fail "analysis README missing setup/build monitor"
-grep -Fq 'bash results_analysis/run_paper_evaluation.sh' results_analysis/README.md || fail "analysis README missing final-run command"
-grep -Fq 'bash results_analysis/live_monitor_run.sh' results_analysis/README.md || fail "analysis README missing final-run monitor"
-
-grep -Fq 'bash results_analysis/setup_paper_testbed.sh' tum_testbed_setup/README.md || fail "TUM README missing supported setup command"
-grep -Fq 'bash results_analysis/live_monitor_setup.sh' tum_testbed_setup/README.md || fail "TUM README missing setup monitor"
-grep -Fq 'bash results_analysis/run_paper_evaluation.sh' tum_testbed_setup/README.md || fail "TUM README missing final-run command"
-grep -Fq 'bash results_analysis/live_monitor_run.sh' tum_testbed_setup/README.md || fail "TUM README missing final-run monitor"
-
-# 9) Exact paper build/run anchors.
+# 10) Exact paper build/run anchors.
 MARKER='GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0'
 grep -Fq "$MARKER" "$P5/mac_run_p5_p7_fair_repro_6x5.sh" || fail "final P5 marker missing from authoritative launcher"
 for token in '--env PRESSURE_UP=450' '--env RX_QUEUE_HIGH=48' '--env ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16' '--env FREQ_PERIOD_US=10000'; do
@@ -141,6 +155,7 @@ echo "FINAL REPOSITORY CHECK: PASS"
 echo "Repository layout: PASS"
 echo "TUM setup: one implementation"
 echo "Host roles/SSH switches: PASS"
+echo "High-level wrappers/monitors: parameterized"
 echo "CONTROL main synchronization safety: PASS"
 echo "Paper defaults: idex/tinyman via mohsen@coinbase with \$HOME/.ssh/id_ed25519"
 echo "Artifacts: 2 XLSX + chart_v2.py + 41 SVG"
