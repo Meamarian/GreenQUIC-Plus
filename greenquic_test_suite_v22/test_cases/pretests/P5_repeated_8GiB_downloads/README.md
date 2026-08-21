@@ -1,149 +1,165 @@
-# P5 — repeated 8 GiB downloads with real idle gaps
+# P5 — GreenQUIC+ DPDK repeated-download experiment
 
-P5 compares OFF, BASIC and PLUS using a download workload that naturally
-contains active and idle periods.
+`P5` is the internal name for the repeated 8-GiB QUIC download experiment over the optimized DPDK MsQuic datapath. It is not a QUIC protocol version.
 
-Each independent P5 workload uses:
+## Roles and where commands run
 
-- one `quicinteropserver` process on idex;
-- one `quicinterop` process on tinyman;
-- one QUIC connection;
-- five sequential 8 GiB streams/downloads by default;
-- four 5-second idle gaps by default;
-- one continuous RAPL, board-power, frequency and C-state recording window.
+- **CONTROL HOST**: has the private repository checkout and launches the authoritative combined P5/P7 paper reproduction.
+- **SERVER**: runs `quicinteropserver` and the matrix controller.
+- **CLIENT**: runs `quicinterop`, started remotely by SERVER over SSH.
 
-The client and server processes are not restarted between the five downloads.
-The DPDK datapath and QUIC connection remain alive during all four gaps.
+In our paper testbed SERVER=`idex` and CLIENT=`tinyman`. Those are host names only. Another deployment may use other names or IP addresses.
 
-The matrix repeats the complete workload five times for OFF, five times for
-BASIC and five times for PLUS. Those independent repetitions are restarted on
-purpose to provide separate statistical samples and to initialize each mode
-cleanly.
-
-## Primary comparison
-
-The gaps are part of the workload. P5 therefore defaults to:
-
-```bash
-GQ_POST_TRANSFER_WAIT_S=0
-```
-
-The primary common metric is client whole-test RAPL because it is available in
-OFF, BASIC and PLUS and covers exactly:
+The supported final launcher accepts host switches:
 
 ```text
-startup + connection + five downloads + four configured gaps + teardown
+--server-host HOST
+--client-host HOST
+--bastion USER@HOST|none
+--ssh-key PATH
 ```
 
-BASIC/PLUS also report the first-RX-to-last-TX workload window, which naturally
-contains the inter-download gaps. Strict OFF leaves that packet-window field as
-`N/A` by design.
+SERVER must be able to SSH as root to CLIENT. CLIENT does not need to SSH back to SERVER.
 
-P5 reports both:
+## Final paper P5 workload
 
-- aggregate goodput excluding the configured gaps;
-- aggregate goodput including the configured gaps.
-
-## Files installed beside P3
-
-Copy this folder to both machines:
+The final paper evaluation uses:
 
 ```text
-greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
+6 independent runs
+5 sequential 8-GiB downloads per run
+one QUIC connection per run
+5-second gaps
+5-second edge cooldown
+5 seconds between tests/runs
+balanced OFF/BASIC/PLUS order
+seed 20260806
 ```
 
-## One-time client build on tinyman
-
-Run:
-
-```bash
-cd /root/greenquic_snapshot/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
-./build_p5_client.sh
-```
-
-This creates a separate source copy and binary:
+P5 compares:
 
 ```text
-/root/greenquic_snapshot/msquic-p5-source
-/root/greenquic_snapshot/msquic/build-greenquic-p5/bin/Release/quicinterop
+OFF    MsQuic-DPDK, GreenQUIC policy bypassed
+BASIC  GreenQUIC physical datapath policy
+PLUS   GreenQUIC+ physical policy + QUIC semantic hints/guards
 ```
 
-It does not edit the main MsQuic source and does not overwrite the known-good
-`build-greenquic` binary.
+All three modes use the same optimized Performance2 V2 datapath.
 
-## Run the complete matrix from idex
+Final binary marker:
 
-After the one-time build, run only this command on idex:
+```text
+GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
+```
+
+Final TOP3 power-policy settings:
+
+```text
+PRESSURE_UP=450
+RX_QUEUE_HIGH=48
+ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16
+FREQ_PERIOD_US=10000
+GQ_IDLE_MODE_OVERRIDE=monitor
+GQ_IDLE_FALLBACK_OVERRIDE=short
+```
+
+Final CPU topology:
+
+```text
+ENABLE_MULTICORE=0
+DPDK owner CPU=19
+MsQuic worker CPUs=21,22,23,24
+```
+
+## Exact paths on SERVER and CLIENT
+
+```text
+Experiment directory:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
+
+Build script:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/build_p5_performance2.sh
+
+Build directory:
+/root/mohsen/msquic/build-greenquic-p5
+
+CLIENT executable:
+/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop
+
+SERVER executable:
+/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinteropserver
+```
+
+## Authoritative final paper run
+
+**RUN ON: CONTROL HOST.** Do not manually start the SERVER and CLIENT binaries for the final paper comparison.
+
+Paper-testbed example:
 
 ```bash
-cd /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
-./run_matrix_from_idex.sh \
+cd ~/Downloads/GreenQUIC-Plus && \
+python3 results_analysis/verify_paper_configuration.py && \
+bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh \
+  --server-host idex \
+  --client-host tinyman \
+  --bastion mohsen@coinbase \
+  --ssh-key "$HOME/.ssh/id_ed25519"
+```
+
+Immediately monitor from a second CONTROL-HOST terminal using the command in `results_analysis/README.md`.
+
+The launcher fixes the exact `main` SHA, transfers it by Git bundle, rebuilds/verifies P5 and P7, injects TOP3, starts P5 on SERVER/CLIENT, transitions the NIC state for P7, validates recorders, and packages both result sets.
+
+The old `_v2.sh` and `_v3.sh` launcher names are compatibility wrappers around this single authoritative implementation.
+
+## Standalone P5 matrix for debugging
+
+**RUN ON: SERVER.** Pass the CLIENT explicitly. Example using our paper host name:
+
+```bash
+CLIENT_HOST=tinyman
+P5=/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
+
+cd "$P5" && \
+./run_matrix_with_sheet.sh \
+  --client-host "$CLIENT_HOST" \
+  --client-dir "$P5" \
+  --client-bin /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop \
   --downloads 5 \
   --gap-seconds 5 \
-  --runs 5 \
-  --env ENABLE_RECORD=1 \
-  --env GQ_LOG_LEVEL=0
+  --server-cooldown-seconds 5 \
+  --between-tests-seconds 5 \
+  --runs 6 \
+  --mode-order balanced \
+  --seed 20260806
 ```
 
-The idex controller:
-
-1. starts the local idex server;
-2. waits until the DPDK server is ready;
-3. starts the tinyman client over SSH;
-4. prints TEST, MODE, DOWNLOAD, GAP and server GET progress live;
-5. stops the server after the client completes;
-6. repeats OFF, BASIC and PLUS;
-7. creates full per-run and averaged tables.
-
-No second manual server/client command is required.
-
-## Switches
-
-```text
---downloads N
---gap-seconds N
---runs N
---between-runs-seconds N
---client-host HOST
---client-dir PATH
---output-dir PATH
---env KEY=VALUE
-```
-
-Every repeated `--env KEY=VALUE` applies to every server and client workload.
-For example:
+Before a standalone SERVER-side run:
 
 ```bash
-./run_matrix_from_idex.sh \
-  --downloads 3 \
-  --gap-seconds 2.5 \
-  --runs 2 \
-  --env ENABLE_RECORD=0 \
-  --env GQ_LOG_LEVEL=1
+ssh -o BatchMode=yes -o ConnectTimeout=10 root@"$CLIENT_HOST" 'echo SERVER_TO_CLIENT_SSH_OK; hostname'
 ```
 
-With `ENABLE_RECORD=0`, trace-dependent fields become `N/A`. Download counts,
-timing and goodput remain available.
+This standalone example is for debugging. It does not by itself inject every final paper TOP3/recording setting; use the CONTROL-HOST paper launcher for exact reproduction.
+
+## Historical filenames and documents
+
+Some implementation files retain names such as `run_matrix_from_idex.sh` / `run_matrix_from_idex_core.sh`. These are historical filenames from the paper testbed. The actual client endpoint is selected with `--client-host`; the filenames do not force the physical server to be named `idex`.
+
+Older Performance1/Performance2 screening, bottleneck, and research Markdown files in this directory are historical tuning notes. For current operation use:
+
+```text
+results_analysis/README.md
+tum_testbed_setup/README.md
+this README
+```
 
 ## Output
 
+P5 matrix outputs are created under:
+
 ```text
-matrix_results/<timestamp>/
-├── client_rep01_off.log
-├── client_rep01_basic.log
-├── client_rep01_plus.log
-├── server_rep01_off.log
-├── ...
-├── matrix_config.json
-└── tables/
-    ├── client_all_runs.csv
-    ├── client_mode_averages.csv
-    ├── client_key_comparison.md
-    ├── server_all_runs.csv
-    └── server_mode_averages.csv
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/matrix_results/
 ```
 
-The CSV tables include every `- Field: value` printed by the run summaries.
-Missing fields are written as `N/A`. Numeric cells are averaged over the
-configured independent repetitions. Compound numeric fields are averaged
-component by component when their formats match.
+The authoritative combined paper launcher additionally creates a SERVER-side `/root/GQ_FAIR_REPRO_<TAG>/` metadata directory, controller log, and final ZIP. See `results_analysis/README.md` for exact output/download paths.
