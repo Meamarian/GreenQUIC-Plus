@@ -4,9 +4,9 @@ This note records the current `main` audit for host-name assumptions in the supp
 
 ## Result
 
-The supported setup and paper runner **do not require the physical machines to be named `idex` and `tinyman`**. Those are our paper-testbed defaults only.
+The supported setup and paper runner **do not require the physical machines to be named `idex` and `tinyman`**. Those are our paper-testbed management defaults only.
 
-The high-level paper defaults are centralized in:
+The paper defaults are centralized in:
 
 ```text
 results_analysis/paper_testbed_defaults.sh
@@ -31,7 +31,7 @@ run:      results_analysis/run_paper_evaluation.sh
 download: results_analysis/download_paper_results.sh
 ```
 
-Another deployment can override the management `GQ_*` values or use the lower-level host switches.
+The high-level setup/rebuild/run/live-monitor wrappers themselves now accept explicit management-host, bastion, and key switches, so another deployment does not need to edit defaults or drop down to historical scripts.
 
 ## Roles
 
@@ -44,9 +44,9 @@ BASTION       optional SSH jump/bootstrap host
 
 `SERVER` and `CLIENT` are semantic experiment roles. `idex` and `tinyman` are merely the physical host names used for those roles in our paper measurements.
 
-## Lower-level management switches
+## Current management switches
 
-Fresh setup:
+High-level setup:
 
 ```text
 --server-host HOST
@@ -56,7 +56,7 @@ Fresh setup:
 --ssh-key PATH
 ```
 
-Final paper launcher:
+High-level rebuild:
 
 ```text
 --server-host HOST
@@ -65,13 +65,35 @@ Final paper launcher:
 --ssh-key PATH
 ```
 
-Result downloader:
+High-level final paper run:
+
+```text
+--server-host HOST
+--client-host HOST
+--bastion USER@HOST|none
+--ssh-key PATH
+```
+
+Setup live monitor:
+
+```text
+--server-host HOST
+--client-host HOST
+--bastion USER@HOST|none
+--ssh-key PATH
+```
+
+Final-run live monitor:
 
 ```text
 --server-host HOST
 --bastion USER@HOST|none
 --ssh-key PATH
 ```
+
+The result downloader also accepts SERVER/bastion/key overrides. The low-level TUM setup and authoritative final launcher expose equivalent role-oriented switches.
+
+During setup, `--client-host` means CLIENT as seen from CONTROL/BASTION, while `--server-to-client-host` means CLIENT as seen from SERVER. During the final paper run, `--client-host` means CLIENT as seen from SERVER.
 
 ## Required connectivity
 
@@ -162,9 +184,9 @@ A different CONTROL HOST works if it:
 
 The setup installs only the CONTROL key's **public** half on experiment nodes. It never copies the CONTROL private key to SERVER or CLIENT.
 
-If the CLIENT management endpoint differs between CONTROL and SERVER views, set `GQ_CLIENT_HOST` and `GQ_SERVER_TO_CLIENT_HOST` separately.
+If the CLIENT management endpoint differs between CONTROL and SERVER views, pass separate `--client-host` and `--server-to-client-host` values to the high-level setup wrapper.
 
-## Command-location rule
+## Command-location and monitor rule
 
 Current operational guides label commands as:
 
@@ -175,4 +197,4 @@ RUN ON: SERVER ROLE
 RUN ON: CLIENT ROLE
 ```
 
-Long-running setup/build/test commands are immediately paired with the matching live-monitor command. Historical documents may retain old examples but are not the current reproduction interface.
+Every long-running setup, build, POS-reset, or experiment command in the current guides is immediately paired with the matching live monitor/readiness loop. Purely local Git/static verification and post-run download commands are explicitly identified as not starting a remote workload, so no live experiment log exists for those operations.
