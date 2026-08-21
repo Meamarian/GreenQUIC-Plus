@@ -43,10 +43,4 @@ Final paper experiments:
   P5 = optimized DPDK MsQuic OFF/BASIC/PLUS repeated 8-GiB downloads
   P7 = isolated normal-Linux MsQuic UDP baseline
 
-SERVER -> CLIENT passwordless/root SSH is required for matrix orchestration.
-CLIENT -> SERVER SSH is not required. Only CONTROL needs private GitHub access;
-exact commits are transferred to the endpoints by Git bundle.
 
-Historical V18/V21/V22 diagnostic/pretest material remains in this tree and Git
-history. Files named *_from_idex* and old comments mentioning idex/tinyman
-reflect the original testbed. They are not the current host-selection interface.
