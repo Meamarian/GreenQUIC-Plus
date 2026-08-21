@@ -27,6 +27,9 @@ SERVER_HOST="${GQ_SERVER_HOST:-idex}"
 CLIENT_HOST="${GQ_CLIENT_HOST:-tinyman}"
 BASTION="${GQ_BASTION:-}"
 SSH_KEY="${GQ_SSH_KEY:-}"
+AUTO_DOWNLOAD="${GQ_FAIR_AUTO_DOWNLOAD:-1}"
+DOWNLOAD_DEST="${GQ_FAIR_DOWNLOAD_DEST:-$REPO_ROOT/reproduced_results}"
+WAIT_POLL_SECONDS="${GQ_FAIR_WAIT_POLL_SECONDS:-15}"
 
 usage() {
     cat <<'USAGE'
@@ -42,6 +45,12 @@ Host/SSH switches:
   --bastion USER@HOST      optional ProxyJump used by control-host -> server SSH
   --bastion none           connect directly from control host to server
   --ssh-key PATH           optional private key used by control-host -> server SSH
+
+Result-copy switches:
+  --download-dest DIR      CONTROL-HOST destination root for automatic SCP
+                           (default: <repo>/reproduced_results)
+  --no-auto-download       start the remote run and return without waiting/SCP
+  --auto-download          explicitly enable wait + automatic SCP (default)
 
 Workload switches:
   --runs N                 default 6
@@ -61,6 +70,11 @@ SSH topology for this launcher:
 
 The server/client host names are configurable. In the paper testbed idex was the
 server/controller and tinyman was the client; those names are not semantic.
+
+By default this launcher remains attached on the CONTROL HOST until the remote
+run is DONE, prints the final remote/local result paths, then SCPs the result
+ZIPs and metadata automatically. Use a second CONTROL-HOST terminal for the
+live log monitor while this command waits.
 USAGE
 }
 
@@ -71,6 +85,9 @@ while (($#)); do
         --client-host) need_arg "$@"; CLIENT_HOST="$2"; shift 2 ;;
         --bastion) need_arg "$@"; BASTION="$2"; shift 2 ;;
         --ssh-key) need_arg "$@"; SSH_KEY="$2"; shift 2 ;;
+        --download-dest) need_arg "$@"; DOWNLOAD_DEST="$2"; shift 2 ;;
+        --no-auto-download) AUTO_DOWNLOAD=0; shift ;;
+        --auto-download) AUTO_DOWNLOAD=1; shift ;;
         --runs) need_arg "$@"; RUNS="$2"; shift 2 ;;
         --downloads) need_arg "$@"; DOWNLOADS="$2"; shift 2 ;;
         --gap-seconds) need_arg "$@"; GAP_SECONDS="$2"; shift 2 ;;
@@ -91,10 +108,13 @@ for v in "$GAP_SECONDS" "$EDGE_COOLDOWN_SECONDS" "$BETWEEN_SECONDS"; do
     [[ "$v" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "ERROR: timing values must be non-negative numbers" >&2; exit 2; }
 done
 [[ "$SEED" =~ ^[0-9]+$ ]] || { echo "ERROR: seed must be an integer" >&2; exit 2; }
+[[ "$AUTO_DOWNLOAD" == 0 || "$AUTO_DOWNLOAD" == 1 ]] || { echo "ERROR: GQ_FAIR_AUTO_DOWNLOAD must be 0 or 1" >&2; exit 2; }
+[[ "$WAIT_POLL_SECONDS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: GQ_FAIR_WAIT_POLL_SECONDS must be a positive integer" >&2; exit 2; }
 if [[ -n "$SSH_KEY" && ! -f "$SSH_KEY" ]]; then
     echo "ERROR: SSH key not found: $SSH_KEY" >&2
     exit 2
 fi
+if [[ "$DOWNLOAD_DEST" != /* ]]; then DOWNLOAD_DEST="$REPO_ROOT/$DOWNLOAD_DEST"; fi
 
 SSH_OPTS=(-o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new)
 [[ -n "$SSH_KEY" ]] && SSH_OPTS+=(-i "$SSH_KEY" -o IdentitiesOnly=yes)
@@ -107,6 +127,8 @@ REMOTE_SCRIPT="/tmp/GQ_FAIR_REPRO_${TAG}.sh"
 REMOTE_LOG="/root/GQ_FAIR_REPRO_${TAG}.log"
 REMOTE_PID="/tmp/GQ_FAIR_REPRO_${TAG}.pid"
 REMOTE_ART="/root/GQ_FAIR_REPRO_${TAG}"
+REMOTE_P5OUT="/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/matrix_results/P5_FAIR_OPT_PINNED_${RUNS}r_${DOWNLOADS}d_${TAG}"
+REMOTE_P7OUT="/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline/matrix_results/P7_FAIR_PAPER_PINNED_${RUNS}r_${DOWNLOADS}d_${TAG}"
 LOCAL_SCRIPT="${TMPDIR:-/tmp}/GQ_FAIR_REPRO_${TAG}_$$.sh"
 LOCAL_BUNDLE="${TMPDIR:-/tmp}/GQ_FAIR_REPRO_${TAG}_$$.bundle"
 REMOTE_BUNDLE="/tmp/GQ_FAIR_REPRO_${TAG}.bundle"
@@ -147,6 +169,8 @@ printf '%s\n' \
     "sha=$SHA" \
     "runs=$RUNS downloads=$DOWNLOADS" \
     "gap=${GAP_SECONDS}s edge_cooldown=${EDGE_COOLDOWN_SECONDS}s between=${BETWEEN_SECONDS}s" \
+    "automatic_result_scp=$AUTO_DOWNLOAD" \
+    "local_result_root=$DOWNLOAD_DEST" \
     'P5=Performance2 V2 + TOP3 + monitor/short + isolated recorders' \
     'P7=isolated normal-Linux paper baseline' \
     '======================================================================'
@@ -167,6 +191,8 @@ P5BIN="$ROOT/msquic/build-greenquic-p5/bin/Release/quicinterop"
 ART="/root/GQ_FAIR_REPRO_${TAG}"
 P5OUT="$P5/matrix_results/P5_FAIR_OPT_PINNED_${RUNS}r_${DOWNLOADS}d_${TAG}"
 P7OUT="$P7/matrix_results/P7_FAIR_PAPER_PINNED_${RUNS}r_${DOWNLOADS}d_${TAG}"
+P5ZIP="/root/P5_FAIR_OPT_PINNED_${RUNS}r_${DOWNLOADS}d_${TAG}.zip"
+P7ZIP="/root/P7_FAIR_PAPER_PINNED_${RUNS}r_${DOWNLOADS}d_${TAG}.zip"
 CLIENT_TARGET="root@$CLIENT_HOST"
 CLIENT_SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new)
 mkdir -p "$ART"
@@ -219,8 +245,12 @@ cleanup_both(){
 }
 
 log "verify recorder/report self-tests"
-cd "$P5"; python3 ./enable_p5_claim_recording_gate.py --self-test
-cd "$P7"; python3 ./enable_p7_recorder_affinity.py --self-test; python3 ./build_p7_report.py --self-test
+cd "$P5"
+python3 ./enable_p5_claim_recording_gate.py --self-test
+python3 ./validate_p5_recorder_evidence.py --self-test
+cd "$P7"
+python3 ./enable_p7_recorder_affinity.py --self-test
+python3 ./build_p7_report.py --self-test
 cleanup_both
 
 log "build P5 Performance2 V2 on both roles"
@@ -344,9 +374,12 @@ test -s "$ART/p7_affinity_files.txt"
 test -f "$P7OUT/the_sheet_rules_all/charts/with_variance/svg/with_values/19_active_cstate_residency.svg"
 test -f "$P7OUT/the_sheet_rules_all/charts/with_variance/svg/with_values/20_gap_cstate_residency.svg"
 
-log "validate P5 recorder-affinity evidence"
-find "$P5OUT/runs" -type f -name '*_affinity.txt' -print > "$ART/p5_affinity_files.txt"
-test -s "$ART/p5_affinity_files.txt"
+log "validate P5 matrix integrity and durable recorder-CPU evidence"
+cd "$P5"
+python3 ./validate_p5_recorder_evidence.py \
+    --matrix-dir "$P5OUT" \
+    --runs "$RUNS" \
+    --output "$ART/p5_recorder_evidence.json"
 
 cat > "$ART/config.env" <<EOF_CONFIG
 branch=$BRANCH
@@ -373,6 +406,7 @@ P5_freq_trace_interval_ms=1
 P5_dpdk_cpu=19
 P5_quic_cpus=21,22,23,24
 P5_recorder_cpu=auto_housekeeping
+P5_recorder_validation=durable_per_run_log_evidence
 P7_profile=paper_linux
 P7_dataplane_cpu=19
 P7_quic_cpus=21,22,23,24
@@ -384,17 +418,29 @@ P7_udp_wmem=6815744
 P7_combined_channels=1
 EOF_CONFIG
 
+cat > "$ART/RESULT_DIRS.env" <<EOF_DIRS
+artifact_dir=$ART
+remote_log=/root/GQ_FAIR_REPRO_${TAG}.log
+p5_matrix_dir=$P5OUT
+p7_matrix_dir=$P7OUT
+p5_zip=$P5ZIP
+p7_zip=$P7ZIP
+EOF_DIRS
+
+log "FINAL REMOTE RESULT PATHS (before archive/SCP)"
+cat "$ART/RESULT_DIRS.env"
+
 log "zip results"
-(cd "$(dirname "$P5OUT")" && zip -qr "/root/P5_FAIR_OPT_PINNED_${RUNS}r_${DOWNLOADS}d_${TAG}.zip" "$(basename "$P5OUT")")
-(cd "$(dirname "$P7OUT")" && zip -qr "/root/P7_FAIR_PAPER_PINNED_${RUNS}r_${DOWNLOADS}d_${TAG}.zip" "$(basename "$P7OUT")")
-printf '%s\n%s\n' \
-    "/root/P5_FAIR_OPT_PINNED_${RUNS}r_${DOWNLOADS}d_${TAG}.zip" \
-    "/root/P7_FAIR_PAPER_PINNED_${RUNS}r_${DOWNLOADS}d_${TAG}.zip" \
-    > "$ART/RESULT_ZIPS.txt"
+rm -f "$P5ZIP" "$P7ZIP"
+(cd "$(dirname "$P5OUT")" && zip -qr "$P5ZIP" "$(basename "$P5OUT")")
+(cd "$(dirname "$P7OUT")" && zip -qr "$P7ZIP" "$(basename "$P7OUT")")
+printf '%s\n%s\n' "$P5ZIP" "$P7ZIP" > "$ART/RESULT_ZIPS.txt"
+(cd /root && sha256sum "$(basename "$P5ZIP")" "$(basename "$P7ZIP")") > "$ART/RESULT_ZIPS.sha256"
 
 touch "$ART/DONE"
-log "DONE"
-cat "$ART/RESULT_ZIPS.txt"
+log "DONE — final paths follow"
+cat "$ART/RESULT_DIRS.env"
+cat "$ART/RESULT_ZIPS.sha256"
 REMOTE
 
 bash -n "$LOCAL_SCRIPT"
@@ -413,10 +459,69 @@ CLIENT_ROLE=$CLIENT_HOST
 TAG=$TAG
 SHA=$SHA
 REMOTE_LOG=$REMOTE_LOG
+EXPECTED_P5_RESULT_DIR=$REMOTE_P5OUT
+EXPECTED_P7_RESULT_DIR=$REMOTE_P7OUT
 
 LIVE MONITOR FROM ANOTHER CONTROL-HOST TERMINAL:
 ssh ${BASTION:+-J "$BASTION" }${SSH_KEY:+-i "$SSH_KEY" }root@$SERVER_HOST 'tail -n +1 -F $REMOTE_LOG'
 
 STATUS FROM CONTROL HOST:
-ssh ${BASTION:+-J "$BASTION" }${SSH_KEY:+-i "$SSH_KEY" }root@$SERVER_HOST 'if test -f $REMOTE_ART/DONE; then echo DONE; cat $REMOTE_ART/RESULT_ZIPS.txt; elif test -f $REMOTE_ART/FAILED; then echo FAILED; cat $REMOTE_ART/FAILED; tail -120 $REMOTE_LOG; else echo RUNNING; tail -60 $REMOTE_LOG; fi'
+ssh ${BASTION:+-J "$BASTION" }${SSH_KEY:+-i "$SSH_KEY" }root@$SERVER_HOST 'if test -f $REMOTE_ART/DONE; then echo DONE; cat $REMOTE_ART/RESULT_DIRS.env; elif test -f $REMOTE_ART/FAILED; then echo FAILED; cat $REMOTE_ART/FAILED; tail -120 $REMOTE_LOG; else echo RUNNING; tail -60 $REMOTE_LOG; fi'
 EOF
+
+if [[ "$AUTO_DOWNLOAD" == 0 ]]; then
+    echo
+    echo "Automatic SCP disabled. Remote run continues in the background."
+    echo "When DONE, use results_analysis/download_latest_reproduction.sh --tag '$TAG'."
+    exit 0
+fi
+
+echo
+echo "AUTO-DOWNLOAD ENABLED: waiting for remote DONE before SCP."
+echo "Keep the live monitor open in the second CONTROL-HOST terminal."
+while true; do
+    state="$(ssh "${SSH_OPTS[@]}" "$SERVER_TARGET" "if test -f '$REMOTE_ART/DONE'; then echo DONE; elif test -f '$REMOTE_ART/FAILED'; then echo FAILED; elif test -f '$REMOTE_PID' && kill -0 \$(cat '$REMOTE_PID') 2>/dev/null; then echo RUNNING; else echo UNKNOWN; fi")"
+    case "$state" in
+        DONE) break ;;
+        FAILED)
+            echo
+            echo "REMOTE RUN FAILED — no result SCP will be attempted."
+            echo "Recoverable/current remote paths:"
+            echo "  artifact: $REMOTE_ART"
+            echo "  log:      $REMOTE_LOG"
+            echo "  P5:       $REMOTE_P5OUT"
+            echo "  P7:       $REMOTE_P7OUT"
+            ssh "${SSH_OPTS[@]}" "$SERVER_TARGET" "cat '$REMOTE_ART/FAILED' 2>/dev/null || true; tail -160 '$REMOTE_LOG' 2>/dev/null || true" >&2
+            exit 1
+            ;;
+        RUNNING)
+            printf '[%s] remote run still active; waiting %ss before next completion check\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$WAIT_POLL_SECONDS"
+            sleep "$WAIT_POLL_SECONDS"
+            ;;
+        *)
+            echo "ERROR: remote controller is neither RUNNING, DONE nor explicitly FAILED." >&2
+            echo "Remote artifact: $REMOTE_ART" >&2
+            echo "Remote log: $REMOTE_LOG" >&2
+            ssh "${SSH_OPTS[@]}" "$SERVER_TARGET" "tail -160 '$REMOTE_LOG' 2>/dev/null || true" >&2
+            exit 1
+            ;;
+    esac
+done
+
+echo
+echo "REMOTE RUN IS DONE. The downloader will print FINAL REMOTE and LOCAL paths before SCP starts."
+DOWNLOAD_CMD=(
+    bash "$REPO_ROOT/results_analysis/download_latest_reproduction.sh"
+    --server-host "$SERVER_HOST"
+    --tag "$TAG"
+    --dest "$DOWNLOAD_DEST"
+    --expect-runs "$RUNS"
+    --expect-downloads "$DOWNLOADS"
+)
+if [[ -n "$BASTION" ]]; then DOWNLOAD_CMD+=(--bastion "$BASTION"); fi
+if [[ -n "$SSH_KEY" ]]; then DOWNLOAD_CMD+=(--ssh-key "$SSH_KEY"); fi
+"${DOWNLOAD_CMD[@]}"
+
+echo
+echo "GREENQUIC+ FINAL PAPER EVALUATION + AUTOMATIC SCP: PASS"
+echo "Local result directory: $DOWNLOAD_DEST/$TAG"
