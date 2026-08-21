@@ -10,7 +10,7 @@
 
 Our paper defaults are SERVER=`idex`, CLIENT=`tinyman`, BASTION=`mohsen@coinbase`, and CONTROL SSH key=`$HOME/.ssh/id_ed25519`; see `results_analysis/paper_testbed_defaults.sh`. These are defaults, not semantic host-name requirements.
 
-SERVER -> CLIENT root SSH is required. CLIENT -> SERVER SSH is not required.
+SERVER -> CLIENT root SSH is required. CLIENT -> SERVER SSH is not required. The high-level setup/run/monitor wrappers accept explicit management host switches for another deployment.
 
 ---
 
@@ -106,6 +106,8 @@ Immediately in **a second CONTROL-HOST terminal:**
 bash results_analysis/live_monitor_run.sh
 ```
 
+For another management topology, `run_paper_evaluation.sh` accepts `--server-host`, `--client-host`, `--bastion`, and `--ssh-key`; here `--client-host` is the CLIENT endpoint as seen from SERVER. The run monitor accepts the corresponding SERVER/bastion/key switches.
+
 ---
 
 ## Rebuild P7/P5 without redeploying source
@@ -124,13 +126,15 @@ Immediately in **a second CONTROL-HOST terminal:**
 bash results_analysis/live_monitor_setup.sh
 ```
 
-If code changed or `/root/mohsen` may be stale, use `results_analysis/setup_paper_testbed.sh` instead.
+If code changed or `/root/mohsen` may be stale, use `results_analysis/setup_paper_testbed.sh` instead. Rebuild/setup monitors accept explicit role-host switches for other management names.
 
 ---
 
-## Historical filenames
+## Historical filenames and lower-level defaults
 
 `run_matrix_from_idex.sh` retains its historical filename from the original testbed. The current combined runner supplies the CLIENT endpoint explicitly; the filename does not require the SERVER OS hostname to be `idex`.
+
+Some standalone diagnostic wrappers still keep `tinyman` or IDEX/Tinyman wording as convenience defaults/history. They expose `--client-host`, and the authoritative combined paper workflow does not use those names to select roles.
 
 Standalone lower-level P7 commands remain useful for diagnostics, but they are not the authoritative paper reproduction interface.
 
