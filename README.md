@@ -15,13 +15,13 @@ GreenQUIC+ repository is the implementation of the **“Sleep Tight, QUIC Fast: 
 
 High-performance QUIC implementations can leverage DPDK to bypass the kernel network stack and achieve high packet-processing rates. However, DPDK's polling-based execution model can consume substantial CPU resources and energy even during periods of low traffic. In this paper, we present an adaptive power-management mechanism for a DPDK-based MsQuic implementation that dynamically adjusts CPU frequency and idle behavior based on both datapath activity and QUIC transport information. We evaluate the implementation using repeated QUIC file transfers under different operating configurations. The results show that the proposed mechanism lowers power consumption at both the QUIC client and server while achieving high goodput across the evaluated workloads.
 
-The same optimized DPDK/MsQuic datapath is used for three runtime modes:
+The same optimized DPDK datapath is used for three runtime modes:
 
 - **OFF / MsQuic-DPDK:** GreenQUIC power-management decisions are bypassed.
-- **BASIC / GreenQUIC:** power decisions use physical DPDK activity.
-- **PLUS / GreenQUIC+:** the BASIC policy is extended with short-lived QUIC transport information.
+- **BASIC / GreenQUIC:** Power decisions use DPDK activity.
+- **PLUS / GreenQUIC+:** The BASIC policy is extended with short-lived QUIC transport information.
 
-The Linux comparison is **P7**, an isolated normal-Linux MsQuic UDP build with DPDK and XDP disabled.
+The Linux comparison is **P7**, an isolated normal-Linux MsQuic UDP build with DPDK disabled.
 
 ---
 
@@ -30,11 +30,11 @@ The Linux comparison is **P7**, an isolated normal-Linux MsQuic UDP build with D
 | Path | Purpose |
 |---|---|
 | `msquic/` | MsQuic + DPDK source used by GreenQUIC+ |
-| `greenquic_test_suite_v22/` | authoritative P5/P7 build, execution, recording, report and validation suite |
-| `results_analysis/` | exact paper configuration, dependency records, original tuning XLSX files, chart code/SVGs, high-level reproduction helpers and final audit |
-| `tum_testbed_setup/` | single supported TUM/LRZ provisioning/build implementation and guide |
+| `greenquic_test_suite_v22/` | P5/P7 build, execution, recording, report, and validation suite |
+| `results_analysis/` | paper configuration, dependency records, original tuning XLSX files, chart code/SVGs, high-level reproduction helpers and final audit |
+| `tum_testbed_setup/` | TUM testbed setup guide |
 | `acpi.sh` | ACPI/platform power helper |
-| `msr.py` | MSR helper |
+| `msr.py` | MSR energy helper |
 
 The obsolete `greenquic_test_suite/`, old root bootstrap/patch helpers and old `power_mng_tunning/` directory were removed from `main`. Historical states remain in Git history/backups.
 
@@ -208,7 +208,7 @@ git checkout main && \
 bash results_analysis/setup_paper_testbed.sh
 ```
 
-Immediately in **a second CONTROL-HOST terminal**, use the live setup/build monitor:
+You can monitor in **a second CONTROL-HOST terminal**, use the live setup/build monitor:
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -231,7 +231,7 @@ git checkout main && \
 bash results_analysis/rebuild_paper_binaries.sh
 ```
 
-Immediately in **a second CONTROL-HOST terminal:**
+You can monitor in **a second CONTROL-HOST terminal:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -254,7 +254,7 @@ git checkout main && \
 bash results_analysis/run_paper_evaluation.sh
 ```
 
-Immediately in **a second CONTROL-HOST terminal:**
+You can monitor in **a second CONTROL-HOST terminal:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -340,3 +340,9 @@ results_analysis/charts/svg/...
 ```
 
 `artifact_files.sha256.json` records expected sizes/SHA-256 values for the imported artifacts.
+
+## Contact 
+
+If you have any questions regarding the repository, you can contact mohsen.memarian@kau.se.
+
+
