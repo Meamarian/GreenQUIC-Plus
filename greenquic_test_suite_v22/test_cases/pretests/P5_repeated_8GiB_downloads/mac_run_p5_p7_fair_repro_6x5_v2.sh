@@ -32,6 +32,59 @@ replace_once(
     "GreenQUIC+ fair branch",
 )
 
+# The final GreenQUIC+ paper evaluation uses the TOP3 focused policy and the
+# measurement settings that accompanied the final 6x5 P5 evaluation. Inject
+# them explicitly so the reproduction never depends on config.env defaults.
+replace_once(
+    '    --env GQ_IDLE_MODE_OVERRIDE=monitor \\\n'
+    '    --env GQ_IDLE_FALLBACK_OVERRIDE=short \\\n'
+    '    --env GQ_POST_TRANSFER_WAIT_S=0 \\\n',
+    '    --env GQ_IDLE_MODE_OVERRIDE=monitor \\\n'
+    '    --env GQ_IDLE_FALLBACK_OVERRIDE=short \\\n'
+    '    --env GQ_ENABLE_ACPI_POWER_TRACE=1 \\\n'
+    '    --env GQ_POWER_SAMPLE_INTERVAL_MS=1000 \\\n'
+    '    --env GQ_ENABLE_MSR_TRACE=1 \\\n'
+    '    --env GQ_MSR_SAMPLE_INTERVAL_MS=6 \\\n'
+    '    --env GQ_MSR_SMOOTH_SAMPLES=3 \\\n'
+    '    --env ENABLE_CSTATE_RECORD=1 \\\n'
+    '    --env GQ_ENABLE_FREQ_TRACE=1 \\\n'
+    '    --env GQ_FREQ_SAMPLE_INTERVAL_MS=1 \\\n'
+    '    --env PRESSURE_UP=450 \\\n'
+    '    --env RX_QUEUE_HIGH=48 \\\n'
+    '    --env ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16 \\\n'
+    '    --env FREQ_PERIOD_US=10000 \\\n'
+    '    --env GQ_POST_TRANSFER_WAIT_S=0 \\\n',
+    "final TOP3 P5 runtime settings",
+)
+
+replace_once(
+    'P5_profile=optimized_Performance2_V2_idle_monitor_normal\n'
+    'P5_dpdk_cpu=19\n'
+    'P5_quic_cpus=21,22,23,24\n'
+    'P5_recorder_cpu=auto_housekeeping\n',
+    'P5_profile=optimized_Performance2_V2_TOP3_idle_monitor_normal\n'
+    'P5_power_profile=TOP3\n'
+    'P5_pressure_up=450\n'
+    'P5_rx_queue_high=48\n'
+    'P5_active_transfer_sleep_min_level=16\n'
+    'P5_freq_period_us=10000\n'
+    'P5_idle_mode=monitor\n'
+    'P5_idle_fallback=short\n'
+    'P5_acpi_interval_ms=1000\n'
+    'P5_msr_interval_ms=6\n'
+    'P5_freq_trace_interval_ms=1\n'
+    'P5_dpdk_cpu=19\n'
+    'P5_quic_cpus=21,22,23,24\n'
+    'P5_recorder_cpu=auto_housekeeping\n',
+    "paper config.env P5 profile",
+)
+
+replace_once(
+    'echo "P5=optimized Performance2 V2 + idle_monitor_normal + isolated recorders"\n',
+    'echo "P5=optimized Performance2 V2 + TOP3 power policy + idle_monitor_normal + isolated recorders"\n',
+    "paper P5 banner",
+)
+
 # Mac creates the exact-SHA bundle. Remote nodes never contact GitHub.
 replace_once(
     'LOCAL_SCRIPT="${TMPDIR:-/tmp}/GQ_FAIR_REPRO_${TAG}_$$.sh"\n',
@@ -134,6 +187,13 @@ for required in (
     'scp -o BatchMode=yes -o ConnectTimeout=20 "$BUNDLE" root@tinyman:"$BUNDLE"',
     'git bundle create "$LOCAL_BUNDLE" "$BUNDLE_REF"',
     'idex:$REMOTE_BUNDLE',
+    '--env PRESSURE_UP=450',
+    '--env RX_QUEUE_HIGH=48',
+    '--env ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16',
+    '--env FREQ_PERIOD_US=10000',
+    '--env GQ_ENABLE_MSR_TRACE=1',
+    '--env GQ_ENABLE_FREQ_TRACE=1',
+    'P5_power_profile=TOP3',
 ):
     if required not in src:
         raise SystemExit(f"ERROR: missing GreenQUIC+ fair-repro guard: {required}")
