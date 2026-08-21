@@ -5,6 +5,18 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "$HERE/paper_testbed_defaults.sh"
 
+# Make the high-level paper entrypoint safe for a clone that is merely behind
+# origin/main. Never discard local work or unique local commits. If a safe
+# fast-forward occurred, re-exec this wrapper from the refreshed tree so the
+# orchestration code itself is the exact current main version.
+sync_rc=0
+bash "$HERE/control_main_sync.sh" || sync_rc=$?
+case "$sync_rc" in
+  0) ;;
+  10) exec bash "$GQ_CONTROL_REPO/results_analysis/setup_paper_testbed.sh" "$@" ;;
+  *) exit "$sync_rc" ;;
+esac
+
 cd "$GQ_CONTROL_REPO"
 python3 results_analysis/verify_paper_configuration.py
 
