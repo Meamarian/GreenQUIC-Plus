@@ -8,9 +8,11 @@
 - **SERVER** runs the Linux `quicinteropserver` and the P7 matrix controller.
 - **CLIENT** runs `quicinterop`, started by SERVER over SSH.
 
-Our paper defaults are SERVER=`idex`, CLIENT=`tinyman`, BASTION=`mohsen@coinbase`, and CONTROL SSH key=`$HOME/.ssh/id_ed25519`; see `results_analysis/paper_testbed_defaults.sh`. These are defaults, not semantic host-name requirements.
+Our paper defaults are SERVER=`idex`, CLIENT=`tinyman`, BASTION=`mohsen@coinbase`, CONTROL checkout=`$HOME/Downloads/GreenQUIC-Plus`, and CONTROL SSH key=`$HOME/.ssh/id_ed25519`; see `results_analysis/paper_testbed_defaults.sh`. These are defaults, not semantic host-name requirements.
 
 SERVER -> CLIENT root SSH is required. CLIENT -> SERVER SSH is not required. The high-level setup/run/monitor wrappers accept explicit management host switches for another deployment.
+
+Dependencies and exact source versions are documented in the repository root README, `results_analysis/README.md`, and `results_analysis/configuration/dependencies.json`.
 
 ---
 
@@ -94,15 +96,22 @@ The `paper` profile requires TSO, GSO, TX checksum and GRO ON. UDP segmentation,
 
 Do not launch standalone P7 for the final paper comparison. Use the combined high-level runner so exact Git SHA, P5 TOP3, P5→P7 NIC transition, P7 tuning, recording and packaging are controlled together.
 
-**RUN ON: CONTROL HOST:**
+**RUN ON: CONTROL HOST.** This block also clones the private repository if the normal Mac checkout does not yet exist:
 
 ```bash
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
 bash results_analysis/run_paper_evaluation.sh
 ```
 
 Immediately in **a second CONTROL-HOST terminal:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh
 ```
 
@@ -117,12 +126,19 @@ Use this only when the remote checkout and host/DPDK preparation are already cor
 **RUN ON: CONTROL HOST:**
 
 ```bash
+REPO="$HOME/Downloads/GreenQUIC-Plus"
+if [ ! -d "$REPO/.git" ]; then
+  git clone git@github.com:Meamarian/GreenQUIC-Plus.git "$REPO"
+fi
+cd "$REPO" && \
+git checkout main && \
 bash results_analysis/rebuild_paper_binaries.sh
 ```
 
 Immediately in **a second CONTROL-HOST terminal:**
 
 ```bash
+cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_setup.sh
 ```
 
