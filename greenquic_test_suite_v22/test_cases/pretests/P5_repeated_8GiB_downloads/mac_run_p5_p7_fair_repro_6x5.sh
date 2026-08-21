@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
+# Authoritative GreenQUIC+ paper-evaluation launcher.
+# RUN ON: control host (a Mac in our paper setup, but any Unix control host is OK).
+# The control host needs access to the private GitHub repository and SSH access
+# to the server role. The server role must be able to SSH to the client role.
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${GREENQUIC_REPO:-$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || true)}"
 [[ -n "$REPO_ROOT" && -d "$REPO_ROOT/.git" ]] || {
-    echo "ERROR: run from the GreenQUIC repository or set GREENQUIC_REPO" >&2
+    echo "ERROR: run from a GreenQUIC-Plus clone or set GREENQUIC_REPO" >&2
     exit 2
 }
 
-BRANCH="performance2/p5-multicore"
+BRANCH=main
 RUNS="${GQ_FAIR_RUNS:-6}"
 DOWNLOADS="${GQ_FAIR_DOWNLOADS:-5}"
 GAP_SECONDS="${GQ_FAIR_GAP_SECONDS:-5}"
@@ -17,13 +22,68 @@ BETWEEN_SECONDS="${GQ_FAIR_BETWEEN_SECONDS:-5}"
 SEED="${GQ_FAIR_SEED:-20260806}"
 TAG="${GQ_FAIR_TAG:-$(date +%Y%m%d_%H%M%S)}"
 
-SSH_OPTS=(-o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=3)
-REMOTE_SCRIPT="/tmp/GQ_FAIR_REPRO_${TAG}.sh"
-REMOTE_LOG="/root/GQ_FAIR_REPRO_${TAG}.log"
-REMOTE_PID="/tmp/GQ_FAIR_REPRO_${TAG}.pid"
-REMOTE_ART="/root/GQ_FAIR_REPRO_${TAG}"
-LOCAL_SCRIPT="${TMPDIR:-/tmp}/GQ_FAIR_REPRO_${TAG}_$$.sh"
+# Paper-testbed defaults. These are host names, not role definitions.
+SERVER_HOST="${GQ_SERVER_HOST:-idex}"
+CLIENT_HOST="${GQ_CLIENT_HOST:-tinyman}"
+BASTION="${GQ_BASTION:-}"
+SSH_KEY="${GQ_SSH_KEY:-}"
 
+usage() {
+    cat <<'USAGE'
+GreenQUIC+ final paper evaluation
+
+RUN ON: control host (Mac in our paper setup)
+
+Host/SSH switches:
+  --server-host HOST       SSH endpoint for the QUIC server/controller role
+                           as seen from the control host (default: idex)
+  --client-host HOST       SSH endpoint/name for the QUIC client role as seen
+                           from the server role (default: tinyman)
+  --bastion USER@HOST      optional ProxyJump used by control-host -> server SSH
+  --bastion none           connect directly from control host to server
+  --ssh-key PATH           optional private key used by control-host -> server SSH
+
+Workload switches:
+  --runs N                 default 6
+  --downloads N            default 5
+  --gap-seconds N          default 5
+  --edge-cooldown-seconds N default 5
+  --between-seconds N      default 5
+  --seed N                 default 20260806
+  --tag STRING             override output tag
+  -h, --help
+
+SSH topology for this launcher:
+  control host -> server role: REQUIRED
+  server role  -> client role: REQUIRED
+  control host -> client role: not required by the final launcher
+  client role  -> server role: not required
+
+The server/client host names are configurable. In the paper testbed idex was the
+server/controller and tinyman was the client; those names are not semantic.
+USAGE
+}
+
+need_arg() { [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: $1 needs a value" >&2; exit 2; }; }
+while (($#)); do
+    case "$1" in
+        --server-host) need_arg "$@"; SERVER_HOST="$2"; shift 2 ;;
+        --client-host) need_arg "$@"; CLIENT_HOST="$2"; shift 2 ;;
+        --bastion) need_arg "$@"; BASTION="$2"; shift 2 ;;
+        --ssh-key) need_arg "$@"; SSH_KEY="$2"; shift 2 ;;
+        --runs) need_arg "$@"; RUNS="$2"; shift 2 ;;
+        --downloads) need_arg "$@"; DOWNLOADS="$2"; shift 2 ;;
+        --gap-seconds) need_arg "$@"; GAP_SECONDS="$2"; shift 2 ;;
+        --edge-cooldown-seconds) need_arg "$@"; EDGE_COOLDOWN_SECONDS="$2"; shift 2 ;;
+        --between-seconds) need_arg "$@"; BETWEEN_SECONDS="$2"; shift 2 ;;
+        --seed) need_arg "$@"; SEED="$2"; shift 2 ;;
+        --tag) need_arg "$@"; TAG="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "ERROR: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+[[ "$SERVER_HOST" != "$CLIENT_HOST" ]] || { echo "ERROR: server and client hosts must differ" >&2; exit 2; }
 for v in "$RUNS" "$DOWNLOADS"; do
     [[ "$v" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: runs/downloads must be positive integers" >&2; exit 2; }
 done
@@ -31,29 +91,75 @@ for v in "$GAP_SECONDS" "$EDGE_COOLDOWN_SECONDS" "$BETWEEN_SECONDS"; do
     [[ "$v" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "ERROR: timing values must be non-negative numbers" >&2; exit 2; }
 done
 [[ "$SEED" =~ ^[0-9]+$ ]] || { echo "ERROR: seed must be an integer" >&2; exit 2; }
+if [[ -n "$SSH_KEY" && ! -f "$SSH_KEY" ]]; then
+    echo "ERROR: SSH key not found: $SSH_KEY" >&2
+    exit 2
+fi
 
-cleanup_local(){ rm -f "$LOCAL_SCRIPT"; }
+SSH_OPTS=(-o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new)
+[[ -n "$SSH_KEY" ]] && SSH_OPTS+=(-i "$SSH_KEY" -o IdentitiesOnly=yes)
+if [[ -n "$BASTION" && "$BASTION" != none ]]; then
+    SSH_OPTS+=(-J "$BASTION")
+fi
+SERVER_TARGET="root@$SERVER_HOST"
+
+REMOTE_SCRIPT="/tmp/GQ_FAIR_REPRO_${TAG}.sh"
+REMOTE_LOG="/root/GQ_FAIR_REPRO_${TAG}.log"
+REMOTE_PID="/tmp/GQ_FAIR_REPRO_${TAG}.pid"
+REMOTE_ART="/root/GQ_FAIR_REPRO_${TAG}"
+LOCAL_SCRIPT="${TMPDIR:-/tmp}/GQ_FAIR_REPRO_${TAG}_$$.sh"
+LOCAL_BUNDLE="${TMPDIR:-/tmp}/GQ_FAIR_REPRO_${TAG}_$$.bundle"
+REMOTE_BUNDLE="/tmp/GQ_FAIR_REPRO_${TAG}.bundle"
+BUNDLE_REF="refs/heads/__gq_fair_repro_${TAG}_$$"
+
+cleanup_local() {
+    git -C "$REPO_ROOT" update-ref -d "$BUNDLE_REF" >/dev/null 2>&1 || true
+    rm -f "$LOCAL_SCRIPT" "$LOCAL_BUNDLE"
+}
 trap cleanup_local EXIT INT TERM
 
 cd "$REPO_ROOT"
-git fetch origin "$BRANCH"
-SHA="$(git rev-parse "origin/$BRANCH")"
+ORIGIN_URL="$(git remote get-url origin 2>/dev/null || true)"
+case "$ORIGIN_URL" in
+    git@github.com:Meamarian/GreenQUIC-Plus.git|https://github.com/Meamarian/GreenQUIC-Plus.git) ;;
+    *) echo "ERROR: origin must be Meamarian/GreenQUIC-Plus, got: ${ORIGIN_URL:-none}" >&2; exit 2 ;;
+esac
 
-echo "======================================================================"
-echo "P5/P7 FAIR REPRODUCTION"
-echo "branch=$BRANCH"
-echo "sha=$SHA"
-echo "runs=$RUNS downloads=$DOWNLOADS"
-echo "gap=${GAP_SECONDS}s edge_cooldown=${EDGE_COOLDOWN_SECONDS}s between=${BETWEEN_SECONDS}s"
-echo "P5=optimized Performance2 V2 + idle_monitor_normal + isolated recorders"
-echo "P7=paper Linux profile + isolated recorders + active/gap C-state charts"
-echo "======================================================================"
+# Explicit refspec makes this work even if the local clone was originally made
+# with --single-branch and its remote.origin.fetch still names an old branch.
+git fetch origin '+refs/heads/main:refs/remotes/origin/main'
+SHA="$(git rev-parse refs/remotes/origin/main)"
+[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "ERROR: cannot resolve origin/main" >&2; exit 2; }
+
+git update-ref "$BUNDLE_REF" "$SHA"
+git bundle create "$LOCAL_BUNDLE" "$BUNDLE_REF"
+git update-ref -d "$BUNDLE_REF"
+git bundle verify "$LOCAL_BUNDLE" >/dev/null
+
+printf '%s\n' \
+    '======================================================================' \
+    'GREENQUIC+ FINAL PAPER EVALUATION' \
+    'RUN ON: control host' \
+    "server role: $SERVER_HOST" \
+    "client role (reachable from server): $CLIENT_HOST" \
+    "bastion: ${BASTION:-none}" \
+    "branch=$BRANCH" \
+    "sha=$SHA" \
+    "runs=$RUNS downloads=$DOWNLOADS" \
+    "gap=${GAP_SECONDS}s edge_cooldown=${EDGE_COOLDOWN_SECONDS}s between=${BETWEEN_SECONDS}s" \
+    'P5=Performance2 V2 + TOP3 + monitor/short + isolated recorders' \
+    'P7=isolated normal-Linux paper baseline' \
+    '======================================================================'
+
+# Final run only needs control-host -> server; the server then controls the client.
+ssh "${SSH_OPTS[@]}" "$SERVER_TARGET" true
 
 cat > "$LOCAL_SCRIPT" <<'REMOTE'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
 TAG="$1"; SHA="$2"; BRANCH="$3"; RUNS="$4"; DOWNLOADS="$5"; GAP="$6"; EDGE="$7"; BETWEEN="$8"; SEED="$9"
+SERVER_HOST_LABEL="${10}"; CLIENT_HOST="${11}"; BUNDLE="${12}"; BUNDLE_REF="${13}"
 ROOT=/root/mohsen
 P5="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads"
 P7="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline"
@@ -61,16 +167,18 @@ P5BIN="$ROOT/msquic/build-greenquic-p5/bin/Release/quicinterop"
 ART="/root/GQ_FAIR_REPRO_${TAG}"
 P5OUT="$P5/matrix_results/P5_FAIR_OPT_PINNED_${RUNS}r_${DOWNLOADS}d_${TAG}"
 P7OUT="$P7/matrix_results/P7_FAIR_PAPER_PINNED_${RUNS}r_${DOWNLOADS}d_${TAG}"
+CLIENT_TARGET="root@$CLIENT_HOST"
+CLIENT_SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new)
 mkdir -p "$ART"
 rm -f "$ART/DONE" "$ART/FAILED"
 
 log(){ printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+client_ssh(){ ssh "${CLIENT_SSH_OPTS[@]}" "$CLIENT_TARGET" "$@"; }
 
 restore_p5_common(){
     set +e
     git -C "$ROOT" checkout "$SHA" -- greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/gq_common_p5.sh >/dev/null 2>&1 || true
-    ssh -o BatchMode=yes -o ConnectTimeout=15 root@tinyman \
-        "git -C '$ROOT' checkout '$SHA' -- greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/gq_common_p5.sh" >/dev/null 2>&1 || true
+    client_ssh "git -C '$ROOT' checkout '$SHA' -- greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/gq_common_p5.sh" >/dev/null 2>&1 || true
     set -e
 }
 
@@ -86,88 +194,67 @@ on_exit(){
 }
 trap on_exit EXIT INT TERM
 
-sync_host(){
-    local host="$1"
-    if [[ "$host" == idex ]]; then
-        cd "$ROOT"
-        git reset --hard
-        git fetch origin "$BRANCH"
-        git checkout -B "$BRANCH" "$SHA"
-        test "$(git rev-parse HEAD)" = "$SHA"
-    else
-        ssh -o BatchMode=yes -o ConnectTimeout=20 root@tinyman \
-            "cd '$ROOT' && git reset --hard && git fetch origin '$BRANCH' && git checkout -B '$BRANCH' '$SHA' && test \"\$(git rev-parse HEAD)\" = '$SHA'"
-    fi
-}
+log "verify required server-role -> client-role SSH"
+client_ssh 'hostname'
+
+log "synchronize exact bundled main SHA on server role ($SERVER_HOST_LABEL)"
+test -s "$BUNDLE"
+cd "$ROOT"
+git reset --hard
+git fetch "$BUNDLE" "$BUNDLE_REF"
+git checkout -B "$BRANCH" FETCH_HEAD
+test "$(git rev-parse HEAD)" = "$SHA"
+
+log "copy exact-SHA bundle to client role ($CLIENT_HOST) and synchronize"
+scp "${CLIENT_SSH_OPTS[@]}" "$BUNDLE" "$CLIENT_TARGET:$BUNDLE"
+client_ssh "cd '$ROOT' && git reset --hard && git fetch '$BUNDLE' '$BUNDLE_REF' && git checkout -B '$BRANCH' FETCH_HEAD && test \"\$(git rev-parse HEAD)\" = '$SHA'"
 
 cleanup_both(){
-    log "safe cleanup on IDEX"
+    log "safe cleanup on server role ($SERVER_HOST_LABEL)"
     cd "$P5"
     python3 ./safe_cleanup_p5_bottleneck_processes.py
     python3 ./safe_cleanup_p5_bottleneck_processes.py --check
-
-    log "safe cleanup on Tinyman"
-    ssh -o BatchMode=yes -o ConnectTimeout=20 root@tinyman \
-        "cd '$P5' && python3 ./safe_cleanup_p5_bottleneck_processes.py && python3 ./safe_cleanup_p5_bottleneck_processes.py --check"
+    log "safe cleanup on client role ($CLIENT_HOST)"
+    client_ssh "cd '$P5' && python3 ./safe_cleanup_p5_bottleneck_processes.py && python3 ./safe_cleanup_p5_bottleneck_processes.py --check"
 }
 
-log "sync exact branch SHA on IDEX"
-sync_host idex
-log "sync exact branch SHA on Tinyman"
-sync_host tinyman
-
 log "verify recorder/report self-tests"
-cd "$P5"
-python3 ./enable_p5_claim_recording_gate.py --self-test
-cd "$P7"
-python3 ./enable_p7_recorder_affinity.py --self-test
-python3 ./build_p7_report.py --self-test
-
+cd "$P5"; python3 ./enable_p5_claim_recording_gate.py --self-test
+cd "$P7"; python3 ./enable_p7_recorder_affinity.py --self-test; python3 ./build_p7_report.py --self-test
 cleanup_both
 
-log "build current optimized P5 Performance2 V2 on both endpoints"
+log "build P5 Performance2 V2 on both roles"
 (
     cd "$P5"
-    P5_BUILD_REUSE=1 bash ./build_p5_performance2.sh >"$ART/build_p5_idex.log" 2>&1
+    P5_BUILD_REUSE=1 bash ./build_p5_performance2.sh >"$ART/build_p5_server.log" 2>&1
 ) & p1=$!
-ssh -n -o BatchMode=yes root@tinyman \
-    "cd '$P5' && P5_BUILD_REUSE=1 bash ./build_p5_performance2.sh" \
-    >"$ART/build_p5_tinyman.log" 2>&1 & p2=$!
+client_ssh "cd '$P5' && P5_BUILD_REUSE=1 bash ./build_p5_performance2.sh" >"$ART/build_p5_client.log" 2>&1 & p2=$!
 wait "$p1"; wait "$p2"
-
 P5_MARKER='GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0'
 grep -aFq -- "$P5_MARKER" "$P5BIN"
-ssh -n -o BatchMode=yes root@tinyman "grep -aFq -- '$P5_MARKER' '$P5BIN'"
+client_ssh "grep -aFq -- '$P5_MARKER' '$P5BIN'"
 
-log "build P7 Linux binaries on both endpoints before measured traffic"
+log "build isolated P7 Linux binaries on both roles"
 (
     cd "$P7"
-    bash ./build_p7_linux.sh >"$ART/build_p7_idex.log" 2>&1
+    bash ./build_p7_linux.sh >"$ART/build_p7_server.log" 2>&1
 ) & p3=$!
-ssh -n -o BatchMode=yes root@tinyman \
-    "cd '$P7' && bash ./build_p7_linux.sh" \
-    >"$ART/build_p7_tinyman.log" 2>&1 & p4=$!
+client_ssh "cd '$P7' && bash ./build_p7_linux.sh" >"$ART/build_p7_client.log" 2>&1 & p4=$!
 wait "$p3"; wait "$p4"
 
-# Normal P7 already applies its recorder-affinity transformer. Normal P5 does
-# not yet, so apply the same tested P5 transformer to the runtime shell on both
-# endpoints. This changes recorder placement only; it does not rebuild MsQuic.
-log "apply P5 recorder CPU isolation on both endpoints"
+log "apply P5 recorder CPU isolation on both roles"
 cd "$P5"
 python3 ./enable_p5_claim_recording_gate.py ./gq_common_p5.sh
-ssh -n -o BatchMode=yes root@tinyman \
-    "cd '$P5' && python3 ./enable_p5_claim_recording_gate.py ./gq_common_p5.sh"
+client_ssh "cd '$P5' && python3 ./enable_p5_claim_recording_gate.py ./gq_common_p5.sh"
 grep -Fq 'GREENQUIC-P5-CLAIM-RECORDER-AFFINITY-V1' "$P5/gq_common_p5.sh"
-ssh -n -o BatchMode=yes root@tinyman \
-    "grep -Fq 'GREENQUIC-P5-CLAIM-RECORDER-AFFINITY-V1' '$P5/gq_common_p5.sh'"
-
+client_ssh "grep -Fq 'GREENQUIC-P5-CLAIM-RECORDER-AFFINITY-V1' '$P5/gq_common_p5.sh'"
 cleanup_both
 
-log "TEST 1/2 P5 optimized idle_monitor_normal"
+log "TEST 1/2: P5 DPDK OFF/BASIC/PLUS, final TOP3 paper profile"
 cd "$P5"
 bash ./run_matrix_with_sheet.sh \
     --chart-style both \
-    --client-host tinyman \
+    --client-host "$CLIENT_HOST" \
     --client-dir "$P5" \
     --client-bin "$P5BIN" \
     --downloads "$DOWNLOADS" \
@@ -190,6 +277,18 @@ bash ./run_matrix_with_sheet.sh \
     --env SHORT_PAUSE_ITERATIONS=1 \
     --env GQ_IDLE_MODE_OVERRIDE=monitor \
     --env GQ_IDLE_FALLBACK_OVERRIDE=short \
+    --env GQ_ENABLE_ACPI_POWER_TRACE=1 \
+    --env GQ_POWER_SAMPLE_INTERVAL_MS=1000 \
+    --env GQ_ENABLE_MSR_TRACE=1 \
+    --env GQ_MSR_SAMPLE_INTERVAL_MS=6 \
+    --env GQ_MSR_SMOOTH_SAMPLES=3 \
+    --env ENABLE_CSTATE_RECORD=1 \
+    --env GQ_ENABLE_FREQ_TRACE=1 \
+    --env GQ_FREQ_SAMPLE_INTERVAL_MS=1 \
+    --env PRESSURE_UP=450 \
+    --env RX_QUEUE_HIGH=48 \
+    --env ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16 \
+    --env FREQ_PERIOD_US=10000 \
     --env GQ_POST_TRANSFER_WAIT_S=0 \
     --env ENABLE_MULTICORE=0 \
     --env SERVER_DPDK_LCORES=19 \
@@ -205,12 +304,12 @@ cleanup_both
 log "fair P5->P7 transition delay ${BETWEEN}s"
 sleep "$BETWEEN"
 
-log "TEST 2/2 P7 paper Linux baseline"
+log "TEST 2/2: P7 isolated normal-Linux baseline"
 cd "$P7"
 P7_RECORDER_CPU=auto bash ./run_matrix_with_report.sh \
     --chart-style both \
     --log-level 0 \
-    --client-host tinyman \
+    --client-host "$CLIENT_HOST" \
     --client-dir "$P7" \
     --downloads "$DOWNLOADS" \
     --gap-seconds "$GAP" \
@@ -239,7 +338,7 @@ P7_RECORDER_CPU=auto bash ./run_matrix_with_report.sh \
     --output-dir "$P7OUT" \
     2>&1 | tee "$ART/p7.log"
 
-log "validate P7 recorder-affinity evidence and new C-state charts"
+log "validate P7 recorder-affinity evidence and C-state charts"
 find "$P7OUT/runs" -type f \( -name 'rapl_affinity.txt' -o -name 'frequency_affinity.txt' -o -name 'cstate_affinity.txt' \) -print > "$ART/p7_affinity_files.txt"
 test -s "$ART/p7_affinity_files.txt"
 test -f "$P7OUT/the_sheet_rules_all/charts/with_variance/svg/with_values/19_active_cstate_residency.svg"
@@ -252,13 +351,25 @@ test -s "$ART/p5_affinity_files.txt"
 cat > "$ART/config.env" <<EOF_CONFIG
 branch=$BRANCH
 commit=$SHA
+server_role_host=$SERVER_HOST_LABEL
+client_role_host=$CLIENT_HOST
 runs=$RUNS
 downloads=$DOWNLOADS
 gap_seconds=$GAP
 edge_cooldown_seconds=$EDGE
 between_seconds=$BETWEEN
 seed=$SEED
-P5_profile=optimized_Performance2_V2_idle_monitor_normal
+P5_profile=optimized_Performance2_V2_TOP3_idle_monitor_normal
+P5_power_profile=TOP3
+P5_pressure_up=450
+P5_rx_queue_high=48
+P5_active_transfer_sleep_min_level=16
+P5_freq_period_us=10000
+P5_idle_mode=monitor
+P5_idle_fallback=short
+P5_acpi_interval_ms=1000
+P5_msr_interval_ms=6
+P5_freq_trace_interval_ms=1
 P5_dpdk_cpu=19
 P5_quic_cpus=21,22,23,24
 P5_recorder_cpu=auto_housekeeping
@@ -271,7 +382,6 @@ P7_disable_rdma=1
 P7_udp_rmem=6815744
 P7_udp_wmem=6815744
 P7_combined_channels=1
-NOTE=Uploaded P5 reference had between_tests=0 and uploaded P7 reference had between_runs=10. This fair reproduction deliberately uses the same between_seconds value for both; default is 5 seconds.
 EOF_CONFIG
 
 log "zip results"
@@ -288,22 +398,25 @@ cat "$ART/RESULT_ZIPS.txt"
 REMOTE
 
 bash -n "$LOCAL_SCRIPT"
+scp "${SSH_OPTS[@]}" "$LOCAL_BUNDLE" "$SERVER_TARGET:$REMOTE_BUNDLE"
+ssh "${SSH_OPTS[@]}" "$SERVER_TARGET" "test -s '$REMOTE_BUNDLE'"
+ssh "${SSH_OPTS[@]}" "$SERVER_TARGET" "cat > '$REMOTE_SCRIPT' && chmod 0700 '$REMOTE_SCRIPT'" < "$LOCAL_SCRIPT"
+ssh "${SSH_OPTS[@]}" "$SERVER_TARGET" \
+    "rm -rf '$REMOTE_ART'; nohup setsid bash '$REMOTE_SCRIPT' '$TAG' '$SHA' '$BRANCH' '$RUNS' '$DOWNLOADS' '$GAP_SECONDS' '$EDGE_COOLDOWN_SECONDS' '$BETWEEN_SECONDS' '$SEED' '$SERVER_HOST' '$CLIENT_HOST' '$REMOTE_BUNDLE' '$BUNDLE_REF' >'$REMOTE_LOG' 2>&1 </dev/null & echo \$! >'$REMOTE_PID'; echo REMOTE_PID=\$(cat '$REMOTE_PID')"
 
-# Install and launch only on IDEX. All Tinyman setup/cleanup now happens inside
-# the detached job, so a setup failure is visible in REMOTE_LOG instead of
-# making the Mac launcher disappear before a monitorable process exists.
-ssh "${SSH_OPTS[@]}" idex "cat > '$REMOTE_SCRIPT' && chmod 0700 '$REMOTE_SCRIPT'" < "$LOCAL_SCRIPT"
-ssh "${SSH_OPTS[@]}" idex \
-    "rm -rf '$REMOTE_ART'; nohup setsid bash '$REMOTE_SCRIPT' '$TAG' '$SHA' '$BRANCH' '$RUNS' '$DOWNLOADS' '$GAP_SECONDS' '$EDGE_COOLDOWN_SECONDS' '$BETWEEN_SECONDS' '$SEED' >'$REMOTE_LOG' 2>&1 </dev/null & echo \$! >'$REMOTE_PID'; echo REMOTE_PID=\$(cat '$REMOTE_PID')"
+cat <<EOF
 
-echo
-echo "STARTED FAIR REPRODUCTION"
-echo "TAG=$TAG"
-echo "SHA=$SHA"
-echo "REMOTE_LOG=$REMOTE_LOG"
-echo
-echo "LIVE MONITOR:"
-echo "ssh idex 'tail -n +1 -F $REMOTE_LOG'"
-echo
-echo "STATUS:"
-echo "ssh idex 'if test -f $REMOTE_ART/DONE; then echo DONE; cat $REMOTE_ART/RESULT_ZIPS.txt; elif test -f $REMOTE_ART/FAILED; then echo FAILED; cat $REMOTE_ART/FAILED; tail -120 $REMOTE_LOG; else echo RUNNING; tail -60 $REMOTE_LOG; fi'"
+STARTED FAIR REPRODUCTION
+RUN LOCATION: control host
+SERVER_ROLE=$SERVER_HOST
+CLIENT_ROLE=$CLIENT_HOST
+TAG=$TAG
+SHA=$SHA
+REMOTE_LOG=$REMOTE_LOG
+
+LIVE MONITOR FROM ANOTHER CONTROL-HOST TERMINAL:
+ssh ${BASTION:+-J "$BASTION" }${SSH_KEY:+-i "$SSH_KEY" }root@$SERVER_HOST 'tail -n +1 -F $REMOTE_LOG'
+
+STATUS FROM CONTROL HOST:
+ssh ${BASTION:+-J "$BASTION" }${SSH_KEY:+-i "$SSH_KEY" }root@$SERVER_HOST 'if test -f $REMOTE_ART/DONE; then echo DONE; cat $REMOTE_ART/RESULT_ZIPS.txt; elif test -f $REMOTE_ART/FAILED; then echo FAILED; cat $REMOTE_ART/FAILED; tail -120 $REMOTE_LOG; else echo RUNNING; tail -60 $REMOTE_LOG; fi'
+EOF
