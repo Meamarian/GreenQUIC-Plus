@@ -70,7 +70,7 @@ branch:                 main
 paper test NIC PCI:     0000:18:00.0
 ```
 
-On our paper testbed, the high-level commands need no host arguments. On another deployment, the same high-level setup, rebuild, run and monitor wrappers accept explicit `--server-host`, `--client-host`, `--bastion`, and `--ssh-key` switches. Setup additionally accepts `--server-to-client-host` when SERVER reaches CLIENT under a different name/address. Change host names with switches, not by editing scripts.
+On another deployment, the same high-level setup, rebuild, run, and monitor wrappers accept explicit `--server-host`, `--client-host`, `--bastion`, and `--ssh-key` switches. Setup additionally accepts `--server-to-client-host` when SERVER reaches CLIENT under a different name/address. Change host names with switches, not by editing scripts.
 
 `idex` and `tinyman` are only our paper-testbed defaults.
 
@@ -182,11 +182,15 @@ Paper hardware assumptions remain: Intel E810 test NIC at PCI `0000:18:00.0`, Li
 
 # Reproduction quick start
 
-The blocks below are intended to be pasteable on the CONTROL HOST. For our paper testbed they default to the Mac checkout `$HOME/Downloads/GreenQUIC-Plus`, SERVER `idex`, CLIENT `tinyman`, BASTION `mohsen@coinbase`, and SSH key `$HOME/.ssh/id_ed25519`.
+For our paper testbed, they default to the Mac checkout `$HOME/Downloads/GreenQUIC-Plus`, SERVER `idex`, CLIENT `tinyman`, BASTION `mohsen@coinbase`, and SSH key `$HOME/.ssh/id_ed25519`.
 
-The clone logic is included: if the private repository is not already present on the CONTROL HOST, it is cloned first. SERVER and CLIENT are **not** cloned from GitHub directly; setup transfers the exact `main` SHA by Git bundle.
+SERVER and CLIENT are **not** cloned from GitHub directly; setup transfers the exact `main` SHA by Git bundle.
 
-For POS allocation/reimage/reset, use `tum_testbed_setup/README.md`; every long-running operation there states where it must run and is followed by its live monitor/readiness loop.
+For POS allocation/reimage/reset, use `tum_testbed_setup/README.md`
+
+
+**Based on your current status, choose one of the following cases:**
+
 
 ## 1. Debian Trixie exists; deploy current `main`, prepare hosts and build everything
 
@@ -311,14 +315,18 @@ Changing these management names does not change the recorded paper hardware assu
 
 ## Results recording
 
-For tag `<TAG>` (tag is test timestamp), SERVER stores the final matrix trees at:
+For tag `<TAG>` (tag is the test timestamp), SERVER stores the final matrix trees at:
 
 ```text
 /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/matrix_results/P5_FAIR_OPT_PINNED_6r_5d_<TAG>
 /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline/matrix_results/P7_FAIR_PAPER_PINNED_6r_5d_<TAG>
 ```
 
-Controller metadata is under `/root/GQ_FAIR_REPRO_<TAG>/`, and the two final ZIPs are `/root/P5_FAIR_OPT_PINNED_6r_5d_<TAG>.zip` and `/root/P7_FAIR_PAPER_PINNED_6r_5d_<TAG>.zip`. `RESULT_DIRS.env` records these exact paths. Main generated charts are in each matrix result's `the_sheet_rules_all/` report tree.
+Controller metadata is under `/root/GQ_FAIR_REPRO_<TAG>/`, and the two final ZIPs are `/root/P5_FAIR_OPT_PINNED_6r_5d_<TAG>.zip` and `/root/P7_FAIR_PAPER_PINNED_6r_5d_<TAG>.zip`. 
+
+`RESULT_DIRS.env` records these exact paths. 
+
+Main generated charts are in each matrix result's `the_sheet_rules_all/` report tree.
 
 ## Analysis artifacts
 
