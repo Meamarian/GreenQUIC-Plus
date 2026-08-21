@@ -71,7 +71,7 @@ def determine_stamp(result_root: Path, role: str, mode: str, supplied: str | Non
     candidates.extend(result_root.glob(f"{role}_msr_{mode}_*.csv"))
     candidates.extend(result_root.glob(f"{role}_transfer_{mode}_*.json"))
     if role == "client":
-        candidates.extend(result_root.glob(f"client_download_manifest_{mode}_*.json"))
+        candidates.extend(result_root.glob(f"client_download_manifest_{args.mode}_*.json"))
     source = latest(candidates)
     if source is None:
         raise SystemExit("ERROR: cannot determine the run timestamp")
@@ -119,6 +119,7 @@ def main() -> int:
     move(log_root / f"{args.role}_{args.mode}_{stamp}_timeline.jsonl", details / f"{stem}_timeline.jsonl")
     move(result_root / f"{args.role}_frequency_samples_{args.mode}_{stamp}.jsonl", details / f"{stem}_frequency_samples.jsonl")
     move(result_root / f"{args.role}_frequency_samples_{args.mode}_{stamp}_sampler.log", details / f"{stem}_frequency_sampler.txt")
+    move(result_root / f"{args.role}_frequency_samples_{args.mode}_{stamp}_affinity.txt", details / f"{stem}_frequency_affinity.txt")
     move(result_root / f"{args.role}_{args.mode}_{stamp}_v21_stats.csv", details / f"{stem}_stats.csv")
     move(
         result_root / f"{args.role}_{args.mode}_{stamp}_greenquic_counters.csv",
@@ -130,6 +131,7 @@ def main() -> int:
     move(Path(str(power_prefix) + ".csv"), details / f"{stem}_power.csv")
     move(Path(str(power_prefix) + "_python_lists.txt"), details / f"{stem}_power_lists.txt")
     move(Path(str(power_prefix) + "_sampler.log"), details / f"{stem}_power_sampler.txt")
+    move(Path(str(power_prefix) + "_affinity.txt"), details / f"{stem}_power_affinity.txt")
     move(Path(str(power_prefix) + "_timeseries.svg"), run_dir / f"{stem}_power_timeseries.svg")
     move(Path(str(power_prefix) + "_energy_timeseries.svg"), run_dir / f"{stem}_energy_timeseries.svg")
     move(Path(str(power_prefix) + "_histogram.svg"), run_dir / f"{stem}_power_histogram.svg")
@@ -146,6 +148,7 @@ def main() -> int:
     msr_csv = details / f"{stem}_msr_power.csv"
     move(msr_csv_source, msr_csv)
     move(msr_log_source, details / f"{stem}_msr_sampler.txt")
+    move(result_root / f"{args.role}_msr_{args.mode}_{stamp}_affinity.txt", details / f"{stem}_msr_affinity.txt")
 
     cstate_prefix = result_root / f"{args.role}_cstate_{args.mode}_{stamp}"
     cstate_csv = details / f"{stem}_cstate.csv"
