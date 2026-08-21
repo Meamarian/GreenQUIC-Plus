@@ -1,109 +1,8 @@
-# GreenQUIC+ TUM/LRZ paper-testbed setup
+# GreenQUIC+ TUM testbed setup
 
-This directory intentionally contains only:
+`greenquic_fresh_setup.sh` is the **provisioning/build implementation**.
 
-```text
-README.md
-greenquic_fresh_setup.sh
-```
-
-`greenquic_fresh_setup.sh` is the **single supported provisioning/build implementation**. There is no longer a chain of base/P4/P5/P6/P7/branch-specific setup scripts.
-
-For normal operation use the high-level wrapper:
-
-```text
-results_analysis/setup_paper_testbed.sh
-```
-
-It supplies the paper defaults, safely synchronizes CONTROL `main`, verifies the paper configuration, and calls the single setup implementation. It also accepts explicit management switches for another deployment.
-
----
-
-# 1. Roles and paper defaults
-
-```text
-CONTROL HOST  machine with the private GreenQUIC+ checkout; starts setup
-SERVER        QUIC server + experiment controller
-CLIENT        QUIC client
-BASTION       optional SSH jump/bootstrap host
-```
-
-Paper defaults are centralized in `results_analysis/paper_testbed_defaults.sh`:
-
-```text
-CONTROL checkout:             $HOME/Downloads/GreenQUIC-Plus on our Mac
-SERVER as seen from CONTROL:  idex
-CLIENT as seen from CONTROL:  tinyman
-CLIENT as seen from SERVER:   tinyman
-BASTION:                      mohsen@coinbase
-CONTROL SSH key:              $HOME/.ssh/id_ed25519
-remote user:                  root
-remote repository root:       /root/mohsen
-branch:                       main
-paper test NIC PCI:           0000:18:00.0
-```
-
-`idex` and `tinyman` are the host names used in our measurements; they are not role definitions. Another deployment may use other SSH names or addresses.
-
----
-
-# 2. Required SSH topology
-
-Fresh setup requires:
-
-```text
-CONTROL -> BASTION        only when a bastion is used
-BASTION -> SERVER         fresh-node public-key bootstrap
-BASTION -> CLIENT         fresh-node public-key bootstrap
-CONTROL -> SERVER         required
-CONTROL -> CLIENT         required
-SERVER  -> CLIENT         required
-CLIENT  -> SERVER         not required
-```
-
-The setup installs the CONTROL **public** key on both nodes when needed. The CONTROL private key stays on CONTROL. Setup also creates a dedicated SERVER key for SERVER -> CLIENT.
-
-Only CONTROL needs private-GitHub credentials. The exact `origin/main` commit is sent to SERVER and CLIENT by Git bundle.
-
-If CONTROL and SERVER use different names/addresses for CLIENT, use separate `--client-host` and `--server-to-client-host` values during setup.
-
----
-
-# 3. Dependencies and versions
-
-The setup is intentionally strict about the endpoint OS and source versions.
-
-| Component | Version / requirement |
-|---|---|
-| SERVER/CLIENT OS | Debian Trixie |
-| Modified MsQuic source | source version `2.4.8`, exact code fixed by GreenQUIC+ Git SHA |
-| DPDK | `21.11.9` from the vendored tree |
-| CMake | `>= 3.20` for the static MsQuic build used by P5/P7 |
-| TLS backend | OpenSSL |
-| Build type | Release |
-| Python | Python 3 with NumPy and Matplotlib |
-| Measurement | RAPL access, MSR support, `msr-tools`, `lm-sensors`, `acpi.sh`, `msr.py` |
-| Network tooling | `ethtool`, `iproute2`, PCI/kernel-module tooling |
-
-The setup installs the required compiler/build/network/measurement packages from the configured Debian Trixie repositories. **Exact Debian package revisions and the kernel patch version are not individually pinned by the script.** The complete package list and version-pinning policy are recorded in:
-
-```text
-results_analysis/configuration/dependencies.json
-```
-
-The source versions are repository-backed: `msquic/CMakeLists.txt` declares MsQuic `2.4.8`, and `msquic/deps/dpdk/VERSION` is `21.11.9`. Because GreenQUIC+ modifies MsQuic, a clean upstream MsQuic 2.4.8 checkout is not equivalent; use the exact GreenQUIC+ commit transferred by the setup.
-
-After setup, **RUN ON: CONTROL HOST** to print the actual CONTROL/SERVER/CLIENT kernel/tool/package versions:
-
-```bash
-bash results_analysis/print_dependency_versions.sh
-```
-
-This is inspection only and starts no traffic; no live workload monitor applies.
-
----
-
-# 4. Case A — allocate/reimage fresh Debian nodes
+# Case A — allocate/reimage fresh Debian nodes
 
 ## A1. POS allocation/image/reset
 
@@ -117,7 +16,7 @@ CLIENT_NODE=tinyman
 pos nodes list | grep -E "$SERVER_NODE|$CLIENT_NODE"
 ```
 
-Allocate only nodes that are actually unallocated and according to the local POS policy. Do not free or replace another user's allocation.
+Allocate only nodes that are actually unallocated and in accordance with the local POS policy. Do not free or replace another user's allocation.
 
 After allocation, **RUN ON: Coinbase/POS shell:**
 
@@ -131,7 +30,7 @@ pos nodes reset "$CLIENT_NODE" &
 wait
 ```
 
-Immediately monitor from **another Coinbase/POS shell:**
+You can monitor from **another Coinbase/POS shell:**
 
 ```bash
 SERVER_NODE=idex
@@ -175,7 +74,7 @@ git checkout main && \
 bash results_analysis/setup_paper_testbed.sh
 ```
 
-Immediately in **a second CONTROL-HOST terminal:**
+You can monitor in **a second CONTROL-HOST terminal:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -194,7 +93,7 @@ Do not manually clone the private repository on SERVER or CLIENT. The supported 
 
 **RUN ON: CONTROL HOST:** use the same one-paste command from Case A2.
 
-Immediately in **a second CONTROL-HOST terminal:** use the same `live_monitor_setup.sh` command from Case A2.
+You can monitor in **a second CONTROL-HOST terminal:** use the same `live_monitor_setup.sh` command from Case A2.
 
 This is the recommended “fresh clone/deploy + build” workflow for already-installed Debian nodes.
 
@@ -231,7 +130,7 @@ bash results_analysis/setup_paper_testbed.sh \
   --ssh-key "$HOME/.ssh/lab_key"
 ```
 
-Immediately in **a second CONTROL-HOST terminal:**
+You can monitor in **a second CONTROL-HOST terminal:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -318,7 +217,7 @@ git checkout main && \
 bash results_analysis/run_paper_evaluation.sh
 ```
 
-Immediately in **a second CONTROL-HOST terminal:**
+You can monitor in **a second CONTROL-HOST terminal:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -335,5 +234,3 @@ For exact P5/P7 configuration, result paths, download helpers, another-host run 
 - `uio_pci_generic` is not accepted as the final P5 DPDK driver;
 - the CONTROL private key is never copied to SERVER/CLIENT;
 - private GitHub credentials remain on CONTROL;
-- CLIENT -> SERVER SSH is not required;
-- the original `Meamarian/GreenQUIC` repository is not modified by this workflow.
