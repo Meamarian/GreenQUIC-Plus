@@ -202,7 +202,7 @@ git checkout main && \
 bash results_analysis/setup_paper_testbed.sh
 ```
 
-**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after starting setup:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal after starting setup:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -225,7 +225,7 @@ git checkout main && \
 bash results_analysis/rebuild_paper_binaries.sh
 ```
 
-**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after starting rebuild:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal after starting rebuild:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -248,7 +248,7 @@ git checkout main && \
 bash results_analysis/run_paper_evaluation.sh
 ```
 
-**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after launch:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal after launch:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
