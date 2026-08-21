@@ -192,7 +192,7 @@ The clone logic is included: if the private repository is not already present on
 
 For POS allocation/reimage/reset, use `tum_testbed_setup/README.md`; every long-running operation there states where it must run and is followed by its live monitor/readiness loop.
 
-Based on your current status, choose one of the following cases:
+**Based on your current status, choose one of the following cases:**
 
 ## 1. Debian Trixie exists; deploy current `main`, prepare hosts and build everything
 
