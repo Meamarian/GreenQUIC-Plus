@@ -12,6 +12,7 @@ msquic/deps/dpdk-install/
 **/matrix_results/
 **/logs/
 **/runtime/
+reproduced_results/
 
 # Python-generated files
 **/__pycache__/
