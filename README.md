@@ -53,14 +53,16 @@ The `main` branch intentionally keeps only the current paper/development path at
 |---|---|
 | `msquic/` | MsQuic + DPDK source used by GreenQUIC+ |
 | `greenquic_test_suite_v22/` | authoritative experiment, build, recorder, report, and validation suite |
+| `results_analysis/` | paper-evaluation configurations, tuning summaries, chart provenance, and analysis material |
 | `tum_testbed_setup/` | one fresh-Debian TUM/LRZ setup entrypoint and its guide |
-| `power_mng_tunning/` | power-management tuning and reproducibility material |
 | `acpi.sh` | ACPI/platform power helper retained at repository root |
 | `msr.py` | MSR helper retained at repository root |
 
 The older `greenquic_test_suite/` tree, historical root bootstrap/autopatch scripts, root patch bundles, and versioned TUM setup wrappers were removed from `main` after verifying that the final paper path uses `greenquic_test_suite_v22/`. They remain recoverable from Git history and the preserved historical branches.
 
-Generated results, payloads, build trees, and runtime logs are excluded from new commits by `.gitignore`.
+The former top-level `power_mng_tunning/` folder has also been removed. Its useful reviewed information is consolidated under `results_analysis/tuning/`, while the exact final paper-evaluation configuration is under `results_analysis/configuration/`.
+
+Generated runtime results, payloads, build trees, and logs are excluded from new commits by `.gitignore`.
 
 ---
 
@@ -88,9 +90,9 @@ Runtime mode is selected through configuration as `off`, `basic`, or `plus`.
 
 ---
 
-## Final paper datapath used by `main`
+## Final paper datapath and configuration
 
-Although the historical source branch was named `performance2/p5-multicore`, the final fair paper configuration is **single-DPDK-owner** and uses the optimized Performance2 V2 datapath.
+Although the historical source branch was named `performance2/p5-multicore`, the final paper configuration is **single-DPDK-owner** and uses the optimized Performance2 V2 datapath.
 
 The P5 build is verified with this exact marker:
 
@@ -98,15 +100,50 @@ The P5 build is verified with this exact marker:
 GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
 ```
 
-The fair P5 experiment explicitly uses:
+The final focused paper power-policy configuration is **TOP3**:
 
 ```text
-ENABLE_MULTICORE=0
-DPDK owner CPU: 19
-QUIC CPUs: 21,22,23,24
+PRESSURE_UP=450
+RX_QUEUE_HIGH=48
+ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16
 ```
 
-The comparison path is the isolated P7 normal-Linux MsQuic baseline.
+The paper evaluation uses CPU19 as the single DPDK owner and CPUs21-24 as MsQuic workers. OFF, BASIC, and PLUS run on the same optimized datapath. BASIC consumes only the physical policy; PLUS adds QUIC semantic hints and PLUS-specific guards. `ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16` is PLUS-only; the two physical TOP3 settings apply to BASIC and PLUS.
+
+The Linux comparison is the isolated P7 normal-Linux MsQuic path with the final paper network/CPU settings.
+
+**Authoritative machine-readable paper configuration:**
+
+```text
+results_analysis/configuration/p5_paper_evaluation.json
+results_analysis/configuration/p7_paper_evaluation.json
+```
+
+A readable explanation is in `results_analysis/configuration/README.md`. These files describe the paper evaluation, **not** TUM fresh-node provisioning.
+
+---
+
+## Paper results and analysis
+
+`results_analysis/` is organized as:
+
+```text
+results_analysis/
+├── README.md
+├── configuration/
+│   ├── README.md
+│   ├── p5_paper_evaluation.json
+│   └── p7_paper_evaluation.json
+├── tuning/
+│   ├── README.md
+│   └── summary.json
+└── charts/
+    ├── README.md
+    ├── SOURCE_REFERENCE.txt
+    └── manifest.json
+```
+
+The tuning summaries are derived from the reviewed power-management and DPDK-path tuning workbooks. `charts/SOURCE_REFERENCE.txt` preserves the source mapping from the attached paper chart bundle. Some chart references intentionally retain older archive names; the `configuration/` JSON files are the final 6×5 configuration reference.
 
 ---
 
@@ -163,7 +200,7 @@ Successful setup ends with:
 GREENQUIC+ MAIN READY ON BOTH TUM NODES
 ```
 
-The current setup is deliberately paper-focused. It does **not** rebuild the historical P0/P4/P6 workflows; those remain available in Git history/historical branches if needed for old experiments.
+The setup is machine provisioning. It is deliberately separate from the paper-evaluation configuration recorded in `results_analysis/configuration/`.
 
 ### Live setup monitor from another Mac terminal
 
@@ -185,7 +222,7 @@ done
 
 ## Final fair P5/P7 reproduction
 
-After setup succeeds, launch the paper/fair experiment from the Mac:
+After setup succeeds, launch the fair reproduction from the Mac:
 
 ```bash
 cd ~/Downloads/GreenQUIC-Plus && \
