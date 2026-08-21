@@ -11,7 +11,9 @@
 
 **Contact:** mohsen.memarian@kau.se, andreas.kassler@kau.se, spaethj@net.in.tum.de, kempfm@net.in.tum.de, lachnit@net.in.tum.de, jzirngib@mpi-inf.mpg.de, carle@net.in.tum.de
 
-GreenQUIC+ is the implementation and reproducibility repository for **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK.”** The project studies adaptive CPU power management for a DPDK-based MsQuic datapath by controlling CPU frequency and idle behavior while keeping high QUIC goodput.
+GreenQUIC+ repository is the implementation of the **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK”** paper. 
+
+High-performance QUIC implementations can leverage DPDK to bypass the kernel network stack and achieve high packet-processing rates. However, DPDK's polling-based execution model can consume substantial CPU resources and energy even during periods of low traffic. In this paper, we present an adaptive power-management mechanism for a DPDK-based MsQuic implementation that dynamically adjusts CPU frequency and idle behavior based on both datapath activity and QUIC transport information. We evaluate the implementation using repeated QUIC file transfers under different operating configurations. The results show that the proposed mechanism lowers power consumption at both the QUIC client and server while achieving high goodput across the evaluated workloads.
 
 The same optimized DPDK/MsQuic datapath is used for three runtime modes:
 
@@ -20,26 +22,6 @@ The same optimized DPDK/MsQuic datapath is used for three runtime modes:
 - **PLUS / GreenQUIC+:** the BASIC policy is extended with short-lived QUIC transport information.
 
 The Linux comparison is **P7**, an isolated normal-Linux MsQuic UDP build with DPDK and XDP disabled.
-
----
-
-## Repository status and provenance
-
-```text
-Repository:     Meamarian/GreenQUIC-Plus
-Visibility:     private
-Default branch: main
-```
-
-`main` originated from the final paper/reproduction branch of the original repository:
-
-```text
-old repository: Meamarian/GreenQUIC
-old branch:     performance2/p5-multicore
-import SHA:     58d00a39270f512b6e9586704797dff6285e73b2
-```
-
-The exact imported state is preserved as `paper/original-p5-multicore`. Current work and reproduction use `main`.
 
 ---
 
@@ -90,9 +72,9 @@ branch:                 main
 paper test NIC PCI:     0000:18:00.0
 ```
 
-On our paper testbed the high-level commands need no host arguments. On another deployment, the **same high-level setup, rebuild, run and monitor wrappers accept explicit `--server-host`, `--client-host`, `--bastion`, and `--ssh-key` switches**. Setup additionally accepts `--server-to-client-host` when SERVER reaches CLIENT under a different name/address. Host names should be changed with switches, not by editing scripts.
+On our paper testbed, the high-level commands need no host arguments. On another deployment, the **same high-level setup, rebuild, run and monitor wrappers accept explicit `--server-host`, `--client-host`, `--bastion`, and `--ssh-key` switches**. Setup additionally accepts `--server-to-client-host` when SERVER reaches CLIENT under a different name/address. Host names should be changed with switches, not by editing scripts.
 
-`idex` does not mean SERVER in the code and `tinyman` does not mean CLIENT in the code. They are only our paper-testbed defaults.
+`idex` and `tinyman` are only our paper-testbed defaults.
 
 ### Required SSH topology
 
@@ -123,11 +105,11 @@ Only the CONTROL HOST needs private-GitHub credentials. Exact source commits are
 
 # What P5 and P7 mean
 
-`P5` and `P7` are experiment names, not QUIC versions.
+`P5` and `P7` are experiment names.
 
-**P5** is the repeated 8-GiB download experiment over the optimized DPDK MsQuic path. It compares OFF, BASIC and PLUS on the same Performance2 V2 datapath.
+**P5** is the repeated 8-GiB download experiment over the optimized DPDK MsQuic path. It compares OFF, BASIC and PLUS on the same datapath.
 
-**P7** is the matching repeated 8-GiB experiment over isolated normal-Linux MsQuic/UDP.
+**P7** is the matching repeated 8-GiB experiment over Linux MsQuic/UDP.
 
 Final workload:
 
@@ -140,24 +122,7 @@ Final workload:
 seed 20260806
 ```
 
-Final P5 datapath marker:
-
-```text
-GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
-```
-
-Final TOP3 power-policy overrides:
-
-```text
-PRESSURE_UP=450
-RX_QUEUE_HIGH=48
-ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16
-FREQ_PERIOD_US=10000
-GQ_IDLE_MODE_OVERRIDE=monitor
-GQ_IDLE_FALLBACK_OVERRIDE=short
-```
-
-Paper CPU topology:
+Tests CPU topology:
 
 ```text
 ENABLE_MULTICORE=0
@@ -169,9 +134,9 @@ Machine-readable configuration is under `results_analysis/configuration/`.
 
 ---
 
-# Exact binaries
+# Run binaries
 
-On both SERVER and CLIENT, after supported setup:
+On both SERVER and CLIENT, after the supported setup:
 
 ```text
 P5 client: /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop
@@ -181,7 +146,7 @@ P7 client: /root/mohsen/msquic/build-linux-p7/bin/Release/quicinterop
 P7 server: /root/mohsen/msquic/build-linux-p7/bin/Release/quicinteropserver
 ```
 
-P7 is built with `QUIC_LINUX_DPDK_ENABLED=OFF` and `QUIC_LINUX_XDP_ENABLED=OFF`, and the build verifies that P7 does not link DPDK.
+P7 is built with `QUIC_LINUX_DPDK_ENABLED=OFF` and `QUIC_LINUX_XDP_ENABLED=OFF`.
 
 ---
 
@@ -189,7 +154,7 @@ P7 is built with `QUIC_LINUX_DPDK_ENABLED=OFF` and `QUIC_LINUX_XDP_ENABLED=OFF`,
 
 The current reproduction path has two kinds of dependencies: repository-pinned source versions and Debian packages resolved from the Debian Trixie repositories at setup time.
 
-| Component | Version / requirement | Reproducibility rule |
+| Component | Version | Reproducibility note |
 |---|---|---|
 | Modified MsQuic source | `2.4.8` source version | use the exact GreenQUIC+ Git SHA; stock upstream 2.4.8 is not equivalent |
 | DPDK | `21.11.9` | vendored under `msquic/deps/dpdk/` |
@@ -215,7 +180,9 @@ bash results_analysis/print_dependency_versions.sh
 
 This is an inspection command and starts no traffic; no live experiment monitor applies.
 
-Paper hardware assumptions remain: Intel E810 test NIC at PCI `0000:18:00.0`, Linux `ice` for link/P7 operation, `igb_uio` or `vfio-pci` for DPDK, `16384 × 2 MiB` hugepages on the test-NIC NUMA node, CPU19 for dataplane work and CPUs21-24 for MsQuic.
+Paper hardware assumptions remain: 
+
+Intel E810 test NIC at PCI `0000:18:00.0`, Linux `ice` for link/P7 operation, `igb_uio` or `vfio-pci` for DPDK, `16384 × 2 MiB` hugepages on the test-NIC NUMA node, CPU19 for dataplane work and CPUs21-24 for MsQuic.
 
 ---
 
@@ -344,7 +311,7 @@ bash results_analysis/setup_paper_testbed.sh \
   --ssh-key "$HOME/.ssh/lab_key"
 ```
 
-Immediately monitor from **a second CONTROL-HOST terminal**:
+You can monitor from **a second CONTROL-HOST terminal**:
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -373,27 +340,3 @@ results_analysis/charts/svg/...
 ```
 
 `artifact_files.sha256.json` records expected sizes/SHA-256 values for the imported artifacts.
-
----
-
-## Branch model
-
-```text
-main                         current GreenQUIC+ paper/development baseline
-paper/original-p5-multicore exact imported paper snapshot
-development                  integration work
-research/power-management    power-policy experiments
-research/dpdk-performance    datapath/performance experiments
-performance2/p5-max-goodput  preserved Performance2 tuning line
-performance2/p5-multicore    preserved original paper branch name
-```
-
-Additional historical branches are retained for provenance. Use feature/fix branches and pull requests for collaborative development rather than modifying preserved historical branches.
-
----
-
-## Detailed guides
-
-- `results_analysis/README.md` — full start-state decision tree, dependency/version policy, exact configurations, result locations and analysis artifacts.
-- `tum_testbed_setup/README.md` — POS/Debian provisioning and the single TUM setup implementation.
-- `results_analysis/HOST_ROLE_AUDIT.md` — host-name/SSH dependency audit.
