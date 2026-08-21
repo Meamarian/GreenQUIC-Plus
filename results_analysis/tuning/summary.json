@@ -1,0 +1,77 @@
+{
+  "source_attachment": "Tunning.zip",
+  "power_management": {
+    "workbook": "GreenQUIC_Power_Mng_Tuning_v1.xlsx",
+    "sweep": {
+      "runs_per_config": 5,
+      "downloads_per_run": 5,
+      "payload": "8 GiB",
+      "baseline": {
+        "test": "T01",
+        "plus_mean_gbps": 9.998098311028494,
+        "sd": 0.14475545388061356,
+        "cv_percent": 1.4478298710159683
+      },
+      "top_valid": [
+        {
+          "test": "T29",
+          "configuration": "RX_QUEUE_HIGH=48",
+          "plus_mean_gbps": 10.272991063272885,
+          "sd": 0.1473446749472714,
+          "cv_percent": 1.4342918633896746
+        },
+        {
+          "test": "T41",
+          "configuration": "ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16",
+          "plus_mean_gbps": 10.271989525028618,
+          "sd": 0.07178162531267468,
+          "cv_percent": 0.6988093702565833
+        },
+        {
+          "test": "T07",
+          "configuration": "PRESSURE_UP=450",
+          "plus_mean_gbps": 10.25457316019187,
+          "sd": 0.08864519568804968,
+          "cv_percent": 0.8644454947395497
+        }
+      ],
+      "invalid_rc141": ["T25", "T27", "T31", "T38", "T40", "T42", "T44", "T45", "T47"]
+    },
+    "final_focused": {
+      "name": "TOP3",
+      "overrides": {
+        "PRESSURE_UP": 450,
+        "RX_QUEUE_HIGH": 48,
+        "ACTIVE_TRANSFER_SLEEP_MIN_LEVEL": 16
+      },
+      "runs": 6,
+      "downloads_per_run": 5,
+      "idle_mode": "monitor",
+      "idle_fallback": "short",
+      "freq_period_us": 10000
+    }
+  },
+  "dpdk_path": {
+    "workbook": "GreenQUIC_DPDK_Path_Perf_Tunning_v2.xlsx",
+    "final_safe_paper_path": {
+      "profile": "Performance2 V2",
+      "marker": "GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0",
+      "mbuf_cache": 128,
+      "rx_burst": 32,
+      "tx_burst": 16,
+      "tx_ring": 4096,
+      "drain_bursts": 2,
+      "tx_metadata": "mbuf",
+      "rx_metadata": "mbuf",
+      "tx_lock_mode": "single_owner",
+      "tx_handoff": "shared",
+      "udp_segmentation": false,
+      "tx_alloc_batch": 8,
+      "tx_enqueue_counter": false,
+      "full_safe_tx_zeroing": true,
+      "rx_pipeline_prefetch": 2,
+      "sharded_active_mask": false
+    },
+    "note": "The workbook also contains higher one-shot exploratory candidates such as lean_tx_rxpipe4; the final paper path uses the safer txalloc8/rxpipe2 configuration above."
+  }
+}
