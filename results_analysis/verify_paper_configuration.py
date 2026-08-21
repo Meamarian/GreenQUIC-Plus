@@ -4,8 +4,9 @@
 RUN ON: control host, from any GreenQUIC-Plus clone.
 
 This does not contact the experiment nodes. It verifies that the machine-readable
-paper configuration, authoritative launcher, compatibility wrappers, P7 network
-tuning, and role-based setup interface still agree on the critical settings.
+paper configuration, authoritative launcher, compatibility wrappers, role-based
+runtime defaults, P7 network tuning, and setup interface still agree on the
+critical settings.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 P5_JSON = ROOT / "results_analysis/configuration/p5_paper_evaluation.json"
 P7_JSON = ROOT / "results_analysis/configuration/p7_paper_evaluation.json"
+SUITE_ENV = ROOT / "greenquic_test_suite_v22/suite.env"
 P5_DIR = ROOT / "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads"
 FINAL = P5_DIR / "mac_run_p5_p7_fair_repro_6x5.sh"
 V2 = P5_DIR / "mac_run_p5_p7_fair_repro_6x5_v2.sh"
@@ -135,7 +137,20 @@ def main() -> int:
         require_equal(cpu7["dataplane_cpu"], 19, "P7 dataplane CPU")
         require_equal(cpu7["quic_worker_cpus"], [21, 22, 23, 24], "P7 QUIC CPUs")
 
-        # One authoritative launcher now contains the full final profile directly.
+        # Runtime role guards must not silently force the paper hostnames. Both
+        # P5 and P7 source suite.env, so this is a real portability check rather
+        # than documentation-only validation.
+        suite_text = require_tokens(SUITE_ENV, [
+            'GQ_LOCAL_SHORT_HOST=',
+            'SERVER_NAME="${SERVER_NAME:-$GQ_LOCAL_SHORT_HOST}"',
+            'CLIENT_NAME="${CLIENT_NAME:-$GQ_LOCAL_SHORT_HOST}"',
+        ], "role-based suite.env")
+        require('SERVER_NAME="${SERVER_NAME:-idex}"' not in suite_text,
+                "suite.env still hard-codes idex as SERVER hostname")
+        require('CLIENT_NAME="${CLIENT_NAME:-tinyman}"' not in suite_text,
+                "suite.env still hard-codes tinyman as CLIENT hostname")
+
+        # One authoritative launcher contains the full final profile directly.
         require_tokens(FINAL, [
             'BRANCH=main',
             '--server-host',
@@ -205,6 +220,7 @@ def main() -> int:
     print("P5: Performance2 V2 + TOP3, 6x5, CPU19 + QUIC CPUs21-24")
     print("P7: isolated Linux paper profile, 6x5, CPU19 + QUIC CPUs21-24")
     print("Hosts: role-based; paper defaults are server=idex, client=tinyman")
+    print("Runtime hostname guards: portable; no idex/tinyman requirement")
     print("Launcher: mac_run_p5_p7_fair_repro_6x5.sh")
     return 0
 
