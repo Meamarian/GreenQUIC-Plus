@@ -1,127 +1,149 @@
-# GreenQUIC+ TUM/LRZ fresh-node setup
+# GreenQUIC+ TUM/LRZ setup guide
 
-This directory contains the **single supported setup entrypoint** for the GreenQUIC+ paper testbed on IDEX + Tinyman.
-
-```text
-Repository: Meamarian/GreenQUIC-Plus (private)
-Branch: main
-Operating system: Debian Trixie
-Server: idex
-Client: tinyman
-Test NIC: 0000:18:00.0 (Intel E810)
-```
-
-The old chain of `greenquic_fresh_setup_base.sh`, `greenquic_fresh_setup_p4_p5*.sh`, branch wrappers, and versioned setup scripts has been consolidated into:
+This directory has one supported setup entrypoint for the current GreenQUIC+ paper testbed:
 
 ```text
 tum_testbed_setup/greenquic_fresh_setup.sh
 ```
 
-Do not look for or run a versioned setup wrapper on `main`.
+It is run **from the Mac**, not from IDEX or Tinyman.
 
-## What this setup prepares
+```text
+Private repository: Meamarian/GreenQUIC-Plus
+Branch: main
+OS: Debian Trixie
+Server/controller: idex
+Client: tinyman
+Test NIC on both nodes: 0000:18:00.0 (Intel E810)
+Remote repository root: /root/mohsen
+```
 
-The script is intentionally limited to the current paper/reproduction path. It:
+The setup installs the exact Mac-side `origin/main` commit on both nodes with a Git bundle, so IDEX and Tinyman do not need GitHub credentials.
 
-1. runs on the Mac and resolves the exact current `origin/main` SHA;
-2. restores Mac → IDEX/Tinyman SSH through `mohsen@coinbase`;
-3. restores IDEX → Tinyman SSH without copying the Mac private key;
-4. transfers the exact `main` commit to both nodes with a Git bundle, so remote GitHub credentials are not required;
-5. verifies Debian Trixie on both nodes;
-6. installs the build, measurement, `lm-sensors`, `msr-tools`, NumPy, and Matplotlib dependencies;
-7. prepares Intel ICE/E810 DDP firmware;
-8. verifies MSR and Intel P-state access on CPU19;
-9. allocates `16384 × 2 MiB` hugepages on the test-NIC NUMA node and mounts `/mnt/huge`;
-10. builds the bundled DPDK source into `msquic/deps/dpdk-install`;
-11. builds and verifies the final P5 Performance2 V2 client/server on both nodes;
-12. builds and verifies the isolated normal-Linux P7 client/server on both nodes and verifies that P7 does not link DPDK;
-13. brings **both** E810 direct-cable peers onto `ice` and administratively UP before checking carrier, avoiding the old one-sided fresh-boot link race;
-14. binds the test NIC on each node only to `igb_uio` or `vfio-pci`;
-15. installs `/root/run_p5.sh` and `/root/run_p7.sh` on IDEX;
-16. performs a final exact-SHA, binary-marker, hugepage, driver, `acpi.sh`, and `msr.py` verification.
+## What the setup builds
 
-The final P5 build marker is:
+### P5
+
+P5 is the DPDK-based repeated-8-GiB experiment used for OFF / GreenQUIC / GreenQUIC+.
+
+```text
+P5 directory:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
+
+P5 build script:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/build_p5_performance2.sh
+
+P5 client:
+/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop
+
+P5 server:
+/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinteropserver
+```
+
+Required final binary marker:
 
 ```text
 GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
 ```
 
-The final P5 experiment itself uses:
+### P7
+
+P7 is the isolated normal-Linux MsQuic UDP comparison. DPDK and XDP are disabled in this build.
 
 ```text
-ENABLE_MULTICORE=0
-DPDK owner CPU: 19
-QUIC CPUs: 21,22,23,24
+P7 directory:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline
+
+P7 build script:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline/build_p7_linux.sh
+
+P7 isolated source:
+/root/mohsen/msquic-p7-linux-source
+
+P7 client:
+/root/mohsen/msquic/build-linux-p7/bin/Release/quicinterop
+
+P7 server:
+/root/mohsen/msquic/build-linux-p7/bin/Release/quicinteropserver
 ```
 
-## What it intentionally does not prepare
+The setup verifies that the P7 executables do not link DPDK.
 
-The current paper comparison is P5 vs. P7. Therefore the consolidated setup does **not** rebuild the historical P0, P4, or P6 experiment paths and does not create their launchers. Those workflows are preserved in Git history and historical branches if an old experiment must be reproduced later.
+## What the complete setup prepares
 
-## 1. Reimage the TUM nodes
+The script verifies Debian Trixie, restores Mac→IDEX/Tinyman and IDEX→Tinyman SSH, installs the exact `main` SHA, installs build/measurement dependencies, prepares Intel ICE/E810 DDP firmware, verifies MSR and Intel P-state access on CPU19, allocates `16384 × 2 MiB` hugepages and mounts `/mnt/huge`, builds the bundled DPDK into `/root/mohsen/msquic/deps/dpdk-install`, prepares the 8-GiB payload, builds P5 and P7 on both endpoints, checks the direct E810 link while both ports are ICE-managed and UP, then binds the test NIC to an accepted DPDK driver and performs final binary/state checks.
 
-Use Coinbase/POS to put both nodes on fresh Debian Trixie. The GreenQUIC+ script does not select or reset the POS image itself.
+The setup creates `/root/run_p5.sh` and `/root/run_p7.sh` on IDEX as generic debugging conveniences. The authoritative final paper reproduction is the Mac-side V3 launcher documented in `results_analysis/README.md`.
 
-A typical Coinbase sequence is:
+---
+
+## Case 1 — allocate/reimage fresh nodes with POS
+
+Use this when you want new Debian installations.
+
+On Coinbase, first inspect the nodes:
 
 ```bash
-pos allocations free -k tinyman || true
-pos allocations free -k idex || true
-pos allocations allocate tinyman idex
+pos nodes list | grep -E 'idex|tinyman'
+```
 
-pos nodes image tinyman debian-trixie
+If a node's allocation is `None`, allocate each node separately:
+
+```bash
+pos allocations allocate idex
+pos allocations allocate tinyman
+```
+
+If the nodes are already allocated to your experiment, skip allocation. Do not reallocate or free someone else's nodes.
+
+Select the image and reset both:
+
+```bash
 pos nodes image idex debian-trixie
+pos nodes image tinyman debian-trixie
 
-pos nodes reset idex
-pos nodes reset tinyman
+pos nodes reset idex &
+pos nodes reset tinyman &
+wait
 
 pos nodes list | grep -E 'idex|tinyman'
 ```
 
-Wait until both nodes are reachable through Coinbase before continuing.
+A POS reset erases the node RAM disks. Treat `/root/mohsen`, previous builds, payloads, and local result directories as gone.
 
-## 2. Update GreenQUIC+ on the Mac
-
-```bash
-cd ~/Downloads/GreenQUIC-Plus && \
-git fetch origin main && \
-git checkout main && \
-git reset --hard origin/main
-```
-
-Verify:
+Wait for SSH from Coinbase:
 
 ```bash
-git remote -v
-git branch --show-current
-git rev-parse HEAD
+for h in idex tinyman; do
+  until ssh -o ConnectTimeout=5 root@"$h" 'hostname; . /etc/os-release; echo "$ID $VERSION_CODENAME"'; do
+    echo "waiting for $h ..."
+    sleep 5
+  done
+done
 ```
 
-Expected repository/branch:
+Then return to the Mac and run the complete setup below.
 
-```text
-git@github.com:Meamarian/GreenQUIC-Plus.git
-main
-```
+---
 
-## 3. Run the complete setup
+## Case 2 — Debian Trixie is already installed, but you need a fresh/current GreenQUIC+ tree and builds
+
+Skip POS entirely. Do not manually clone the private repository onto the nodes.
+
+The setup installs the exact `origin/main` commit into `/root/mohsen` with a bundle and prepares/builds everything needed for the P5/P7 paper path.
 
 From the Mac:
 
 ```bash
 cd ~/Downloads/GreenQUIC-Plus && \
+git fetch origin main && \
+git checkout main && \
+git reset --hard origin/main && \
+python3 results_analysis/verify_paper_configuration.py && \
 bash tum_testbed_setup/greenquic_fresh_setup.sh
 ```
 
-Successful completion prints:
-
-```text
-GREENQUIC+ MAIN READY ON BOTH TUM NODES
-```
-
-The script also prints the exact commit and final P5/P7 configuration that it verified.
-
-## Live setup monitor from another Mac terminal
+Immediately monitor from another Mac terminal:
 
 ```bash
 while true; do
@@ -129,38 +151,58 @@ while true; do
   date
   echo
   ssh -J mohsen@coinbase root@idex \
-    'echo "===== IDEX ====="; hostname; git -C /root/mohsen branch --show-current 2>/dev/null || true; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || true'
+    'echo "===== IDEX ====="; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || echo "repo not installed yet"; pgrep -af "meson|ninja|cmake|build_p5|build_p7" || true'
   echo
   ssh -J mohsen@coinbase root@tinyman \
-    'echo "===== TINYMAN ====="; hostname; git -C /root/mohsen branch --show-current 2>/dev/null || true; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || true'
+    'echo "===== TINYMAN ====="; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || echo "repo not installed yet"; pgrep -af "meson|ninja|cmake|build_p5|build_p7" || true'
   sleep 10
 done
 ```
 
-Use `Ctrl+C` only in this monitoring terminal if you want to stop the display.
+Successful completion ends with:
 
-## 4. Run the final paper reproduction
+```text
+GREENQUIC+ MAIN READY ON BOTH TUM NODES
+```
 
-After setup succeeds:
+This command is also the correct operation immediately after Case 1.
+
+---
+
+## Case 3 — repository/DPDK environment exists and only P5/P7 applications need rebuilding
+
+You do not need to rerun POS. If the DPDK installation, hugepages, dependencies, and node state are known-good, the applications can be rebuilt directly.
+
+The exact build-only commands and live monitor are in:
+
+```text
+results_analysis/README.md
+```
+
+P5 builds into `/root/mohsen/msquic/build-greenquic-p5`; P7 builds into `/root/mohsen/msquic/build-linux-p7` from the disposable isolated source `/root/mohsen/msquic-p7-linux-source`.
+
+If DPDK/hugepage/NIC preparation is uncertain, use the complete setup instead of this shortcut.
+
+---
+
+## Case 4 — everything is ready and you only want to run the final paper evaluation
+
+Do not invoke the binaries manually. Run the supported V3 launcher from the Mac. It synchronizes the exact `main` SHA, rebuilds/verifies both P5 and P7 immediately before measured traffic, injects the final P5 TOP3 policy, applies the P7 Linux paper profile, validates recorders/results, and creates result ZIPs.
 
 ```bash
 cd ~/Downloads/GreenQUIC-Plus && \
 git fetch origin main && \
 git checkout main && \
 git reset --hard origin/main && \
+python3 results_analysis/verify_paper_configuration.py && \
 bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v3.sh
 ```
 
-The default workload is 6 runs × 5 downloads for P5 and the controlled P7 Linux comparison.
-
-Immediately monitor the run from another Mac terminal:
+Immediately monitor from another Mac terminal:
 
 ```bash
 ssh idex '
-log=$(find /root -maxdepth 1 -type f \
-    -name "GQ_FAIR_REPRO_*.log" \
-    -printf "%T@ %p\n" 2>/dev/null | \
-    sort -nr | sed -n "1p" | cut -d" " -f2-)
+log=$(find /root -maxdepth 1 -type f -name "GQ_FAIR_REPRO_*.log" -printf "%T@ %p\n" 2>/dev/null | sort -nr | sed -n "1p" | cut -d" " -f2-)
 echo "FOLLOWING: $log"
 echo
 if [ -z "$log" ]; then
@@ -171,14 +213,14 @@ fi
 '
 ```
 
-Prefer the exact `REMOTE_LOG` path printed by the launcher for the current run.
+The exact TOP3/P7 evaluation values, result paths, status command, and download command are documented in `results_analysis/README.md`.
 
-## Safety and reproducibility notes
+## Important safety/reproducibility properties
 
-- The script never reboots the nodes.
-- The Mac private SSH key is not copied to either node.
-- The exact `origin/main` commit is transferred by bundle and verified on both nodes.
-- The direct E810 cable is checked while both peer ports are kernel/ICE-managed and UP, before DPDK binding.
-- `uio_pci_generic` is not accepted; the final driver must be `igb_uio` or `vfio-pci`.
-- The setup does not modify the preserved original `Meamarian/GreenQUIC` repository.
-- The final experiment rebuilds/verifies P5 and P7 again before measured traffic.
+- The setup script itself does not select/reset the POS image; POS is a separate prerequisite only when a new OS is required.
+- The setup never reboots the nodes.
+- The Mac private key is not copied to either experiment node; only public keys are installed.
+- Remote nodes do not need GitHub credentials; the exact `origin/main` SHA is transferred by Git bundle.
+- The test NIC carrier is checked while both direct-cable endpoints are kernel/ICE-managed and UP, before DPDK binding.
+- The final accepted DPDK driver is `igb_uio` or `vfio-pci`; `uio_pci_generic` is not accepted by the final verifier.
+- The final paper launcher intentionally rebuilds/verifies P5 and P7 even if binaries already exist. There is no supported no-build paper mode.
