@@ -5,6 +5,17 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "$HERE/paper_testbed_defaults.sh"
 
+# Keep the CONTROL-HOST helper itself current. This wrapper intentionally does
+# not refresh /root/mohsen on the experiment nodes; use setup_paper_testbed.sh
+# when remote source may be stale.
+sync_rc=0
+bash "$HERE/control_main_sync.sh" || sync_rc=$?
+case "$sync_rc" in
+  0) ;;
+  10) exec bash "$GQ_CONTROL_REPO/results_analysis/rebuild_paper_binaries.sh" "$@" ;;
+  *) exit "$sync_rc" ;;
+esac
+
 SSH_OPTS=(-o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -i "$GQ_SSH_KEY" -o IdentitiesOnly=yes)
 if [[ -n "$GQ_BASTION" && "$GQ_BASTION" != none ]]; then SSH_OPTS+=(-J "$GQ_BASTION"); fi
 
