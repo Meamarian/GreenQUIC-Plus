@@ -8,9 +8,28 @@ V2="$HERE/mac_run_p5_p7_fair_repro_6x5_v2.sh"
 # GreenQUIC-Plus uses main as the authoritative final paper/development branch.
 export GQ_FAIR_BRANCH="${GQ_FAIR_BRANCH:-main}"
 [[ "$GQ_FAIR_BRANCH" == main ]] || {
-    echo "ERROR: GreenQUIC-Plus fair reproduction must use branch main" >&2
+    echo "ERROR: GreenQUIC-Plus paper reproduction must use branch main" >&2
     exit 2
 }
+
+# Fail closed if the internal V2 transformer no longer carries the exact final
+# TOP3 paper-evaluation profile. This prevents a future edit from silently
+# falling back to generic P5 defaults while V3 still appears to be the paper
+# reproduction entrypoint.
+for required in \
+    '--env PRESSURE_UP=450' \
+    '--env RX_QUEUE_HIGH=48' \
+    '--env ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16' \
+    '--env FREQ_PERIOD_US=10000' \
+    '--env GQ_ENABLE_MSR_TRACE=1' \
+    '--env GQ_ENABLE_FREQ_TRACE=1' \
+    'P5_power_profile=TOP3'
+do
+    grep -Fq -- "$required" "$V2" || {
+        echo "ERROR: final paper reproduction guard missing from V2: $required" >&2
+        exit 2
+    }
+done
 
 # V2 generates its final launcher in /tmp. Export the real repository root
 # before V2 execs that temporary copy; otherwise dirname($0) would point to
@@ -36,5 +55,16 @@ export GREENQUIC_REPO="$REPO_ROOT"
     echo "ERROR: GREENQUIC_REPO validation failed: $GREENQUIC_REPO" >&2
     exit 2
 }
+
+printf '%s\n' \
+    'GreenQUIC+ final paper evaluation profile:' \
+    '  branch=main' \
+    '  P5=Performance2 V2 + TOP3' \
+    '  PRESSURE_UP=450' \
+    '  RX_QUEUE_HIGH=48' \
+    '  ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16' \
+    '  FREQ_PERIOD_US=10000' \
+    '  workload=6x5 by default' \
+    '  P7=isolated Linux paper baseline'
 
 exec bash "$V2" "$@"
