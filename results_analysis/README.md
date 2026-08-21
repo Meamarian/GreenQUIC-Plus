@@ -1,6 +1,6 @@
 # GreenQUIC+ results, analysis, and paper reproduction
 
-This directory is the evaluation and reproduction reference for **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK.”** It contains the final paper configuration, supplied tuning workbooks and SVG/chart material, dependency/version records, high-level setup/run/download helpers, and the final repository audit.
+This directory is the evaluation reference for **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK.”** It contains the final paper configuration, supplied tuning workbooks and SVG/chart material, dependency/version records, high-level setup/run/download helpers, and the final repository audit.
 
 # Dependencies
 
