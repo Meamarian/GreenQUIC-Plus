@@ -232,8 +232,6 @@ cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_setup.sh
 ```
 
-If source code also changed or the remote checkout may be stale, use the full setup in step 1 instead.
-
 ## 3. Everything is ready; run the final paper evaluation
 
 **RUN ON: CONTROL HOST:**
@@ -255,19 +253,9 @@ cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh
 ```
 
-The final launcher deliberately rebuilds/verifies P5 and P7 before measured traffic, records the exact Git SHA/effective configuration, runs P5 then P7, validates the result trees, and packages results on SERVER.
-
-By default the first CONTROL-HOST terminal stays attached until the remote run is `DONE`. It then prints the final SERVER matrix/archive paths and final local destination **before SCP**, performs **automatic SCP** of both result ZIPs and metadata, and verifies the downloaded ZIP SHA-256 values. The default local destination is:
-
-```text
-$HOME/Downloads/GreenQUIC-Plus/reproduced_results/<TAG>/
-```
-
-P5 recorder placement is validated from durable per-run log evidence plus `matrix_integrity.json`; final success no longer depends on disposable `*_affinity.txt` sidecars surviving bundling.
-
 ## 4. Manual re-download of the last finished result
 
-Normally step 3 already performs automatic SCP. Use this only to re-download the exact recorded run.
+Step 3 performs automatic SCP. Use this only to re-download the exact recorded run.
 
 **RUN ON: CONTROL HOST:**
 
@@ -283,8 +271,6 @@ cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh
 ```
 
-The downloader also prints all final remote result paths and the local destination before SCP begins.
-
 ## 5. Local final repository/reproduction audit
 
 **RUN ON: CONTROL HOST:**
@@ -293,8 +279,6 @@ The downloader also prints all final remote result paths and the local destinati
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/final_repository_check.sh
 ```
-
-**LIVE MONITOR:** not applicable; this is a local static audit and launches no remote workload. It checks current shell/Python/JSON syntax, the P5 recorder-evidence self-test, dependency/configuration consistency, TUM layout, host-role switches, README/monitor pairing, imported artifacts, automatic result handling, and the exact P5/P7 paper anchors.
 
 ---
 
