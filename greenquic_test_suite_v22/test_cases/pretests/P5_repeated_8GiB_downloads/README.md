@@ -105,16 +105,18 @@ git checkout main && \
 bash results_analysis/run_paper_evaluation.sh
 ```
 
-Immediately in **a second CONTROL-HOST terminal:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after launch:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
 bash results_analysis/live_monitor_run.sh
 ```
 
-For another management topology, `run_paper_evaluation.sh` accepts `--server-host`, `--client-host`, `--bastion`, and `--ssh-key`; `--client-host` is the CLIENT endpoint as seen from SERVER. Pass the same SERVER/bastion/key values to `live_monitor_run.sh`.
+For another management topology, `run_paper_evaluation.sh` accepts `--server-host`, `--client-host`, `--bastion`, `--ssh-key`, and `--download-dest`; `--client-host` is the CLIENT endpoint as seen from SERVER. Pass the same SERVER/bastion/key values to `live_monitor_run.sh`.
 
 The runner fixes exact `main`, transfers the SHA by Git bundle, rebuilds/verifies P5 and P7, injects TOP3 and recorder settings, runs the P5 matrix, transitions to P7, validates evidence, and packages both results.
+
+By default the first CONTROL-HOST terminal waits until the remote run is `DONE`, prints the final remote P5/P7 paths and local destination before SCP, then performs automatic SCP of the result ZIPs and metadata into `reproduced_results/<TAG>/` and verifies ZIP SHA-256.
 
 The low-level authoritative implementation is:
 
@@ -123,6 +125,35 @@ mac_run_p5_p7_fair_repro_6x5.sh
 ```
 
 `_v2.sh` and `_v3.sh` are compatibility wrappers only.
+
+---
+
+## P5 recorder evidence and final completion validation
+
+The final run enables recorder isolation with:
+
+```text
+GQ_CLAIM_RECORDER_CPU=auto
+```
+
+Each P5 canonical server/client run log records the actual housekeeping CPU used for:
+
+```text
+whole-system power1 trace
+C RAPL powercap trace
+Linux cpu_idle reader
+CPU-frequency trace
+```
+
+The final validator is:
+
+```text
+validate_p5_recorder_evidence.py
+```
+
+It first requires `matrix_integrity.json` to show all expected run bundles, summaries, and environment snapshots, then validates all 36 canonical logs for a normal 6×5 paper matrix (6 reps × 3 modes × 2 roles). It writes durable evidence to `/root/GQ_FAIR_REPRO_<TAG>/p5_recorder_evidence.json`.
+
+`*_affinity.txt` sidecar files are optional. They are **not** required for final success because bundling/cleanup may remove them after their information has already been logged.
 
 ---
 
@@ -142,7 +173,7 @@ git checkout main && \
 bash results_analysis/rebuild_paper_binaries.sh
 ```
 
-Immediately in **a second CONTROL-HOST terminal:**
+**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal immediately after rebuild starts:**
 
 ```bash
 cd "$HOME/Downloads/GreenQUIC-Plus" && \
@@ -178,4 +209,10 @@ P5 matrix outputs are stored under:
 /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/matrix_results/
 ```
 
-The combined paper runner additionally creates `/root/GQ_FAIR_REPRO_<TAG>/`, a controller log, `config.env`, and final P5/P7 ZIP paths on the SERVER role. See `results_analysis/README.md`.
+For tag `<TAG>`, the final paper matrix path is:
+
+```text
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/matrix_results/P5_FAIR_OPT_PINNED_6r_5d_<TAG>
+```
+
+The combined runner also creates `/root/GQ_FAIR_REPRO_<TAG>/`, `RESULT_DIRS.env`, `RESULT_ZIPS.txt`, `RESULT_ZIPS.sha256`, `config.env`, durable P5 recorder evidence, and the final P5/P7 ZIPs. See `results_analysis/README.md`.
