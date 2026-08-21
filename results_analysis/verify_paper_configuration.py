@@ -4,9 +4,9 @@
 RUN ON: control host, from any GreenQUIC-Plus clone.
 
 This does not contact the experiment nodes. It verifies that the machine-readable
-paper configuration, authoritative launcher, compatibility wrappers, role-based
-runtime defaults, P7 network tuning, and setup interface still agree on the
-critical settings.
+paper configuration, dependency/source versions, authoritative launcher,
+compatibility wrappers, role-based runtime defaults, P7 network tuning, and
+setup interface still agree on the critical settings.
 """
 from __future__ import annotations
 
@@ -17,6 +17,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 P5_JSON = ROOT / "results_analysis/configuration/p5_paper_evaluation.json"
 P7_JSON = ROOT / "results_analysis/configuration/p7_paper_evaluation.json"
+DEPS_JSON = ROOT / "results_analysis/configuration/dependencies.json"
+MSQUIC_CMAKE = ROOT / "msquic/CMakeLists.txt"
+DPDK_VERSION = ROOT / "msquic/deps/dpdk/VERSION"
 SUITE_ENV = ROOT / "greenquic_test_suite_v22/suite.env"
 P5_DIR = ROOT / "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads"
 FINAL = P5_DIR / "mac_run_p5_p7_fair_repro_6x5.sh"
@@ -52,6 +55,22 @@ def main() -> int:
     try:
         p5 = load_json(P5_JSON)
         p7 = load_json(P7_JSON)
+        deps = load_json(DEPS_JSON)
+
+        # Source/dependency anchors. These are repository-backed versions; Debian
+        # package patch versions remain intentionally runtime-resolved from Trixie.
+        require_equal(deps["source_pinned"]["msquic"]["version"], "2.4.8", "dependency MsQuic version")
+        require_equal(deps["source_pinned"]["dpdk"]["version"], "21.11.9", "dependency DPDK version")
+        require_equal(deps["source_pinned"]["cmake_minimum_for_current_static_msquic_build"], "3.20", "dependency CMake minimum")
+        require_equal(deps["source_pinned"]["tls_backend"], "OpenSSL", "dependency TLS backend")
+        require_equal(deps["operating_system"]["required_distribution"], "Debian", "dependency OS")
+        require_equal(deps["operating_system"]["required_codename"], "trixie", "dependency OS codename")
+        require_equal(DPDK_VERSION.read_text(encoding="utf-8").strip(), "21.11.9", "vendored DPDK VERSION")
+        msquic_cmake = require_tokens(MSQUIC_CMAKE, [
+            "set(QUIC_FULL_VERSION 2.4.8)",
+            "cmake_minimum_required(VERSION 3.20)",
+        ], "MsQuic CMake version anchors")
+        require("set(QUIC_FULL_VERSION 2.4.8)" in msquic_cmake, "MsQuic version anchor changed")
 
         w5 = p5["workload"]
         for key, expected in {
@@ -212,11 +231,12 @@ def main() -> int:
         require(not (ROOT / "power_mng_tunning").exists(), "obsolete power_mng_tunning/ unexpectedly exists")
         require(not (ROOT / "greenquic_test_suite").exists(), "legacy greenquic_test_suite/ unexpectedly exists")
 
-    except (CheckError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (CheckError, KeyError, TypeError, ValueError, json.JSONDecodeError, OSError) as exc:
         print(f"PAPER CONFIGURATION PREFLIGHT: FAIL\n{exc}", file=sys.stderr)
         return 1
 
     print("PAPER CONFIGURATION PREFLIGHT: PASS")
+    print("Dependencies: modified MsQuic 2.4.8 source + DPDK 21.11.9 + Debian Trixie policy")
     print("P5: Performance2 V2 + TOP3, 6x5, CPU19 + QUIC CPUs21-24")
     print("P7: isolated Linux paper profile, 6x5, CPU19 + QUIC CPUs21-24")
     print("Hosts: role-based; paper defaults are server=idex, client=tinyman")
