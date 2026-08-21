@@ -29,16 +29,23 @@ Override management routing without editing files:
   --bastion USER@HOST|none optional ProxyJump for CONTROL -> SERVER
   --ssh-key PATH           CONTROL private key for CONTROL -> SERVER
   --tag STRING             optional exact result/log tag
+  --download-dest DIR      local CONTROL-HOST result root
+                           (default: <repo>/reproduced_results)
+  --no-auto-download       do not wait/SCP after starting the remote run
   -h, --help
 
 The exact paper workload/configuration remains fixed by the authoritative
-launcher; this wrapper exposes management routing and an optional run tag.
+launcher; this wrapper exposes management routing, result destination and an
+optional run tag. Automatic wait + SCP is ON by default.
+
 The selected tag is recorded locally so live_monitor_run.sh follows this exact
 run instead of accidentally attaching to an older GQ_FAIR_REPRO log.
 USAGE
 }
 
 RUN_TAG="${GQ_FAIR_TAG:-}"
+DOWNLOAD_DEST=""
+AUTO_DOWNLOAD=1
 while (($#)); do
   case "$1" in
     --server-host) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --server-host needs a value" >&2; exit 2; }; GQ_SERVER_HOST="$2"; shift 2 ;;
@@ -46,6 +53,8 @@ while (($#)); do
     --bastion) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --bastion needs a value" >&2; exit 2; }; GQ_BASTION="$2"; shift 2 ;;
     --ssh-key) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --ssh-key needs a value" >&2; exit 2; }; GQ_SSH_KEY="$2"; shift 2 ;;
     --tag) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --tag needs a value" >&2; exit 2; }; RUN_TAG="$2"; shift 2 ;;
+    --download-dest) [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --download-dest needs a value" >&2; exit 2; }; DOWNLOAD_DEST="$2"; shift 2 ;;
+    --no-auto-download) AUTO_DOWNLOAD=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR: unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -68,11 +77,18 @@ printf '%s\n' \
   "CLIENT(server view)=$GQ_SERVER_TO_CLIENT_HOST" \
   "BASTION=$GQ_BASTION" \
   "SSH_KEY=$GQ_SSH_KEY" \
-  "TAG=$RUN_TAG"
+  "TAG=$RUN_TAG" \
+  "AUTO_DOWNLOAD=$AUTO_DOWNLOAD" \
+  "DOWNLOAD_DEST=${DOWNLOAD_DEST:-$GQ_CONTROL_REPO/reproduced_results}"
 
-exec bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh \
-  --server-host "$GQ_SERVER_HOST" \
-  --client-host "$GQ_SERVER_TO_CLIENT_HOST" \
-  --bastion "$GQ_BASTION" \
-  --ssh-key "$GQ_SSH_KEY" \
+CMD=(
+  bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh
+  --server-host "$GQ_SERVER_HOST"
+  --client-host "$GQ_SERVER_TO_CLIENT_HOST"
+  --bastion "$GQ_BASTION"
+  --ssh-key "$GQ_SSH_KEY"
   --tag "$RUN_TAG"
+)
+[[ -z "$DOWNLOAD_DEST" ]] || CMD+=(--download-dest "$DOWNLOAD_DEST")
+[[ "$AUTO_DOWNLOAD" == 1 ]] || CMD+=(--no-auto-download)
+exec "${CMD[@]}"
