@@ -2,6 +2,15 @@
 
 These files describe the **last/final configuration used for the GreenQUIC+ paper evaluation**. They are experiment records, not TUM/POS provisioning defaults.
 
+Machine-readable files in this directory:
+
+```text
+p5_paper_evaluation.json   final P5 OFF/BASIC/PLUS workload, datapath and TOP3 policy
+p7_paper_evaluation.json   final isolated Linux P7 workload/network/recording profile
+experiment_paths.json      role, directory and binary-path definitions
+dependencies.json          source versions, OS/package policy and hardware assumptions
+```
+
 ## Roles versus host names
 
 The experiment uses semantic roles SERVER and CLIENT. In our paper testbed:
@@ -12,6 +21,24 @@ CLIENT=tinyman
 ```
 
 Those names are provenance/defaults only. Management connectivity is centralized in `../paper_testbed_defaults.sh`. The paper data-plane IP/MAC/CPU/NIC values remain part of the evaluated configuration and are independent of SSH host names.
+
+---
+
+## Dependencies/version interpretation
+
+The source versions recorded for the current reproduction path are:
+
+```text
+modified MsQuic source version: 2.4.8
+DPDK:                           21.11.9
+CMake requirement:              >= 3.20 for the static build used here
+TLS:                            OpenSSL
+endpoint OS:                    Debian Trixie
+```
+
+The GreenQUIC+ repository contains a **modified** MsQuic tree, so stock upstream MsQuic 2.4.8 is not equivalent. Exact code reproduction is defined by the GreenQUIC+ Git commit SHA. DPDK 21.11.9 is vendored in the repository.
+
+The setup does not pin each Debian package revision or kernel patch version; those are resolved from the configured Debian Trixie repositories at setup time. `dependencies.json` records this distinction and the full package/hardware requirements. `../print_dependency_versions.sh` can print the effective versions on CONTROL/SERVER/CLIENT after provisioning.
 
 ---
 
@@ -111,21 +138,7 @@ greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_
 
 `_v2.sh` and `_v3.sh` are compatibility wrappers only.
 
-For our paper testbed, use the zero-argument high-level wrapper so host names, bastion and SSH key do not need to be typed each time.
-
-**RUN ON: CONTROL HOST:**
-
-```bash
-bash results_analysis/run_paper_evaluation.sh
-```
-
-Immediately in **a second CONTROL-HOST terminal:**
-
-```bash
-bash results_analysis/live_monitor_run.sh
-```
-
-The final launcher explicitly injects TOP3, monitor/short idle settings, P5 recorder settings and the P7 paper network profile. It writes the exact Git commit and effective run settings to the generated `config.env`.
+For our paper testbed, use the high-level wrapper; the normal Mac checkout is `$HOME/Downloads/GreenQUIC-Plus`. The full clone-if-missing commands and their live monitors are maintained in `../README.md` and the repository root `README.md` so this configuration file does not duplicate operational instructions.
 
 ---
 
@@ -139,7 +152,7 @@ python3 results_analysis/verify_paper_configuration.py
 
 This is a local static check and does not start a remote process, so there is no live experiment log.
 
-For the broader repository/layout/artifact check:
+For the broader repository/layout/artifact/dependency check:
 
 **RUN ON: CONTROL HOST:**
 
