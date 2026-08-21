@@ -21,7 +21,7 @@ The same optimized DPDK datapath is used for three runtime modes:
 - **BASIC / GreenQUIC:** Power decisions use DPDK activity.
 - **PLUS / GreenQUIC+:** The BASIC policy is extended with short-lived QUIC transport information.
 
-We have also tested the Linux datapath in **P7**, a MsQuic UDP build with DPDK disabled.
+We have also tested the Linux datapath, a MsQuic UDP build with DPDK disabled.
 
 ---
 
