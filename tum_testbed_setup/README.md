@@ -81,16 +81,6 @@ bash results_analysis/live_monitor_setup.sh
 
 Successful completion prints `GREENQUIC+ MAIN READY`, the selected role endpoints, and final P5/P7 binary paths.
 
-# 2. Case B — Debian already exists; deploy current code and rebuild everything
-
-Use this when Debian Trixie is already installed and SSH works, but `/root/mohsen` is absent/stale or you want a new exact `main` deployment/build.
-
-Do not manually clone the private repository on SERVER or CLIENT. The supported setup keeps private GitHub credentials on CONTROL and transfers exact `origin/main` by Git bundle.
-
-**RUN ON: CONTROL HOST:** use the same `bash results_analysis/setup_paper_testbed.sh` command from Case 3.2.
-
-**LIVE MONITOR — RUN ON: second CONTROL-HOST terminal:** use `bash results_analysis/live_monitor_setup.sh` from Case 3.2.
-
 # 3. Case C — different management host names/topology
 
 The setup wrapper accepts:
