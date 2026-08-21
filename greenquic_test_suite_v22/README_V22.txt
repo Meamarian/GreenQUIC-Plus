@@ -1,58 +1,60 @@
-GreenQUIC test suite V22
-========================
+GreenQUIC+ test suite V22
+=========================
 
-Target build
-------------
-  MsQuic repository: /root/mohsen/msquic
-  GreenQUIC manifest: autopatcher version 22-private-split-linux-dpdk
-  Active backend: src/platform/datapath_raw_dpdk_linux.c
-  DPDK: 21.11.9
-  Server host: idex
-  Client host: tinyman
-  Server binaries: build-greenquic/bin/Release/quicinteropserver
-  Client binary: build-greenquic/bin/Release/quicinterop
+This file is a short suite overview. The final paper reproduction instructions
+are maintained in results_analysis/README.md.
 
-What is included
-----------------
-  * All original core, recommended-extra and selectable-idle cases.
-  * P0: verified 1 MiB client/server smoke download.
-  * P1: one-connection, one-stream 10 GiB OFF goodput baseline.
-  * P2: identical 10 GiB BASIC run with both DVFS and short sleep enabled.
-  * Strict V22 source/build/runtime verification before every real run.
-  * Strict validation of all 72 server/client static endpoint configurations.
-  * idex/tinyman role protection and corrected V22 paths.
+Roles
+-----
+  CONTROL HOST  launches setup/final paper evaluation
+  SERVER        QUIC server + experiment controller
+  CLIENT        QUIC client
 
-First commands on each host
----------------------------
-  cd /root/mohsen/greenquic_test_suite_v22
-  ./run_all_v22_static_checks.sh
-  ./check_v22_install.sh
+Paper-testbed host names were SERVER=idex and CLIENT=tinyman. They are defaults,
+not required names. Current supported entrypoints take host switches.
 
-Automated pretests
-------------------
-Run on idex after passwordless SSH to root@tinyman works:
+Current paper paths
+-------------------
+  P5 directory:
+    /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
+  P5 build:
+    /root/mohsen/msquic/build-greenquic-p5
 
-  cd /root/mohsen/greenquic_test_suite_v22
-  ./run_pretests_from_idex.sh
+  P7 directory:
+    /root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline
+  P7 build:
+    /root/mohsen/msquic/build-linux-p7
 
-Manual pretests
+Final launcher
+--------------
+RUN ON: CONTROL HOST
+
+  greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/
+    mac_run_p5_p7_fair_repro_6x5.sh
+
+Host options:
+  --server-host HOST
+  --client-host HOST
+  --bastion USER@HOST|none
+  --ssh-key PATH
+
+Fresh provisioning/build setup
+------------------------------
+RUN ON: CONTROL HOST after Debian Trixie is installed/reachable.
+
+  tum_testbed_setup/greenquic_fresh_setup.sh
+
+It additionally supports --server-to-client-host HOST.
+
+SSH requirement
 ---------------
-On idex:
-  ./test_cases/pretests/prepare_10g_on_idex.sh
-  ./test_cases/pretests/P0_smoke_1MiB/run_server.sh
+SERVER must be able to SSH as root to CLIENT. CLIENT does not need to SSH back.
+During fresh setup the CONTROL HOST must reach both endpoints directly or through
+the configured bastion. Only the CONTROL HOST needs private-GitHub access.
 
-On tinyman:
-  ./test_cases/pretests/P0_smoke_1MiB/run_client.sh
-
-Stop the idex server with Ctrl+C. Repeat with P1, then P2.
-
-Important test semantics
-------------------------
-  OFF: policy returns before GreenQUIC DVFS and idle actions.
-  BASIC: physical DPDK RX/TX pressure controls both DVFS and sleeping; semantic
-         ACK/CUBIC/application hints are excluded.
-  PLUS: BASIC physical policy plus partition-mapped semantic QUIC hints.
-
-Cases requiring INPROCESS_CLIENT_BIN, external loss injection, hardware monitor,
-epoll, or pause support remain guarded and fail or warn explicitly during
-preflight rather than silently producing invalid results.
+Historical material
+-------------------
+The V22 tree still contains old P0/P1/P2 and V18/V21 diagnostic/research paths.
+Some historical filenames/comments mention idex/tinyman. They are retained for
+provenance and old-experiment recovery; do not use them as the host-selection
+interface for the current P5/P7 paper reproduction.
