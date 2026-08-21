@@ -34,6 +34,8 @@ Override management routing without editing files:
 
 This wrapper deploys exact origin/main by Git bundle, prepares both hosts, and
 builds/verifies P5 and P7. It does not allocate/reimage POS nodes.
+The complete CONTROL-side stdout/stderr stream is recorded under
+results_analysis/runtime/ so live_monitor_setup.sh can follow the exact run.
 USAGE
 }
 
@@ -54,6 +56,25 @@ if (( server_to_client_explicit == 0 )); then
 fi
 
 cd "$GQ_CONTROL_REPO"
+RUNTIME_DIR="$GQ_CONTROL_REPO/results_analysis/runtime"
+STATE_FILE="$RUNTIME_DIR/current_setup_operation"
+mkdir -p "$RUNTIME_DIR"
+if [[ -s "$STATE_FILE" ]]; then
+  old_pid="$(sed -n '1p' "$STATE_FILE" 2>/dev/null || true)"
+  if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then
+    echo "ERROR: another setup/rebuild operation is already active on this CONTROL HOST (pid=$old_pid)" >&2
+    exit 2
+  fi
+fi
+LOG_FILE="$RUNTIME_DIR/setup_$(date +%Y%m%d_%H%M%S)_$$.log"
+printf '%s\n%s\n' "$$" "$LOG_FILE" > "$STATE_FILE"
+cleanup_state(){ rm -f "$STATE_FILE"; }
+trap cleanup_state EXIT
+trap 'cleanup_state; exit 130' INT
+trap 'cleanup_state; exit 143' TERM
+exec > >(tee -a "$LOG_FILE") 2>&1
+printf 'CONTROL_LIVE_LOG=%s\n' "$LOG_FILE"
+
 python3 results_analysis/verify_paper_configuration.py
 
 printf '%s\n' \
@@ -65,7 +86,7 @@ printf '%s\n' \
   "BASTION=$GQ_BASTION" \
   "SSH_KEY=$GQ_SSH_KEY"
 
-exec bash tum_testbed_setup/greenquic_fresh_setup.sh \
+bash tum_testbed_setup/greenquic_fresh_setup.sh \
   --server-host "$GQ_SERVER_HOST" \
   --client-host "$GQ_CLIENT_HOST" \
   --server-to-client-host "$GQ_SERVER_TO_CLIENT_HOST" \
