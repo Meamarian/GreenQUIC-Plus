@@ -1,17 +1,63 @@
 {
-  "schema": "greenquic.paper-evaluation.paths.v1",
+  "schema": "greenquic.paper-evaluation.paths.v2",
   "roles": {
-    "idex": "QUIC server endpoint and experiment controller",
-    "tinyman": "QUIC client endpoint"
+    "control_host": "Machine from which setup and the final paper launcher are started. This was a Mac in the paper testbed, but it may be another Unix host.",
+    "server": "QUIC server endpoint and experiment controller. It launches/controls the client through SSH.",
+    "client": "QUIC client endpoint. It does not need to SSH back to the server for the supported workflow."
   },
-  "mac": {
+  "paper_testbed_default_hostnames": {
+    "server": "idex",
+    "client": "tinyman",
+    "bastion": "mohsen@coinbase",
+    "note": "These are paper-testbed host names only. The supported setup and launcher accept host switches; the names do not define the roles."
+  },
+  "ssh_topology": {
+    "fresh_setup": {
+      "control_to_bastion": "required when a bastion is configured",
+      "bastion_to_server": "required for fresh-node key bootstrap when a bastion is configured",
+      "bastion_to_client": "required for fresh-node key bootstrap when a bastion is configured",
+      "control_to_server": "required",
+      "control_to_client": "required",
+      "server_to_client": "required and established/tested by setup",
+      "client_to_server": "not required"
+    },
+    "final_paper_run": {
+      "control_to_server": "required",
+      "server_to_client": "required",
+      "control_to_client": "not required by the launcher, but useful for troubleshooting",
+      "client_to_server": "not required"
+    },
+    "github_access": "Only the control host needs credentials for the private repository. Exact commits are transferred to experiment nodes by Git bundle."
+  },
+  "host_switches": {
+    "setup": [
+      "--server-host HOST",
+      "--client-host HOST",
+      "--server-to-client-host HOST",
+      "--bastion USER@HOST|none",
+      "--ssh-key PATH"
+    ],
+    "paper_launcher": [
+      "--server-host HOST",
+      "--client-host HOST",
+      "--bastion USER@HOST|none",
+      "--ssh-key PATH"
+    ],
+    "important": "For the paper launcher, --client-host is the client address/name that the server role can SSH to. During setup, --server-to-client-host can be used when that name differs from the control-host view of the client."
+  },
+  "control_host": {
     "recommended_clone": "~/Downloads/GreenQUIC-Plus",
-    "paper_launcher": "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v3.sh",
+    "paper_launcher": "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5.sh",
+    "compatibility_launchers": [
+      "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v2.sh",
+      "greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v3.sh"
+    ],
     "paper_preflight": "results_analysis/verify_paper_configuration.py",
     "fresh_node_setup": "tum_testbed_setup/greenquic_fresh_setup.sh"
   },
   "remote": {
     "repo_root": "/root/mohsen",
+    "required_ssh_user": "root",
     "test_nic_pci": "0000:18:00.0",
     "dpdk_install": "/root/mohsen/msquic/deps/dpdk-install",
     "common_payload": "/root/mohsen/greenquic_test_suite_v22/common/files/payloads/file_8G.bin",
@@ -35,12 +81,12 @@
       "server_binary": "/root/mohsen/msquic/build-linux-p7/bin/Release/quicinteropserver",
       "matrix_runner": "/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline/run_matrix_with_report.sh"
     },
-    "convenience_wrappers_created_by_setup": {
-      "/root/run_p5.sh": "generic P5 matrix wrapper; not by itself the authoritative TOP3 paper reproduction",
-      "/root/run_p7.sh": "generic P7 matrix wrapper; not by itself the authoritative combined paper reproduction"
+    "convenience_wrappers_created_on_server_by_setup": {
+      "/root/run_p5.sh": "generic P5 matrix wrapper configured with the selected client host; not by itself the authoritative TOP3 paper reproduction",
+      "/root/run_p7.sh": "generic P7 matrix wrapper configured with the selected client host; not by itself the authoritative combined paper reproduction"
     }
   },
-  "paper_run_outputs": {
+  "paper_run_outputs_on_server_role": {
     "controller_log": "/root/GQ_FAIR_REPRO_<TAG>.log",
     "controller_artifact_dir": "/root/GQ_FAIR_REPRO_<TAG>",
     "saved_effective_config": "/root/GQ_FAIR_REPRO_<TAG>/config.env",
