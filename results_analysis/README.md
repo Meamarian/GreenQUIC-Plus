@@ -1,20 +1,59 @@
-# Results and analysis
+# GreenQUIC+ results, analysis, and paper reproduction
 
-This directory is the GreenQUIC+ paper-evaluation reference. It is deliberately separate from `tum_testbed_setup/`: TUM setup provisions fresh machines, while this directory records the **final experiment configuration, tuning decisions, chart provenance, and exact reproduction procedure** for our paper evaluation.
+This directory is the reference for the evaluation in **“Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK.”** It contains the final experiment configuration, tuning records, supplied analysis artifacts, and the commands needed to reproduce the P5/P7 comparison.
 
-## Layout
+This is intentionally separate from `tum_testbed_setup/`: the TUM setup script prepares machines; this directory defines **what was measured for our paper**.
 
-| Directory / file | Contents |
-|---|---|
-| `configuration/` | Exact final P5 OFF/BASIC/PLUS and P7 Linux paper-evaluation configuration, in JSON plus a readable explanation. |
-| `tuning/` | Power-management and DPDK-path tuning summaries reconstructed from the reviewed tuning workbooks. |
-| `charts/` | Chart/source-provenance material corresponding to the attached chart bundle. |
-| `verify_paper_configuration.py` | Static preflight that checks the JSON configuration against the supported paper launcher and critical P7 network settings. |
-| `download_latest_reproduction.sh` | Downloads the latest completed P5/P7 reproduction package from IDEX and verifies its saved `config.env`. |
+## What P5 and P7 mean
 
-## Final paper comparison
+`P5` and `P7` are internal experiment names. They are not QUIC protocol versions.
 
-The final P5 configuration is **TOP3** on the optimized Performance2 V2 datapath:
+| Name | Meaning | Datapath compared | Modes |
+|---|---|---|---|
+| **P5** | repeated 8-GiB QUIC download experiment over the optimized DPDK MsQuic implementation | Performance2 V2 DPDK kernel-bypass datapath | OFF / MsQuic-DPDK, BASIC / GreenQUIC, PLUS / GreenQUIC+ |
+| **P7** | repeated 8-GiB QUIC download experiment using an isolated normal-Linux MsQuic build | Linux UDP socket path; DPDK OFF; XDP OFF | Linux baseline |
+
+IDEX is the QUIC **server** and experiment controller. Tinyman is the QUIC **client**.
+
+The final paper comparison is **P5 TOP3 versus P7 Linux**, using 6 independent repetitions and 5 sequential 8-GiB downloads per repetition.
+
+## Exact directories, build outputs, and executables
+
+On both IDEX and Tinyman, the repository root is:
+
+```text
+/root/mohsen
+```
+
+### P5 — DPDK MsQuic + GreenQUIC/GreenQUIC+
+
+```text
+Experiment directory:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads
+
+Build script:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/build_p5_performance2.sh
+
+Build directory:
+/root/mohsen/msquic/build-greenquic-p5
+
+Client executable (Tinyman):
+/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop
+
+Server executable (IDEX):
+/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinteropserver
+
+DPDK install used by P5:
+/root/mohsen/msquic/deps/dpdk-install
+```
+
+The exact final P5 binary marker is:
+
+```text
+GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
+```
+
+The final TOP3 policy is explicitly injected by the supported paper launcher:
 
 ```text
 PRESSURE_UP=450
@@ -25,71 +64,165 @@ GQ_IDLE_MODE_OVERRIDE=monitor
 GQ_IDLE_FALLBACK_OVERRIDE=short
 ```
 
-The final datapath marker is:
+The final topology is single-DPDK-owner:
 
 ```text
-GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0
+ENABLE_MULTICORE=0
+DPDK CPU on each endpoint: 19
+MsQuic worker CPUs on each endpoint: 21,22,23,24
 ```
 
-P5 OFF, BASIC and PLUS use that same datapath and the same 6-run × 5-download workload. OFF bypasses GreenQUIC policy actions, BASIC uses the physical DPDK policy, and PLUS uses the same physical policy plus QUIC semantic hints and PLUS-specific guards. `PRESSURE_UP=450` and `RX_QUEUE_HIGH=48` affect BASIC and PLUS; `ACTIVE_TRANSFER_SLEEP_MIN_LEVEL=16` is PLUS-only.
-
-P7 is the isolated normal-Linux MsQuic baseline with CPU19 for IRQ/NAPI/softirq processing, MsQuic workers on CPUs21-24, IRQ and QUIC pinning enabled, RPS disabled, the test NIC's RDMA auxiliary child temporarily disabled, the paper GSO/GRO profile, 6,815,744-byte UDP receive/send buffers, one combined channel, MTU 1500, and the same 6 × 5 / 5-second-gap workload.
-
-The authoritative machine-readable records are:
+### P7 — isolated normal-Linux MsQuic baseline
 
 ```text
-results_analysis/configuration/p5_paper_evaluation.json
-results_analysis/configuration/p7_paper_evaluation.json
+Experiment directory:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline
+
+Build script:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline/build_p7_linux.sh
+
+Disposable isolated Linux source tree:
+/root/mohsen/msquic-p7-linux-source
+
+Build directory:
+/root/mohsen/msquic/build-linux-p7
+
+Client executable (Tinyman):
+/root/mohsen/msquic/build-linux-p7/bin/Release/quicinterop
+
+Server executable (IDEX):
+/root/mohsen/msquic/build-linux-p7/bin/Release/quicinteropserver
 ```
 
-## Reproduce the final paper evaluation
+P7 is compiled with `QUIC_LINUX_DPDK_ENABLED=OFF` and `QUIC_LINUX_XDP_ENABLED=OFF`; the build script checks that neither executable links a DPDK library. Its final paper network profile uses CPU19 for NIC IRQ/NAPI/softirq handling, MsQuic workers on CPUs21-24, RPS disabled, one combined NIC channel, UDP rmem/wmem of 6,815,744 bytes, MTU 1500, temporary RDMA-aux disablement for the test NIC, and the paper GSO/GRO profile.
 
-### 1. Update the private GreenQUIC+ repository on the Mac
+A machine-readable path map is in `configuration/experiment_paths.json`.
+
+## Directory layout
+
+```text
+results_analysis/
+├── README.md
+├── artifact_files.sha256.json
+├── import_attached_artifacts.py
+├── verify_paper_configuration.py
+├── download_latest_reproduction.sh
+├── configuration/
+│   ├── README.md
+│   ├── experiment_paths.json
+│   ├── p5_paper_evaluation.json
+│   └── p7_paper_evaluation.json
+├── tuning/
+│   ├── README.md
+│   ├── summary.json
+│   ├── GreenQUIC_DPDK_Path_Perf_Tunning_v2.xlsx
+│   └── GreenQUIC_Power_Mng_Tuning_v1.xlsx
+└── charts/
+    ├── README.md
+    ├── SOURCE_REFERENCE.txt
+    ├── chart_v2.py
+    ├── manifest.json
+    └── svg/
+        ├── timeseries/
+        ├── with_values/
+        └── without_values/
+```
+
+The original workbooks, chart-generation script, and SVGs come from the supplied `Tunning.zip` and `Charts (2).zip`. `.DS_Store` is deliberately excluded. `artifact_files.sha256.json` records the exact expected size and SHA-256 of every imported source file.
+
+## Import the supplied Excel/SVG artifacts
+
+If the two original ZIP files have not yet been committed in a clone, import them byte-for-byte with the repository helper:
 
 ```bash
 cd ~/Downloads/GreenQUIC-Plus && \
-git fetch origin main && \
-git checkout main && \
-git reset --hard origin/main
+python3 results_analysis/import_attached_artifacts.py \
+  --charts-zip "$HOME/Downloads/Charts (2).zip" \
+  --tuning-zip "$HOME/Downloads/Tunning.zip"
 ```
 
-Expected repository/branch:
-
-```text
-git@github.com:Meamarian/GreenQUIC-Plus.git
-main
-```
-
-### 2. Run the static paper-configuration preflight
-
-This step does not contact IDEX or Tinyman. It checks that the JSON files, TOP3 injection, P5 datapath identity, P7 paper network settings, and supported launcher still agree.
-
-```bash
-cd ~/Downloads/GreenQUIC-Plus && \
-python3 results_analysis/verify_paper_configuration.py
-```
-
-Expected final line:
-
-```text
-PAPER CONFIGURATION PREFLIGHT: PASS
-```
-
-Do not start a paper measurement if this check fails.
-
-### 3. Fresh Debian only: prepare IDEX and Tinyman
-
-If the hosts were reimaged, first install/reset **Debian Trixie** through the TUM/POS environment and wait until both machines are reachable. Then run the single supported setup entrypoint from the Mac:
+The script validates all 45 source files against the checked-in SHA-256 manifest before writing anything. To import, commit, and push them to private `origin/main` in one step, start from a clean `main` worktree and run:
 
 ```bash
 cd ~/Downloads/GreenQUIC-Plus && \
 git fetch origin main && \
 git checkout main && \
 git reset --hard origin/main && \
+python3 results_analysis/import_attached_artifacts.py \
+  --charts-zip "$HOME/Downloads/Charts (2).zip" \
+  --tuning-zip "$HOME/Downloads/Tunning.zip" \
+  --commit --push
+```
+
+After the artifact import, a new clone contains the actual `.xlsx`, `chart_v2.py`, and SVG files directly under the paths shown above; no separate ZIP is required for analysis.
+
+---
+
+# Reproduction workflow: choose the state you are starting from
+
+The most important distinction is whether the machines need an OS, need GreenQUIC+ provisioning/builds, or are already prepared.
+
+## State A — IDEX/Tinyman need a new Debian installation
+
+Use this when the nodes have been reset/lost, are on the wrong image, or you deliberately want a clean experiment environment.
+
+### A1. On Coinbase/POS: allocate each node if necessary
+
+First inspect state:
+
+```bash
+pos nodes list | grep -E 'idex|tinyman'
+```
+
+If a node's allocation is `None`, allocate it **individually**:
+
+```bash
+pos allocations allocate idex
+pos allocations allocate tinyman
+```
+
+If the nodes are already allocated to your experiment, do not allocate them again. Do not free another user's allocation.
+
+### A2. Select Debian Trixie and reset both nodes
+
+```bash
+pos nodes image idex debian-trixie
+pos nodes image tinyman debian-trixie
+
+pos nodes reset idex &
+pos nodes reset tinyman &
+wait
+
+pos nodes list | grep -E 'idex|tinyman'
+```
+
+A POS reset destroys the node's RAM-disk contents. `/root/mohsen`, previous builds, result directories, and generated payloads on those nodes must therefore be considered gone after reset.
+
+Wait until both nodes report `debian-trixie` and are SSH reachable from Coinbase:
+
+```bash
+for h in idex tinyman; do
+  until ssh -o ConnectTimeout=5 root@"$h" 'hostname; . /etc/os-release; echo "$ID $VERSION_CODENAME"'; do
+    echo "waiting for $h ..."
+    sleep 5
+  done
+done
+```
+
+### A3. From the Mac: run the single complete GreenQUIC+ setup
+
+Update the private repository first:
+
+```bash
+cd ~/Downloads/GreenQUIC-Plus && \
+git fetch origin main && \
+git checkout main && \
+git reset --hard origin/main && \
+python3 results_analysis/verify_paper_configuration.py && \
 bash tum_testbed_setup/greenquic_fresh_setup.sh
 ```
 
-Immediately monitor the setup from another Mac terminal:
+Immediately monitor from another Mac terminal:
 
 ```bash
 while true; do
@@ -97,25 +230,141 @@ while true; do
   date
   echo
   ssh -J mohsen@coinbase root@idex \
-    'echo "===== IDEX ====="; hostname; git -C /root/mohsen branch --show-current 2>/dev/null || true; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || true'
+    'echo "===== IDEX ====="; hostname; git -C /root/mohsen branch --show-current 2>/dev/null || true; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || true; pgrep -af "meson|ninja|cmake|build_p5|build_p7" || true'
   echo
   ssh -J mohsen@coinbase root@tinyman \
-    'echo "===== TINYMAN ====="; hostname; git -C /root/mohsen branch --show-current 2>/dev/null || true; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || true'
+    'echo "===== TINYMAN ====="; hostname; git -C /root/mohsen branch --show-current 2>/dev/null || true; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || true; pgrep -af "meson|ninja|cmake|build_p5|build_p7" || true'
   sleep 10
 done
 ```
 
-Successful provisioning ends with:
+This one setup operation installs the exact `origin/main` commit into `/root/mohsen` by Git bundle, installs dependencies, prepares E810/ICE firmware, MSR/P-state access, 16,384 × 2-MiB hugepages, builds DPDK, creates the 8-GiB payload, builds P5 and P7 on both endpoints, validates the direct E810 link, binds the DPDK test NIC, and verifies all four executables.
+
+Successful completion ends with:
 
 ```text
 GREENQUIC+ MAIN READY ON BOTH TUM NODES
 ```
 
-The setup stage prepares the machines and builds the paper binaries. It does **not** define the TOP3 experiment configuration; the supported evaluation launcher below injects the final paper settings explicitly.
+After that, continue with **State D / Run the final paper test** below.
 
-### 4. Launch the exact final 6 × 5 evaluation
+---
 
-From the Mac:
+## State B — Debian Trixie is already installed and reachable, but GreenQUIC+ is absent or you want a clean new repository deployment/build
+
+Do **not** reimage the nodes. Do **not** manually `git clone` the private repository onto IDEX/Tinyman.
+
+Run the same complete setup from the Mac:
+
+```bash
+cd ~/Downloads/GreenQUIC-Plus && \
+git fetch origin main && \
+git checkout main && \
+git reset --hard origin/main && \
+python3 results_analysis/verify_paper_configuration.py && \
+bash tum_testbed_setup/greenquic_fresh_setup.sh
+```
+
+Immediately monitor from another Mac terminal:
+
+```bash
+while true; do
+  clear
+  date
+  echo
+  ssh -J mohsen@coinbase root@idex \
+    'echo "===== IDEX ====="; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || echo "repo not installed yet"; pgrep -af "meson|ninja|cmake|build_p5|build_p7" || true'
+  echo
+  ssh -J mohsen@coinbase root@tinyman \
+    'echo "===== TINYMAN ====="; git -C /root/mohsen rev-parse --short HEAD 2>/dev/null || echo "repo not installed yet"; pgrep -af "meson|ninja|cmake|build_p5|build_p7" || true'
+  sleep 10
+done
+```
+
+Why use the setup instead of `git clone`? The repository is private, and the remote experiment nodes intentionally do not need GitHub credentials. The setup bundles the exact Mac-side `origin/main` SHA and installs that commit on both nodes. If `/root/mohsen` does not exist it initializes it; if it exists it resets it to the exact selected commit.
+
+This state therefore covers the common case: **“Debian is ready; now put a fresh/current GreenQUIC+ tree on both servers, build DPDK/P5/P7, and make the testbed ready.”**
+
+---
+
+## State C — `/root/mohsen` and DPDK are already prepared, but you only want to rebuild P5/P7 binaries
+
+This is a build-only maintenance path. It assumes the existing node provisioning is valid: Debian Trixie, dependencies, E810 firmware, hugepages, DPDK install, and repository are already present.
+
+From the Mac, rebuild both applications on both hosts:
+
+```bash
+for h in idex tinyman; do
+  ssh -J mohsen@coinbase root@"$h" '
+    set -Eeuo pipefail
+    ROOT=/root/mohsen
+    P5="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads"
+    P7="$ROOT/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline"
+
+    test -d "$ROOT/msquic/deps/dpdk-install"
+    cd "$P5"
+    P5_BUILD_REUSE=1 bash ./build_p5_performance2.sh
+
+    cd "$P7"
+    bash ./build_p7_linux.sh
+
+    test -x "$ROOT/msquic/build-greenquic-p5/bin/Release/quicinterop"
+    test -x "$ROOT/msquic/build-greenquic-p5/bin/Release/quicinteropserver"
+    test -x "$ROOT/msquic/build-linux-p7/bin/Release/quicinterop"
+    test -x "$ROOT/msquic/build-linux-p7/bin/Release/quicinteropserver"
+  '
+done
+```
+
+Immediately monitor from another Mac terminal:
+
+```bash
+while true; do
+  clear
+  date
+  for h in idex tinyman; do
+    echo "===== $h ====="
+    ssh -J mohsen@coinbase root@"$h" '
+      pgrep -af "cmake|ninja|build_p5_performance2|build_p7_linux" || echo "no build process"
+      ls -l /root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop 2>/dev/null || true
+      ls -l /root/mohsen/msquic/build-linux-p7/bin/Release/quicinterop 2>/dev/null || true
+    '
+  done
+  sleep 10
+done
+```
+
+Verify P5 identity and that P7 is not a DPDK build:
+
+```bash
+for h in idex tinyman; do
+  ssh -J mohsen@coinbase root@"$h" '
+    set -e
+    P5C=/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinterop
+    P5S=/root/mohsen/msquic/build-greenquic-p5/bin/Release/quicinteropserver
+    P7C=/root/mohsen/msquic/build-linux-p7/bin/Release/quicinterop
+    P7S=/root/mohsen/msquic/build-linux-p7/bin/Release/quicinteropserver
+    MARKER="GREENQUIC-P5-PERFORMANCE2-V2 txalloc=8 txenqcounter=0 txmetazero=1 rxpipe=2 shardmask=0"
+    grep -aFq -- "$MARKER" "$P5C"
+    grep -aFq -- "$MARKER" "$P5S"
+    ! ldd "$P7C" 2>/dev/null | grep -qi dpdk
+    ! ldd "$P7S" 2>/dev/null | grep -qi dpdk
+    echo "BINARY VERIFY PASS $(hostname)"
+  '
+done
+```
+
+Important: this build-only path does not replace fresh provisioning if DPDK/hugepages/NIC state is unknown.
+
+---
+
+## State D — everything is already prepared and you just want to run the final paper test
+
+Use the supported Mac launcher. **Do not run `quicinterop` manually for the paper comparison.** The launcher controls exact Git SHA synchronization, recorder placement, mode order, P5 TOP3 variables, P7 Linux network state, output naming, validation, and ZIP creation.
+
+Even when binaries already exist, the authoritative paper launcher deliberately rebuilds/verifies P5 and P7 immediately before measured traffic. There is no supported `--no-build` paper mode; this is intentional so a stale binary cannot silently change a result.
+
+Launch from the Mac:
 
 ```bash
 cd ~/Downloads/GreenQUIC-Plus && \
@@ -126,7 +375,7 @@ python3 results_analysis/verify_paper_configuration.py && \
 bash greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/mac_run_p5_p7_fair_repro_6x5_v3.sh
 ```
 
-Immediately monitor the run from another Mac terminal:
+Immediately monitor from another Mac terminal:
 
 ```bash
 ssh idex '
@@ -144,20 +393,46 @@ fi
 '
 ```
 
-The launcher prints `TAG`, exact Git `SHA`, and `REMOTE_LOG`. Prefer the exact `REMOTE_LOG` printed for that invocation when several runs exist.
+The default is:
 
-The supported launcher synchronizes the exact `origin/main` commit to IDEX and Tinyman through a Git bundle, rebuilds/verifies the Performance2 V2 P5 binaries, rebuilds the isolated P7 Linux binaries, applies recorder-affinity isolation, runs P5 OFF/BASIC/PLUS with the exact TOP3 settings, then runs P7 with the exact Linux paper profile.
+```text
+P5: 6 runs × 5 sequential 8-GiB downloads, OFF/BASIC/PLUS
+P7: 6 runs × 5 sequential 8-GiB downloads, Linux baseline
+Gap: 5 s
+Edge cooldown: 5 s
+Between runs/tests: 5 s
+Seed: 20260806
+```
 
-### 5. Check completion/status
+### Output locations
 
-From the Mac:
+For launcher tag `<TAG>`:
+
+```text
+Controller log:
+/root/GQ_FAIR_REPRO_<TAG>.log
+
+Controller metadata/artifacts:
+/root/GQ_FAIR_REPRO_<TAG>/
+/root/GQ_FAIR_REPRO_<TAG>/config.env
+/root/GQ_FAIR_REPRO_<TAG>/RESULT_ZIPS.txt
+
+P5 result tree:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P5_repeated_8GiB_downloads/matrix_results/P5_FAIR_OPT_PINNED_6r_5d_<TAG>
+
+P7 result tree:
+/root/mohsen/greenquic_test_suite_v22/test_cases/pretests/P7_linux_udp_baseline/matrix_results/P7_FAIR_PAPER_PINNED_6r_5d_<TAG>
+
+Final ZIPs:
+/root/P5_FAIR_OPT_PINNED_6r_5d_<TAG>.zip
+/root/P7_FAIR_PAPER_PINNED_6r_5d_<TAG>.zip
+```
+
+Check latest status from the Mac:
 
 ```bash
 ssh idex '
-art=$(find /root -maxdepth 1 -type d \
-    -name "GQ_FAIR_REPRO_*" \
-    -printf "%T@ %p\n" 2>/dev/null | \
-    sort -nr | sed -n "1p" | cut -d" " -f2-)
+art=$(find /root -maxdepth 1 -type d -name "GQ_FAIR_REPRO_*" -printf "%T@ %p\n" 2>/dev/null | sort -nr | sed -n "1p" | cut -d" " -f2-)
 echo "ARTIFACT_DIR=$art"
 if [ -z "$art" ]; then
     echo "No fair-reproduction artifact directory found"
@@ -175,57 +450,14 @@ fi
 '
 ```
 
-A successful run must have `DONE`, `config.env`, and `RESULT_ZIPS.txt`. The generated `config.env` must identify `P5_power_profile=TOP3` and record the critical TOP3/DVFS/recorder settings.
-
-### 6. Download and verify the completed result package
-
-Use the repository helper instead of manually reconstructing remote paths:
+Download the latest completed reproduction:
 
 ```bash
 cd ~/Downloads/GreenQUIC-Plus && \
 bash results_analysis/download_latest_reproduction.sh
 ```
 
-It downloads the latest completed reproduction into:
-
-```text
-reproduced_results/<TAG>/
-```
-
-including:
-
-```text
-config.env
-RESULT_ZIPS.txt
-DONE
-P5_FAIR_OPT_PINNED_<...>.zip
-P7_FAIR_PAPER_PINNED_<...>.zip
-GQ_FAIR_REPRO_<TAG>.log    # when present at the expected sibling path
-```
-
-The helper refuses an unfinished latest run and checks the downloaded `config.env` for the final paper values. A successful download ends with:
-
-```text
-DOWNLOAD + PAPER CONFIG VERIFICATION: PASS
-```
-
-To choose another local destination root:
-
-```bash
-cd ~/Downloads/GreenQUIC-Plus && \
-bash results_analysis/download_latest_reproduction.sh /path/to/output
-```
-
-### 7. Inspect the saved run identity
-
-```bash
-cd ~/Downloads/GreenQUIC-Plus && \
-latest=$(find reproduced_results -mindepth 1 -maxdepth 1 -type d -print | sort | tail -1) && \
-echo "RESULT_DIR=$latest" && \
-grep -E '^(branch|commit|runs|downloads|P5_profile|P5_power_profile|P5_pressure_up|P5_rx_queue_high|P5_active_transfer_sleep_min_level|P5_freq_period_us|P7_profile|P7_nic_offloads|P7_udp_rmem|P7_udp_wmem|P7_combined_channels)=' "$latest/config.env"
-```
-
-For the default final paper run, the important values are:
+The downloaded `config.env` is part of the reproducibility record. For the default paper run it must contain, among other fields:
 
 ```text
 branch=main
@@ -244,10 +476,29 @@ P7_udp_wmem=6815744
 P7_combined_channels=1
 ```
 
-The `commit=` value is intentionally not hard-coded in this README; it must equal the exact `origin/main` SHA bundled by the launcher for that reproduction run.
+The `commit=` field must equal the exact `origin/main` SHA bundled for that run.
 
-## Provenance and analysis material
+---
 
-The chart bundle retains its original source names. Some chart references point to earlier result archives, including an earlier P7 6×6 archive. Those names are provenance for the attached charts and are not used to redefine the final experiment. The JSON files under `configuration/` and the supported 6×5 launcher above are the reference for the final paper evaluation.
+## Convenience wrappers on IDEX
 
-The former top-level `power_mng_tunning/` directory is obsolete. Its useful tuning information is consolidated under `results_analysis/tuning/`, while the exact final evaluation settings are under `results_analysis/configuration/`.
+The fresh setup creates:
+
+```text
+/root/run_p5.sh
+/root/run_p7.sh
+```
+
+These are generic convenience wrappers around `run_matrix_with_sheet.sh` and `run_matrix_with_report.sh`. They are useful for controlled debugging, but **they are not a substitute for the Mac V3 final-paper launcher**, because the complete paper launcher also fixes the exact Git SHA, injects TOP3, builds/verifies both applications, handles P5→P7 NIC state changes, validates recorder evidence, and packages results.
+
+## Final configuration sources
+
+Use these for paper methods/reproduction documentation:
+
+```text
+configuration/p5_paper_evaluation.json
+configuration/p7_paper_evaluation.json
+configuration/experiment_paths.json
+```
+
+The supplied chart bundle intentionally keeps its original source archive names in `charts/SOURCE_REFERENCE.txt`. Some of those names correspond to earlier analysis runs. They are chart provenance, not the final configuration definition.
