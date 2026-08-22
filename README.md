@@ -2,7 +2,7 @@
 
 ## Sleep Tight, QUIC Fast: Energy-Efficient QUIC with DPDK
 
-**Mohsen Memarian\*, Andreas Kassler\*†, Johannes Späth‡, Marcel Kempf‡, Stefan Lachnit‡, Johannes Zirngibl§, Georg Carle‡**
+**Mohsen Memarian\*, Andreas Kassler\*†, Johannes Späth‡, Marcel Kempf‡, Stefan Lachnit‡, Johannes Zirngibl‡, Georg Carle§**
 
 \* Karlstad University, Sweden  
 † Deggendorf Institute of Technology, Germany  
