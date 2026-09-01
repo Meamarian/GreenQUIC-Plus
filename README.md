@@ -38,6 +38,25 @@ We also evaluate the Linux datapath using a MsQuic UDP build with DPDK and XDP d
 
 ---
 
+## Parameter Tuning
+
+The paper reports the final datapath and power-management configurations but omits most of the tuning process for space. We summarize it here to clarify how the values reported in the Experimental Setup and in Tables I–II were obtained. Tuning was performed in two stages: we first optimized the common DPDK datapath to remove packet-processing bottlenecks, and then kept that datapath fixed while tuning the GreenQUIC/GreenQUIC+ power-management controller.
+
+### DPDK Datapath Performance Tuning
+
+The datapath study contains 109 recorded configurations/screens, of which 106 produced complete comparable results. We explored the main factors affecting packet-processing efficiency, including RX/TX batching and TX-ring servicing, packet-buffer allocation and caching, metadata and memory handling, TX-path synchronization and bookkeeping, and RX prefetching. These experiments showed that the original datapath contained performance bottlenecks independent of the power-management algorithm, with GreenQUIC+ goodput increasing from about 9.03 Gbit/s to above 10 Gbit/s for the strongest candidates.
+
+The final datapath was selected based on both performance and consistency rather than simply choosing the highest result from a single exploratory run. It uses the RX/TX burst sizes of 32/16 packets, a 4096-entry TX ring, and an mbuf cache of 128 entries reported in the paper, together with the selected batching, memory-handling, and prefetching optimizations. This same datapath was then used for MsQuic-DPDK, GreenQUIC, and GreenQUIC+, ensuring that the differences reported in the paper result from their power-management behavior rather than from different datapath implementations. The complete datapath tuning experiments are available in [`GreenQUIC_DPDK_Path_Perf_Tunning_v2.xlsx`](results_analysis/tuning/GreenQUIC_DPDK_Path_Perf_Tunning_v2.xlsx).
+
+### Power-Management Tuning
+
+With the datapath fixed, we evaluated 50 power-management configurations using repeated 8-GiB QUIC transfers. Each complete configuration used five runs with five sequential downloads per run, and 41 configurations completed successfully. The sweep covered the main decision stages in Algorithm 1: demand thresholds, demand smoothing, frequency-adjustment timing, sensitivity to RX/TX backlog, consecutive-empty-poll thresholds, bounded sleeping, and the additional QUIC-aware demand and sleep restrictions of GreenQUIC+. The goal was not to minimize CPU frequency or maximize sleeping independently, but to reduce unnecessary CPU activity without removing processing capacity that was still needed for transfer performance.
+
+The greatest individual changes affected three different parts of the controller: RX queue sensitivity, which determines how quickly pending packet work raises the estimated demand; the frequency up-scaling threshold, which determines how early CPU capacity is increased as demand rises; and the GreenQUIC+ active-transfer sleep restriction, which determines how long empty polling must persist before sleeping during an ongoing transfer. Because these mechanisms interact, the promising changes were combined and evaluated as a complete policy rather than selected independently. The resulting configuration uses an RX queue reference of 48 packets, the `0.45` frequency up-scaling threshold reported in Table I, and an active-transfer sleep-entry level of 16 instead of the normal level 2, corresponding to the `+700%` value reported in Table II. The selected configuration was then kept fixed for all final goodput and power measurements reported in the paper. The complete power-management tuning experiments are available in [`GreenQUIC_Power_Mng_Tuning_v1.xlsx`](results_analysis/tuning/GreenQUIC_Power_Mng_Tuning_v1.xlsx).
+```
+
+---
+
 # Roles and paper-testbed defaults
 
 Roles are semantic; host names are not.
