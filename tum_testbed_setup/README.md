@@ -58,6 +58,24 @@ done
 
 That loop is itself the live readiness monitor.
 
+
+## TUM make server ready to SSH
+```bash
+SERVER_NODE=idex; CLIENT_NODE=tinyman; \
+pos allocations free -k "$SERVER_NODE" && \
+pos allocations free -k "$CLIENT_NODE" && \
+pos allocations allocate "$SERVER_NODE" "$CLIENT_NODE" && \
+pos nodes image "$SERVER_NODE" debian-trixie && \
+pos nodes image "$CLIENT_NODE" debian-trixie && \
+{ pos nodes reset "$SERVER_NODE" & pos nodes reset "$CLIENT_NODE" & wait; } && \
+for h in "$SERVER_NODE" "$CLIENT_NODE"; do \
+  until ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new root@"$h" \
+    'hostname; . /etc/os-release; echo "$ID $VERSION_CODENAME"; echo READY' 2>/dev/null; do \
+    echo "Waiting for $h..."; sleep 5; \
+  done; \
+done
+```
+
 ## 1.2 Deploy/provision/build GreenQUIC+
 
 After both nodes answer SSH as Debian Trixie, **RUN ON: CONTROL HOST:**
