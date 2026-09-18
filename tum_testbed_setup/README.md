@@ -76,6 +76,16 @@ for h in "$SERVER_NODE" "$CLIENT_NODE"; do \
 done
 ```
 
+After that, run this on Mac:
+
+```bash
+[ -f ~/.ssh/id_ed25519.pub ] || ssh-keygen -q -t ed25519 -f ~/.ssh/id_ed25519 -N ""; \
+PUB64=$(base64 < ~/.ssh/id_ed25519.pub | tr -d '\n'); \
+ssh coinbase "for h in idex tinyman; do echo '$PUB64' | base64 -d | ssh root@\$h 'mkdir -p /root/.ssh; chmod 700 /root/.ssh; KEY=\$(cat); touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -qxF \"\$KEY\" /root/.ssh/authorized_keys || echo \"\$KEY\" >> /root/.ssh/authorized_keys'; done" && \
+ssh-keygen -R idex >/dev/null 2>&1 || true; \
+ssh-keygen -R tinyman >/dev/null 2>&1 || true
+```
+
 ## 1.2 Deploy/provision/build GreenQUIC+
 
 After both nodes answer SSH as Debian Trixie, **RUN ON: CONTROL HOST:**
